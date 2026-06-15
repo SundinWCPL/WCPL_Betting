@@ -1,15 +1,31 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { readCsvFile } from './csv.js';
+import { readCsvFile, parseCsv } from './csv.js';
 
 const dataRoot = process.env.LOCAL_DATA_DIR || './data';
 const REQUIRED_CSVS = ['schedule.csv', 'teams.csv', 'players.csv'];
+const DATA_CACHE_MS = Number(process.env.DATA_CACHE_MS || 60000);
+const csvTextCache = new Map();
+
+function dataMode() {
+  return String(process.env.DATA_MODE || 'local').trim().toLowerCase();
+}
+
+function githubBaseUrl() {
+  return String(process.env.WCPL_DATA_BASE_URL || '').trim().replace(/\/+$/, '');
+}
 
 function seasonRoot(seasonId = process.env.SEASON_ID || 'S3') {
   return path.join(dataRoot, seasonId);
 }
 
-async function exists(filePath) {
+function githubUrl(parts) {
+  const base = githubBaseUrl();
+  if (!base) throw new Error('WCPL_DATA_BASE_URL is required when DATA_MODE=github.');
+  return `${base}/${parts.map(p => encodeURIComponent(String(p))).join('/')}`;
+}
+
+async function existsLocal(filePath) {
   try {
     await fs.access(filePath);
     return true;
@@ -18,12 +34,50 @@ async function exists(filePath) {
   }
 }
 
-async function safeReadCsv(filePath) {
-  if (!(await exists(filePath))) return [];
+async function readGithubText(parts) {
+  const url = githubUrl(parts);
+  const now = Date.now();
+  const cached = csvTextCache.get(url);
+  if (cached && now - cached.ts < DATA_CACHE_MS) return cached.text;
+
+  const res = await fetch(url, { cache: 'no-store' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to read WCPL data from GitHub: ${res.status} ${url}`);
+
+  const text = await res.text();
+  csvTextCache.set(url, { ts: now, text });
+  return text;
+}
+
+async function existsSource(parts) {
+  if (dataMode() === 'github') return (await readGithubText(parts)) !== null;
+  return existsLocal(path.join(dataRoot, ...parts));
+}
+
+async function readCsvSource(parts) {
+  if (dataMode() === 'github') {
+    const text = await readGithubText(parts);
+    return text == null ? [] : parseCsv(text);
+  }
+
+  const filePath = path.join(dataRoot, ...parts);
+  if (!(await existsLocal(filePath))) return [];
   return readCsvFile(filePath);
 }
 
+export function clearWcplDataCache() {
+  csvTextCache.clear();
+}
+
 export async function getAvailableSeasons() {
+  if (dataMode() === 'github') {
+    const configured = String(process.env.AVAILABLE_SEASONS || process.env.SEASON_ID || 'S3')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    return [...new Set(configured)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }
+
   try {
     const entries = await fs.readdir(dataRoot, { withFileTypes: true });
     return entries
@@ -36,45 +90,61 @@ export async function getAvailableSeasons() {
 }
 
 export async function getDivisions(seasonId = process.env.SEASON_ID || 'S3') {
-  const root = seasonRoot(seasonId);
+  const season = String(seasonId || '').trim();
 
   // New S3 style: data/S3/divisions.csv + data/S3/D1/*.csv, data/S3/D2/*.csv
-  const divisionsCsvPath = path.join(root, 'divisions.csv');
-  if (await exists(divisionsCsvPath)) {
-    const divisions = await readCsvFile(divisionsCsvPath);
+  const divisions = await readCsvSource([season, 'divisions.csv']);
+  if (divisions.length) {
     return divisions.map(d => ({
       division_id: String(d.division_id || '').trim(),
       division_name: String(d.division_name || d.division_id || '').trim(),
-      data_path: path.join(root, String(d.division_id || '').trim())
+      source_parts: [season, String(d.division_id || '').trim()]
     })).filter(d => d.division_id);
   }
 
   // Old/S2 style: data/S2/*.csv directly in the season folder.
-  const hasDirectCsvs = (await Promise.all(REQUIRED_CSVS.map(f => exists(path.join(root, f))))).every(Boolean);
+  const hasDirectCsvs = (await Promise.all(REQUIRED_CSVS.map(f => existsSource([season, f])))).every(Boolean);
   if (hasDirectCsvs) {
     return [{
       division_id: 'ALL',
       division_name: 'League',
-      data_path: root
+      source_parts: [season]
     }];
   }
 
-  // Folder-discovery style: every child folder with schedule/teams/players is a division.
+  // For GitHub raw URLs, folder listing is not available. Use DIVISIONS if provided.
+  if (dataMode() === 'github') {
+    const configuredDivisions = String(process.env.DIVISIONS || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const out = [];
+    for (const divId of configuredDivisions) {
+      const hasCsvs = (await Promise.all(REQUIRED_CSVS.map(f => existsSource([season, divId, f])))).every(Boolean);
+      if (!hasCsvs) continue;
+      out.push({ division_id: divId, division_name: divId, source_parts: [season, divId] });
+    }
+    return out;
+  }
+
+  // Local folder-discovery style: every child folder with schedule/teams/players is a division.
   try {
+    const root = seasonRoot(season);
     const entries = await fs.readdir(root, { withFileTypes: true });
-    const divisions = [];
+    const out = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const divPath = path.join(root, entry.name);
-      const hasCsvs = (await Promise.all(REQUIRED_CSVS.map(f => exists(path.join(divPath, f))))).every(Boolean);
+      const divId = entry.name;
+      const hasCsvs = (await Promise.all(REQUIRED_CSVS.map(f => existsSource([season, divId, f])))).every(Boolean);
       if (!hasCsvs) continue;
-      divisions.push({
-        division_id: entry.name,
-        division_name: entry.name,
-        data_path: divPath
+      out.push({
+        division_id: divId,
+        division_name: divId,
+        source_parts: [season, divId]
       });
     }
-    return divisions.sort((a, b) => a.division_id.localeCompare(b.division_id, undefined, { numeric: true }));
+    return out.sort((a, b) => a.division_id.localeCompare(b.division_id, undefined, { numeric: true }));
   } catch {
     return [];
   }
@@ -87,24 +157,28 @@ async function getDivision(seasonId, divisionId) {
   return division;
 }
 
+async function readDivisionCsv(division, fileName) {
+  return readCsvSource([...division.source_parts, fileName]);
+}
+
 export async function getTeams(divisionId, seasonId = process.env.SEASON_ID || 'S3') {
   const division = await getDivision(seasonId, divisionId);
-  return safeReadCsv(path.join(division.data_path, 'teams.csv'));
+  return readDivisionCsv(division, 'teams.csv');
 }
 
 export async function getSchedule(divisionId, seasonId = process.env.SEASON_ID || 'S3') {
   const division = await getDivision(seasonId, divisionId);
-  return safeReadCsv(path.join(division.data_path, 'schedule.csv'));
+  return readDivisionCsv(division, 'schedule.csv');
 }
 
 export async function getGames(divisionId, seasonId = process.env.SEASON_ID || 'S3') {
   const division = await getDivision(seasonId, divisionId);
-  return safeReadCsv(path.join(division.data_path, 'games.csv'));
+  return readDivisionCsv(division, 'games.csv');
 }
 
 export async function getBoxscores(divisionId, seasonId = process.env.SEASON_ID || 'S3') {
   const division = await getDivision(seasonId, divisionId);
-  return safeReadCsv(path.join(division.data_path, 'boxscores.csv'));
+  return readDivisionCsv(division, 'boxscores.csv');
 }
 
 export async function getUpcomingSeries(week = Number(process.env.CURRENT_WEEK || 1), seasonId = process.env.SEASON_ID || 'S3') {
@@ -153,7 +227,7 @@ export async function getUpcomingSeries(week = Number(process.env.CURRENT_WEEK |
 
 export async function getPlayers(divisionId, seasonId = process.env.SEASON_ID || 'S3') {
   const division = await getDivision(seasonId, divisionId);
-  const rows = await safeReadCsv(path.join(division.data_path, 'players.csv'));
+  const rows = await readDivisionCsv(division, 'players.csv');
   return rows
     .filter(p => String(p.name || '').trim())
     .map(p => ({

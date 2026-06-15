@@ -113,6 +113,31 @@
       </article>
     </section>
 
+
+
+    <section class="card admin-card">
+      <h2>Backups</h2>
+      <p class="muted">
+        Database file: <code><%= backupInfo.backupDir %></code>
+      </p>
+      <% if (backupInfo.latestBackup) { %>
+        <p class="muted">
+          Latest server backup:
+          <strong><%= backupInfo.latestBackup.name %></strong>
+          · <%= new Date(backupInfo.latestBackup.createdAt).toLocaleString() %>
+        </p>
+      <% } else { %>
+        <p class="muted">No server backups created yet.</p>
+      <% } %>
+      <div class="admin-action-row">
+        <form method="post" action="/admin/backup/create">
+          <button type="submit">Create Server Backup</button>
+        </form>
+        <a class="button-link ghost" href="/admin/backup/download">Download Backup</a>
+      </div>
+      <p class="muted small-note">Use this after settling/advancing each week. Server backups are saved beside the JSON database, which should be on the Railway volume.</p>
+    </section>
+
     <section class="card admin-card">
       <h2>Add User</h2>
       <form method="post" action="/admin/add-user" class="admin-user-form">

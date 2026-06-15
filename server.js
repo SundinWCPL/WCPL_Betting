@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import session from 'express-session';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import {
   initDb,
@@ -37,7 +38,10 @@ import {
   saveSeriesOddsForWeek,
   savePropDefaultOddsForWeek,
   savePropPlayerOverrideForWeek,
-  clearPropPlayerOverrideForWeek
+  clearPropPlayerOverrideForWeek,
+  createJsonBackup,
+  getBackupInfo,
+  getDatabasePath
 } from './db.js';
 import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries } from './services/wcplData.js';
 import { buildWeekSettlementResults, evaluateBetAgainstResults } from './services/settlement.js';
@@ -409,6 +413,7 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       goalTotal: getGoalTotalForSeries(s, followingWeekOdds)
     }));
     const followingWeekPropBoards = await getPropBoards(followingWeek, settings.seasonId, followingWeekOdds);
+    const backupInfo = getBackupInfo();
     let settlementPreview = null;
 
     try {
@@ -436,13 +441,36 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       settlementPreview,
       followingWeekOdds,
       followingWeekSeriesBoard,
-      followingWeekPropBoards
+      followingWeekPropBoards,
+      backupInfo
     });
   } catch (err) {
     next(err);
   }
 });
 
+
+
+app.post('/admin/backup/create', requireAdmin, (req, res) => {
+  try {
+    const backup = createJsonBackup();
+    req.session.flash = { type: 'success', message: `Created backup: ${backup.filename}` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin');
+});
+
+app.get('/admin/backup/download', requireAdmin, (req, res) => {
+  const filePath = getDatabasePath();
+  if (!fs.existsSync(filePath)) {
+    req.session.flash = { type: 'error', message: 'No betting database exists yet.' };
+    return res.redirect('/admin');
+  }
+  const settings = getAdminSettings();
+  const filename = `wcpl-betting-week-${settings.currentWeek}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  res.download(filePath, filename);
+});
 
 app.post('/admin/season', requireAdmin, (req, res) => {
   try {

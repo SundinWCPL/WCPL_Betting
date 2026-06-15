@@ -55,4 +55,23 @@ betting.json
 
 ## Railway plan
 
-Before real launch, move app storage from local JSON to Railway Postgres. The WCPL league CSVs should remain read-only and come from the main WCPL GitHub repo.
+For Season 3 launch, use Railway with a mounted volume for JSON storage:
+
+```env
+JSON_DB_PATH=/app/data-store/betting.json
+BACKUP_DIR=/app/data-store/backups
+```
+
+For live WCPL data, switch to GitHub read mode:
+
+```env
+DATA_MODE=github
+WCPL_DATA_BASE_URL=https://raw.githubusercontent.com/SundinWCPL/WCPL/main/data
+SEASON_ID=S3
+AVAILABLE_SEASONS=S3
+DIVISIONS=D1,D2
+```
+
+The betting app only reads WCPL CSV data. It does not write to the main WCPL repo.
+
+Recommended Railway setting: keep the app at one instance/replica while using JSON storage.

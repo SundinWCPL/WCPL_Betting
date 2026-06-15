@@ -3,6 +3,12 @@ import path from 'path';
 import bcrypt from 'bcryptjs';
 
 const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
+const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
+
+function ensureDirForFile(filePath) {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
 
 function defaultState() {
   return {
@@ -42,6 +48,7 @@ function loadState() {
 }
 
 function saveState() {
+  ensureDirForFile(dbPath);
   fs.writeFileSync(dbPath, JSON.stringify(state, null, 2));
 }
 
@@ -89,6 +96,47 @@ function ensureSettings() {
     propPlayerOverrides: {},
     ...(state.oddsAdjustments || {})
   };
+}
+
+
+export function getDatabasePath() {
+  return dbPath;
+}
+
+export function getBackupInfo() {
+  if (!fs.existsSync(backupDir)) {
+    return { backupDir, latestBackup: null, backups: [] };
+  }
+
+  const backups = fs.readdirSync(backupDir)
+    .filter(name => name.toLowerCase().endsWith('.json'))
+    .map(name => {
+      const fullPath = path.join(backupDir, name);
+      const stat = fs.statSync(fullPath);
+      return {
+        name,
+        fullPath,
+        size: stat.size,
+        createdAt: stat.mtime.toISOString()
+      };
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+  return { backupDir, latestBackup: backups[0] || null, backups };
+}
+
+export function createJsonBackup() {
+  loadState();
+  ensureSettings();
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+  const safeIso = nowIso().replace(/[:.]/g, '-');
+  const week = Number(state.settings?.currentWeek || 1);
+  const filename = `betting-week-${week}-${safeIso}.json`;
+  const fullPath = path.join(backupDir, filename);
+
+  fs.writeFileSync(fullPath, JSON.stringify(state, null, 2));
+  return { filename, fullPath, backupDir };
 }
 
 export function initDb() {
