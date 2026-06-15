@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bet History · WCPL Betting</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+
+  <main class="container">
+    <section class="card page-title compact-title">
+      <div>
+        <p class="eyebrow">Your settled bets</p>
+        <h1>Bet History</h1>
+        <p>Settled bets are shown newest to oldest. Balance change is net profit/loss for the bet.</p>
+      </div>
+      <a class="button-link ghost" href="/betting">Back to Betting</a>
+    </section>
+
+    <section class="card">
+      <% if (!history.length) { %>
+        <p class="muted">No settled bets yet.</p>
+      <% } else { %>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Week</th>
+                <th>Bet</th>
+                <th>Result</th>
+                <th>Balance Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% history.forEach(h => { %>
+                <tr class="<%= h.won ? 'history-win' : 'history-loss' %>">
+                  <td><%= h.week %></td>
+                  <td>
+                    <strong><%= h.label %></strong><br>
+                    <small class="muted"><%= h.stake %> Mushybux · <%= h.multiplier %>x<% if (h.result_summary) { %> · <%= h.result_summary %><% } %></small>
+                  </td>
+                  <td class="<%= h.won ? 'positive' : 'negative' %>"><%= h.result %></td>
+                  <td class="<%= h.net > 0 ? 'positive' : 'negative' %>"><%= h.net_display %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </section>
+  </main>
+</body>
+</html>

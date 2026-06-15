@@ -1,0 +1,17 @@
+<header class="site-header">
+  <a class="brand" href="/">WCPL Betting</a>
+  <nav>
+    <a href="/">Home</a>
+    <% if (currentUser) { %>
+      <a href="/history">History</a>
+      <a href="/betting">Betting</a>
+      <% if (currentUser.role === 'admin') { %><a href="/admin">Admin</a><% } %>
+      <form method="post" action="/logout" class="inline-form"><button>Logout</button></form>
+    <% } else { %>
+      <a class="button-link" href="/login">Login</a>
+    <% } %>
+  </nav>
+</header>
+<% if (flash) { %>
+  <div class="flash <%= flash.type %>"><%= flash.message %></div>
+<% } %>

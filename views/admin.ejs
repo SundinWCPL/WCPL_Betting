@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · WCPL Betting</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+
+  <main class="container">
+    <section class="card page-title compact-title">
+      <div>
+        <p class="eyebrow">Commissioner Controls</p>
+        <h1>Admin Panel</h1>
+        <p>
+          Season: <strong><%= settings.seasonId %></strong> ·
+          Current Week: <strong><%= currentWeek %></strong> ·
+          Next Week Betting: <strong><%= nextWeek %></strong> ·
+          Following Week Odds Prep: <strong><%= followingWeek %></strong>
+        </p>
+        <p class="muted">
+          Week <%= currentWeek %> status:
+          <strong class="<%= settings.currentWeekLocked ? 'negative' : 'positive' %>">
+            <%= settings.currentWeekLocked ? 'Locked' : 'Open' %>
+          </strong>
+          · Week <%= nextWeek %> status:
+          <strong class="<%= settings.nextWeekLocked ? 'negative' : 'positive' %>">
+            <%= settings.nextWeekLocked ? 'Locked' : 'Open' %>
+          </strong>
+        </p>
+      </div>
+    </section>
+
+    <section class="admin-grid">
+      <article class="card admin-card">
+        <h2>League Controls</h2>
+
+        <form method="post" action="/admin/season" class="admin-inline-form" onsubmit="return confirm('Switch season and reset the debug week to Week 1?');">
+          <label>
+            Debug season
+            <select name="season_id">
+              <% seasons.forEach(season => { %>
+                <option value="<%= season %>" <%= season === settings.seasonId ? 'selected' : '' %>><%= season %></option>
+              <% }) %>
+            </select>
+          </label>
+          <button type="submit">Switch Season</button>
+        </form>
+
+        <div class="admin-action-row">
+          <% if (settings.currentWeekLocked) { %>
+            <form method="post" action="/admin/unlock">
+              <button>Unlock Week <%= currentWeek %></button>
+            </form>
+          <% } else { %>
+            <form method="post" action="/admin/lock">
+              <button>Lock Week <%= currentWeek %></button>
+            </form>
+          <% } %>
+        </div>
+
+        <p class="muted small-note">
+          Lock/unlock only affects Week <%= currentWeek %>. Week <%= nextWeek %> stays open for betting unless you advance the week.
+        </p>
+
+        <form method="post" action="/admin/allowance" class="admin-inline-form">
+          <label>
+            Weekly allowance
+            <input type="number" name="weekly_allowance" min="0" step="1" value="<%= settings.weeklyAllowance %>">
+          </label>
+          <button type="submit">Save Allowance</button>
+        </form>
+
+        <form method="post" action="/admin/advance-week" class="admin-danger-zone" onsubmit="return confirm('Settle Week <%= currentWeek %> and advance to Week <%= currentWeek + 1 %>? If you are not ready to settle, click Cancel and check the settlement preview first.');">
+          <div>
+            <strong>Advance Week</strong>
+            <p class="muted">Settles Week <%= currentWeek %>, advances to Week <%= currentWeek + 1 %>, locks it, opens Week <%= currentWeek + 2 %>, and automatically applies allowance.</p>
+          </div>
+          <button type="submit">Advance Week</button>
+        </form>
+      </article>
+
+      <article class="card admin-card">
+        <h2>Testing / Emergency Resets</h2>
+
+        <form method="post" action="/admin/reset-week-bets" class="admin-danger-zone" onsubmit="return confirm('Void all Week <%= currentWeek %> bets and refund stakes?');">
+          <input type="hidden" name="week" value="<%= currentWeek %>">
+          <div>
+            <strong>Reset Current Week Bets</strong>
+            <p class="muted">Voids all open bets for Week <%= currentWeek %> and refunds stakes.</p>
+          </div>
+          <button type="submit">Void Week <%= currentWeek %> Bets</button>
+        </form>
+
+        <form method="post" action="/admin/reset-week-bets" class="admin-danger-zone" onsubmit="return confirm('Void all Week <%= nextWeek %> bets and refund stakes?');">
+          <input type="hidden" name="week" value="<%= nextWeek %>">
+          <div>
+            <strong>Reset Next Week Bets</strong>
+            <p class="muted">Voids all open bets for Week <%= nextWeek %> and refunds stakes.</p>
+          </div>
+          <button type="submit">Void Week <%= nextWeek %> Bets</button>
+        </form>
+
+        <form method="post" action="/admin/reset-all-data" class="admin-danger-zone hard-reset" onsubmit="return confirm('Reset ALL test data? This clears bets, transactions, balances, and restores seeded users.');">
+          <div>
+            <strong>Reset All Test Data</strong>
+            <p class="muted">Clears the JSON database back to seeded users and starting Mushybux.</p>
+          </div>
+          <button type="submit">Reset All Data</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="card admin-card">
+      <h2>Add User</h2>
+      <form method="post" action="/admin/add-user" class="admin-user-form">
+        <label>
+          Display name
+          <input type="text" name="display_name" placeholder="Logan" required>
+        </label>
+        <label>
+          Username
+          <input type="text" name="username" placeholder="logan" required>
+        </label>
+        <label>
+          Password
+          <input type="text" name="password" placeholder="Temporary password" required>
+        </label>
+        <label>
+          Role
+          <select name="role">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <button type="submit">Add User</button>
+      </form>
+    </section>
+
+    <section class="card admin-card">
+      <h2>Settlement Preview · Week <%= currentWeek %></h2>
+      <% if (settlementPreview && settlementPreview.error) { %>
+        <p class="negative">Unable to build settlement preview: <%= settlementPreview.error %></p>
+      <% } else if (settlementPreview) { %>
+        <p class="muted">
+          Ready: <strong class="<%= settlementPreview.ready ? 'positive' : 'negative' %>"><%= settlementPreview.ready ? 'Yes' : 'No' %></strong> ·
+          Winners: <strong><%= settlementPreview.winners %></strong> ·
+          Losers: <strong><%= settlementPreview.losers %></strong> ·
+          Skipped: <strong><%= settlementPreview.skipped %></strong> ·
+          Payout: <strong><%= settlementPreview.payoutTotal %></strong> Mushybux
+        </p>
+
+        <form method="post" action="/admin/settle-week" class="admin-danger-zone" onsubmit="return confirm('Settle Week <%= currentWeek %> and pay winners? This cannot be undone without manual balance edits.');">
+          <input type="hidden" name="week" value="<%= currentWeek %>">
+          <div>
+            <strong>Settle Week <%= currentWeek %></strong>
+            <p class="muted">Reads the selected season data, settles all open Week <%= currentWeek %> bets, and pays winning returns.</p>
+          </div>
+          <button type="submit" <%= settlementPreview.ready ? '' : 'disabled' %>>Settle Week</button>
+        </form>
+
+        <% if (settlementPreview.rows.length) { %>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Bet</th>
+                  <th>Stake</th>
+                  <th>Odds</th>
+                  <th>Result</th>
+                  <th>Payout</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% settlementPreview.rows.forEach(r => { %>
+                  <tr>
+                    <td><%= r.user_display_name %></td>
+                    <td><%= r.label %></td>
+                    <td><%= r.stake %></td>
+                    <td><%= r.multiplier %>x</td>
+                    <td>
+                      <% if (!r.ready) { %>
+                        <span class="negative">Incomplete</span>
+                      <% } else if (r.won) { %>
+                        <span class="positive">Win</span>
+                      <% } else { %>
+                        <span class="negative">Loss</span>
+                      <% } %>
+                      <br><small class="muted"><%= r.result_summary || r.evaluation_reason %></small>
+                    </td>
+                    <td><%= r.payout %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } else { %>
+          <p class="muted">No open Week <%= currentWeek %> bets to settle.</p>
+        <% } %>
+      <% } %>
+    </section>
+
+    <section class="card admin-card">
+      <h2>Next Week Bets · Week <%= nextWeek %></h2>
+      <p class="muted">This is the week users are normally betting on.</p>
+      <%- include('partials_bet_table', { bets: nextWeekBets }) %>
+    </section>
+
+    <section class="card admin-card">
+      <h2>Current Week Bets · Week <%= currentWeek %></h2>
+      <p class="muted">Week <%= currentWeek %> may be open only during launch/week 1. Normally this is locked once games are underway.</p>
+      <%- include('partials_bet_table', { bets: currentWeekBets }) %>
+    </section>
+
+    <section class="card admin-card">
+      <h2>User Balances & Details</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>User Details</th>
+              <th>Total (Wagered)</th>
+              <th>Available</th>
+              <th>Adjust Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach(u => { %>
+              <tr>
+                <td>
+                  <form method="post" action="/admin/update-user" class="admin-user-edit-form">
+                    <input type="hidden" name="user_id" value="<%= u.id %>">
+                    <input type="text" name="display_name" value="<%= u.display_name %>" placeholder="Display name" required>
+                    <input type="text" name="username" value="<%= u.username %>" placeholder="Username" required>
+                    <input type="text" name="password" placeholder="New password (blank = keep)">
+                    <select name="role">
+                      <option value="user" <%= u.role === 'user' ? 'selected' : '' %>>User</option>
+                      <option value="admin" <%= u.role === 'admin' ? 'selected' : '' %>>Admin</option>
+                    </select>
+                    <button type="submit">Save</button>
+                  </form>
+                </td>
+                <td><strong><%= u.balance_display %></strong></td>
+                <td><%= u.available_balance %></td>
+                <td>
+                  <form method="post" action="/admin/adjust-balance" class="admin-balance-adjust-form">
+                    <input type="hidden" name="user_id" value="<%= u.id %>">
+                    <input type="number" name="amount" step="1" placeholder="+/- Mushybux" required>
+                    <input type="text" name="note" placeholder="Reason (optional)">
+                    <button type="submit">Adjust</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card admin-card" id="following-week-odds">
+      <h2>Following Week Odds Prep · Week <%= followingWeek %></h2>
+      <p class="muted">
+        These settings apply to Week <%= followingWeek %> only. Users are currently betting on Week <%= nextWeek %>, so these edits stay hidden until that week becomes the open betting week.
+      </p>
+
+      <h3>Series Odds</h3>
+      <% if (!followingWeekSeriesBoard.length) { %>
+        <p class="muted">No Week <%= followingWeek %> series found.</p>
+      <% } %>
+      <div class="admin-odds-grid">
+        <% followingWeekSeriesBoard.forEach(s => { %>
+          <form method="post" action="/admin/odds/series" class="admin-odds-card">
+            <input type="hidden" name="week" value="<%= followingWeek %>">
+            <input type="hidden" name="series_key" value="<%= s.series_key %>">
+            <div class="series-head compact-series-head">
+              <div>
+                <span class="pill"><%= s.division_name %></span>
+                <h3><%= s.away_team_name %> at <%= s.home_team_name %></h3>
+              </div>
+            </div>
+            <div class="admin-odds-market-grid">
+              <% s.markets.forEach(m => { %>
+                <label>
+                  <span><%= m.label.replace(s.away_team_name, s.away_team_name).replace(s.home_team_name, s.home_team_name) %></span>
+                  <input type="hidden" name="market_key" value="<%= m.market_key %>">
+                  <input type="number" name="multiplier" min="0.1" step="0.1" value="<%= m.multiplier %>">
+                </label>
+              <% }) %>
+              <label>
+                O/U line
+                <input type="number" name="goal_total_line" min="0.5" step="0.5" value="<%= s.goalTotal.line %>">
+              </label>
+              <label>
+                O/U boost
+                <input type="number" name="goal_total_boost" min="1" step="0.1" value="<%= s.goalTotal.boost %>">
+              </label>
+            </div>
+            <button type="submit">Save Series Odds</button>
+          </form>
+        <% }) %>
+      </div>
+
+      <h3>Prop Odds</h3>
+      <% followingWeekPropBoards.forEach(div => { %>
+        <article class="admin-prop-division">
+          <h3><%= div.division_name %></h3>
+          <div class="admin-prop-grid">
+            <% div.categories.forEach(prop => { %>
+              <div class="admin-odds-card">
+                <form method="post" action="/admin/odds/prop-default" class="admin-prop-default-form">
+                  <input type="hidden" name="week" value="<%= followingWeek %>">
+                  <input type="hidden" name="division_id" value="<%= div.division_id %>">
+                  <input type="hidden" name="category" value="<%= prop.category %>">
+                  <h4><%= prop.title %> Defaults</h4>
+                  <% if (prop.quantity_options.length) { %>
+                    <div class="admin-prop-quantity-grid">
+                      <% prop.quantity_options.forEach(q => { %>
+                        <label>
+                          <%= q.label %>
+                          <input type="number" name="quantity_<%= q.quantity %>" min="0.1" step="0.1" value="<%= q.multiplier %>">
+                        </label>
+                      <% }) %>
+                    </div>
+                  <% } else { %>
+                    <label>
+                      Default odds for all players
+                      <input type="number" name="multiplier" min="0.1" step="0.1" value="<%= prop.multiplier %>">
+                    </label>
+                  <% } %>
+                  <button type="submit">Save Defaults</button>
+                </form>
+
+                <form method="post" action="/admin/odds/player-override" class="admin-player-override-form">
+                  <input type="hidden" name="week" value="<%= followingWeek %>">
+                  <input type="hidden" name="division_id" value="<%= div.division_id %>">
+                  <input type="hidden" name="category" value="<%= prop.category %>">
+                  <h4>Individual Override</h4>
+                  <label>
+                    Player
+                    <select name="player_key" required>
+                      <option value="">Select player</option>
+                      <% prop.players.forEach(player => { %>
+                        <% if (prop.quantity_options.length) { %>
+                          <option value="<%= player.player_key %>"><%= player.display_name %> · current <%= prop.quantity_options.map(q => `${q.quantity}:${(player.prop_quantity_multipliers && player.prop_quantity_multipliers[q.quantity]) || q.multiplier}x`).join(' / ') %></option>
+                        <% } else { %>
+                          <option value="<%= player.player_key %>"><%= player.display_name %> · current <%= player.prop_multiplier || prop.multiplier %>x</option>
+                        <% } %>
+                      <% }) %>
+                    </select>
+                  </label>
+                  <% if (prop.quantity_options.length) { %>
+                    <div class="admin-prop-quantity-grid">
+                      <% prop.quantity_options.forEach(q => { %>
+                        <label>
+                          <%= q.label %> custom odds
+                          <input type="number" name="quantity_<%= q.quantity %>" min="0.1" step="0.1" placeholder="default <%= q.multiplier %>">
+                        </label>
+                      <% }) %>
+                    </div>
+                    <p class="muted small-note">Leave a quantity blank to keep its current/default odds.</p>
+                  <% } else { %>
+                    <label>
+                      Custom odds
+                      <input type="number" name="multiplier" min="0.1" step="0.1" placeholder="ex: 2">
+                    </label>
+                  <% } %>
+                  <div class="admin-action-row">
+                    <button type="submit">Save Override</button>
+                    <button type="submit" name="clear" value="1" class="button-link ghost">Clear Override</button>
+                  </div>
+                </form>
+              </div>
+            <% }) %>
+          </div>
+        </article>
+      <% }) %>
+    </section>
+  </main>
+</body>
+</html>

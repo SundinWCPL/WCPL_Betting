@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WCPL Betting</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <main class="container">
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">Season 3 · Week <%= currentWeek %></p>
+        <h1>Leaderboard & Weekly Betting Board</h1>
+        <p>Track the Mushybux race, weekly movement, and where the league is putting its Mushybux.</p>
+        <% if (currentUserBalance) { %>
+          <p class="balance-line">Your Mushybux: <strong><%= currentUserBalance.display %></strong> <span class="muted">total (wagered)</span></p>
+        <% } %>
+      </div>
+      <% if (!currentUser) { %><a class="primary" href="/login">Login to bet</a><% } else { %><a class="primary" href="/betting">Place bets</a><% } %>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>Top 5 Leaderboard</h2>
+        <table>
+          <thead><tr><th>#</th><th>User</th><th>Mushybux</th><th>Last Week</th></tr></thead>
+          <tbody>
+            <% leaderboard.forEach((u, i) => { %>
+              <tr class="<%= currentUser && Number(currentUser.id) === Number(u.id) ? 'self-row' : '' %>">
+                <td><%= i + 1 %></td>
+                <td><%= u.display_name %></td>
+                <td><%= u.balance_display %></td>
+                <td class="<%= Number(u.last_week_change) > 0 ? 'positive' : (Number(u.last_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.last_week_display %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        <p class="small-note">Mushybux shown as total balance (currently wagered).</p>
+      </div>
+
+      <div class="card">
+        <h2>Top Bets This Week</h2>
+        <% if (!topBets.length) { %>
+          <p class="muted">No bets placed yet.</p>
+        <% } else { %>
+          <table>
+            <thead><tr><th>Bet</th><th>Mushybux</th><th>Bets</th></tr></thead>
+            <tbody>
+              <% topBets.forEach(t => { %>
+                <tr><td><%= t.label %></td><td><%= t.total_stake %></td><td><%= t.bet_count %></td></tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Week <%= currentWeek %> Matchups</h2>
+      <div class="matchup-columns">
+        <% matchupGroups.forEach(group => { %>
+          <div class="division-matchups">
+            <h3><%= group.division_name %></h3>
+            <div class="matchup-list compact-matchup-list">
+              <% group.series.forEach(s => { %>
+                <div class="matchup-row compact-matchup-row">
+                  <strong>
+                    <%= s.away_team_name %>
+                    <span class="community-odds" title="<%= s.away_community_odds.title %>"><%= s.away_community_odds.odds %></span>
+                  </strong>
+                  <span>at</span>
+                  <strong>
+                    <%= s.home_team_name %>
+                    <span class="community-odds" title="<%= s.home_community_odds.title %>"><%= s.home_community_odds.odds %></span>
+                  </strong>
+                </div>
+              <% }) %>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Betting · WCPL Betting</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <main class="container">
+    <section class="card page-title compact-title">
+      <div>
+        <p class="eyebrow">Week <%= bettingView.week %> · <strong class="<%= bettingView.locked ? 'negative' : 'positive' %>"><%= bettingView.locked ? 'Locked' : 'Open' %></strong></p>
+        <h1><%= bettingView.view === 'next' ? 'Next Week Betting Board' : 'Current Week Bets' %></h1>
+        <p>Mushybux: <strong><%= balanceSummary.display %></strong> <span class="muted">total (wagered)</span> · Series max: <strong><%= maxBet %></strong> · Prop max: <strong><%= propMaxBet %></strong></p>
+        <% if (bettingView.locked) { %>
+          <p class="negative">These bets are locked in and cannot be changed.</p>
+        <% } else { %>
+          <p class="muted">One bet per matchup, and one prop bet per category per division. Change picks until betting locks.</p>
+        <% } %>
+      </div>
+      <div class="toggle-stack">
+        <div class="toggle-row">
+          <a class="button-link <%= bettingView.view === 'current' ? 'ghost-active' : 'ghost' %>" href="/betting?view=current&type=<%= betType %>">Current Week</a>
+          <a class="button-link <%= bettingView.view === 'next' ? 'ghost-active' : 'ghost' %>" href="/betting?view=next&type=<%= betType %>">Next Week</a>
+        </div>
+        <div class="toggle-row">
+          <a class="button-link <%= betType === 'series' ? 'ghost-active' : 'ghost' %>" href="/betting?view=<%= bettingView.view %>&type=series">Series Bets</a>
+          <a class="button-link <%= betType === 'props' ? 'ghost-active' : 'ghost' %>" href="/betting?view=<%= bettingView.view %>&type=props">Prop Bets</a>
+        </div>
+      </div>
+    </section>
+
+    <% if (betType === 'series') { %>
+      <section class="board compact-board">
+        <% if (!board.length) { %>
+          <article class="card">
+            <h2>No matchups found</h2>
+            <p class="muted">No schedule rows were found for Week <%= bettingView.week %>.</p>
+          </article>
+        <% } %>
+
+        <% board.forEach((s, idx) => { %>
+          <article class="card series-card bet-builder compact-series" data-card-index="<%= idx %>">
+            <div class="series-head compact-series-head">
+              <div>
+                <span class="pill"><%= s.division_name %></span>
+                <h2><%= s.away_team_name %> at <%= s.home_team_name %></h2>
+              </div>
+              <% if (s.currentBet) { %>
+                <div class="current-bet-box compact-current-bet">
+                  <span class="pill">Current bet</span>
+                  <strong><%= s.currentBet.label.split(': ').pop() %></strong>
+                  <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Return <strong><%= Number(s.currentBet.stake) * Number(s.currentBet.multiplier) %></strong></span>
+                </div>
+              <% } else { %>
+                <p class="muted compact-no-bet">No bet placed.</p>
+              <% } %>
+            </div>
+
+            <% if (!bettingView.locked) { %>
+              <form method="post" action="/bets" class="builder-form compact-builder-form">
+                <input type="hidden" name="view" value="<%= bettingView.view %>">
+                <input type="hidden" name="series_key" value="<%= s.series_key %>">
+                <input type="hidden" name="market_key" value="<%= s.currentBet ? s.currentBet.market_key : '' %>" data-market-input required>
+                <input type="hidden" name="goal_total_side" value="<%= s.currentBet && s.currentBet.goal_total_side ? s.currentBet.goal_total_side : '' %>" data-goal-total-input>
+                <input type="hidden" name="goal_total_line" value="<%= s.goalTotal.line %>" data-goal-total-line>
+                <input type="hidden" value="<%= s.goalTotal.boost %>" data-goal-total-boost>
+
+                <% s.markets.forEach(m => { %>
+                  <input
+                    type="hidden"
+                    data-market-option
+                    data-team-id="<%= m.team_id %>"
+                    data-type="<%= m.type %>"
+                    data-market-key="<%= m.market_key %>"
+                    data-multiplier="<%= m.multiplier %>"
+                    data-label="<%= m.label %>"
+                  >
+                <% }) %>
+
+                <div class="compact-control-row">
+                  <label class="stake-label compact-stake inline-stake">
+                    <span class="step-label">Stake</span>
+                    <input name="stake" type="number" min="1" max="<%= maxBet %>" placeholder="Stake" value="<%= s.currentBet ? s.currentBet.stake : '' %>" data-stake-input required>
+                  </label>
+
+                  <div class="builder-step compact-step">
+                    <span class="step-label">Winner</span>
+                    <div class="choice-row compact-choice-row">
+                      <button type="button" class="choice-btn team-choice" data-team-id="<%= s.away_team_id %>"><%= s.away_team_name %></button>
+                      <button type="button" class="choice-btn team-choice" data-team-id="<%= s.home_team_id %>"><%= s.home_team_name %></button>
+                    </div>
+                  </div>
+
+                  <div class="builder-step compact-step risk-step" data-risk-step>
+                    <span class="step-label">Result</span>
+                    <div class="choice-row compact-choice-row risk-row">
+                      <button type="button" class="choice-btn risk-choice" data-type="series_win">Series win <span data-risk-odds="series_win">2x</span></button>
+                      <button type="button" class="choice-btn risk-choice" data-type="exact_2_1">2-1 <span data-risk-odds="exact_2_1">3x</span></button>
+                      <button type="button" class="choice-btn risk-choice" data-type="sweep_3_0">3-0 sweep <span data-risk-odds="sweep_3_0">4x</span></button>
+                    </div>
+                  </div>
+
+                  <div class="builder-step compact-step goal-total-step">
+                    <span class="step-label">O/U <%= s.goalTotal.line %> Goals <span class="boost-mult">(+<%= s.goalTotal.boost %>x)</span></span>
+                    <div class="choice-row compact-choice-row goal-total-row">
+                      <button type="button" class="choice-btn goal-total-choice <%= s.currentBet && s.currentBet.goal_total_side === 'over' ? 'selected' : '' %>" data-goal-total-side="over">Over</button>
+                      <button type="button" class="choice-btn goal-total-choice <%= s.currentBet && s.currentBet.goal_total_side === 'under' ? 'selected' : '' %>" data-goal-total-side="under">Under</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="builder-actions compact-builder-actions">
+                  <div class="builder-summary compact-summary" data-summary hidden>
+                    <span data-summary-text>Select a team and result.</span>
+                    <strong data-return-text></strong>
+                  </div>
+                  <button class="place-button"><%= s.currentBet ? 'Update Bet' : 'Place Bet' %></button>
+                </div>
+              </form>
+            <% } %>
+          </article>
+        <% }) %>
+      </section>
+    <% } else { %>
+      <section class="board compact-board prop-board">
+        <% propBoards.forEach(div => { %>
+          <article class="card prop-division-card">
+            <div class="series-head compact-series-head prop-division-head">
+              <div>
+                <span class="pill"><%= div.division_name %></span>
+                <h2><%= div.division_name %> Prop Bets</h2>
+              </div>
+              <p class="muted compact-no-bet">Max prop bet: <strong><%= propMaxBet %></strong> Mushybux</p>
+            </div>
+
+            <div class="prop-grid">
+              <% div.categories.forEach((prop, propIdx) => { %>
+                <div class="prop-card prop-builder" data-prop-index="<%= div.division_id %>-<%= propIdx %>">
+                  <div class="prop-card-head">
+                    <div>
+                      <h3><%= prop.title %></h3>
+                      <p class="muted"><%= prop.description %></p>
+                    </div>
+                    <% if (prop.currentBet) { %>
+                      <div class="current-bet-box compact-current-bet prop-current-bet">
+                        <span class="pill">Current bet</span>
+                        <strong><%= prop.currentBet.label.split(': ').pop() %></strong>
+                        <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Return <strong><%= Number(prop.currentBet.stake) * Number(prop.currentBet.multiplier) %></strong></span>
+                      </div>
+                    <% } else { %>
+                      <p class="muted compact-no-bet">No bet placed.</p>
+                    <% } %>
+                  </div>
+
+                  <% if (!bettingView.locked) { %>
+                    <form method="post" action="/prop-bets" class="builder-form compact-builder-form prop-form">
+                      <input type="hidden" name="view" value="<%= bettingView.view %>">
+                      <input type="hidden" name="prop_key" value="<%= prop.prop_key %>">
+
+                      <div class="prop-control-row <%= prop.quantity_options.length ? '' : 'no-quantity' %>">
+                        <label class="stake-label compact-stake inline-stake">
+                          <span class="step-label">Stake</span>
+                          <input name="stake" type="number" min="1" max="<%= propMaxBet %>" placeholder="Stake" value="<%= prop.currentBet ? prop.currentBet.stake : '' %>" data-prop-stake-input required>
+                        </label>
+
+                        <label class="prop-select-label">
+                          <span class="step-label">Player</span>
+                          <select name="player_key" data-prop-player required>
+                            <option value="">Select player</option>
+                            <% prop.players.forEach(player => { %>
+                              <option
+                                value="<%= player.player_key %>"
+                                data-player-name="<%= player.display_name %>"
+                                data-player-multiplier="<%= player.prop_multiplier || prop.multiplier %>"
+                                data-player-q1="<%= player.prop_quantity_multipliers ? player.prop_quantity_multipliers[1] : '' %>"
+                                data-player-q2="<%= player.prop_quantity_multipliers ? player.prop_quantity_multipliers[2] : '' %>"
+                                data-player-q3="<%= player.prop_quantity_multipliers ? player.prop_quantity_multipliers[3] : '' %>"
+                                <%= prop.currentBet && prop.currentBet.player_key === player.player_key ? 'selected' : '' %>
+                              ><%= player.display_name %><% if (!prop.quantity_options.length) { %> (<%= player.prop_multiplier || prop.multiplier %>x)<% } %></option>
+                            <% }) %>
+                          </select>
+                        </label>
+
+                        <% if (prop.quantity_options.length) { %>
+                          <div class="builder-step compact-step prop-result-step">
+                            <span class="step-label">Result</span>
+                            <input type="hidden" name="quantity" value="<%= prop.currentBet && prop.currentBet.quantity ? prop.currentBet.quantity : '' %>" data-prop-quantity required>
+                            <div class="choice-row compact-choice-row risk-row prop-quantity-row">
+                              <% prop.quantity_options.forEach(q => { %>
+                                <button
+                                  type="button"
+                                  class="choice-btn prop-quantity-choice <%= prop.currentBet && Number(prop.currentBet.quantity) === Number(q.quantity) ? 'selected' : '' %>"
+                                  data-quantity="<%= q.quantity %>"
+                                  data-label="<%= q.label %>"
+                                  data-multiplier="<%= q.multiplier %>"
+                                ><%= q.label %> <span><%= q.multiplier %>x</span></button>
+                              <% }) %>
+                            </div>
+                          </div>
+                        <% } else { %>
+                          <input type="hidden" name="quantity" value="">
+                          <input type="hidden" data-fixed-multiplier value="<%= prop.multiplier %>">
+                        <% } %>
+                      </div>
+
+                      <div class="builder-actions compact-builder-actions">
+                        <div class="builder-summary compact-summary" data-prop-summary hidden>
+                          <span data-prop-summary-text>Select a player.</span>
+                          <strong data-prop-return-text></strong>
+                        </div>
+                        <button class="place-button"><%= prop.currentBet ? 'Update Prop' : 'Place Prop' %></button>
+                      </div>
+                    </form>
+                  <% } %>
+                </div>
+              <% }) %>
+            </div>
+          </article>
+        <% }) %>
+      </section>
+    <% } %>
+  </main>
+
+  <script>
+    document.querySelectorAll('.bet-builder').forEach(card => {
+      const teamButtons = [...card.querySelectorAll('.team-choice')];
+      const riskButtons = [...card.querySelectorAll('.risk-choice')];
+      const goalTotalButtons = [...card.querySelectorAll('.goal-total-choice')];
+      const marketOptions = [...card.querySelectorAll('[data-market-option]')];
+      const marketInput = card.querySelector('[data-market-input]');
+      const goalTotalInput = card.querySelector('[data-goal-total-input]');
+      const goalTotalLineInput = card.querySelector('[data-goal-total-line]');
+      const stakeInput = card.querySelector('[data-stake-input]');
+      const summary = card.querySelector('[data-summary]');
+      const summaryText = card.querySelector('[data-summary-text]');
+      const returnText = card.querySelector('[data-return-text]');
+
+      if (!marketInput) return;
+
+      let selectedTeamId = '';
+      let selectedType = 'series_win';
+      let selectedMultiplier = 0;
+      let selectedLabel = '';
+      let selectedGoalTotalSide = goalTotalInput?.value || '';
+      const goalTotalLine = goalTotalLineInput?.value || '10.5';
+      const goalTotalBoost = Number(card.querySelector('[data-goal-total-boost]')?.value || 1.5);
+
+      function findMarket(teamId, type) {
+        return marketOptions.find(m => m.dataset.teamId === teamId && m.dataset.type === type);
+      }
+
+      function refreshRiskOdds() {
+        if (!selectedTeamId) return;
+        riskButtons.forEach(button => {
+          const market = findMarket(selectedTeamId, button.dataset.type);
+          const span = button.querySelector('[data-risk-odds]');
+          if (market && span) span.textContent = `${market.dataset.multiplier}x`;
+        });
+      }
+
+      function applySelection() {
+        if (!selectedTeamId) return;
+        refreshRiskOdds();
+        const market = findMarket(selectedTeamId, selectedType) || findMarket(selectedTeamId, 'series_win');
+        if (!market) return;
+
+        selectedType = market.dataset.type;
+        marketInput.value = market.dataset.marketKey;
+        selectedMultiplier = Number(market.dataset.multiplier || 0);
+        selectedLabel = market.dataset.label || '';
+
+        riskButtons.forEach(b => b.classList.toggle('selected', b.dataset.type === selectedType));
+        updateSummary();
+      }
+
+      function updateSummary() {
+        if (!marketInput.value || !summary) return;
+        const stake = Number(stakeInput.value || 0);
+        const boostedMultiplier = selectedGoalTotalSide ? Number((selectedMultiplier * goalTotalBoost).toFixed(2)) : selectedMultiplier;
+        const ouLabel = selectedGoalTotalSide ? ` + ${selectedGoalTotalSide === 'over' ? 'Over' : 'Under'} ${goalTotalLine}` : '';
+        summary.hidden = false;
+        summaryText.textContent = `${selectedLabel || 'Selection ready.'}${ouLabel}`;
+        returnText.textContent = stake > 0 && boostedMultiplier > 0
+          ? `Potential return: ${stake * boostedMultiplier} Mushybux`
+          : '';
+      }
+
+      teamButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          selectedTeamId = button.dataset.teamId;
+          teamButtons.forEach(b => b.classList.remove('selected'));
+          button.classList.add('selected');
+          applySelection();
+        });
+      });
+
+      riskButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          selectedType = button.dataset.type;
+          applySelection();
+        });
+      });
+
+      function updateGoalTotalButtons() {
+        goalTotalButtons.forEach(b => b.classList.toggle('selected', b.dataset.goalTotalSide === selectedGoalTotalSide));
+        if (goalTotalInput) goalTotalInput.value = selectedGoalTotalSide;
+        updateSummary();
+      }
+
+      goalTotalButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          const side = button.dataset.goalTotalSide;
+          selectedGoalTotalSide = selectedGoalTotalSide === side ? '' : side;
+          updateGoalTotalButtons();
+        });
+      });
+
+      stakeInput?.addEventListener('input', updateSummary);
+
+      const existingMarket = marketInput.value;
+      if (existingMarket) {
+        const existingOption = marketOptions.find(m => m.dataset.marketKey === existingMarket);
+        if (existingOption) {
+          const existingTeam = teamButtons.find(b => b.dataset.teamId === existingOption.dataset.teamId);
+          selectedType = existingOption.dataset.type || 'series_win';
+          existingTeam?.click();
+          applySelection();
+        }
+      }
+      updateGoalTotalButtons();
+    });
+
+    document.querySelectorAll('.prop-builder').forEach(card => {
+      const form = card.querySelector('.prop-form');
+      if (!form) return;
+
+      const playerSelect = form.querySelector('[data-prop-player]');
+      const stakeInput = form.querySelector('[data-prop-stake-input]');
+      const quantityInput = form.querySelector('[data-prop-quantity]');
+      const quantityButtons = [...form.querySelectorAll('.prop-quantity-choice')];
+      const fixedMultiplierInput = form.querySelector('[data-fixed-multiplier]');
+      const summary = form.querySelector('[data-prop-summary]');
+      const summaryText = form.querySelector('[data-prop-summary-text]');
+      const returnText = form.querySelector('[data-prop-return-text]');
+
+      let multiplier = Number(fixedMultiplierInput?.value || 0);
+      let quantityLabel = '';
+
+      function updatePropSummary() {
+        if (!summary) return;
+        const selectedOption = playerSelect?.selectedOptions?.[0];
+        const playerName = selectedOption?.dataset?.playerName || selectedOption?.textContent || '';
+        if (!quantityButtons.length && selectedOption?.dataset?.playerMultiplier) {
+          multiplier = Number(selectedOption.dataset.playerMultiplier || multiplier);
+        }
+        if (quantityButtons.length && quantityInput?.value && selectedOption) {
+          const qMult = selectedOption.dataset[`playerQ${quantityInput.value}`];
+          const selectedButton = quantityButtons.find(b => b.dataset.quantity === quantityInput.value);
+          multiplier = Number(qMult || selectedButton?.dataset.multiplier || multiplier);
+        }
+        const stake = Number(stakeInput?.value || 0);
+
+        if (!playerSelect?.value) {
+          summary.hidden = true;
+          return;
+        }
+
+        if (quantityButtons.length && !quantityInput.value) {
+          summary.hidden = false;
+          summaryText.textContent = `${playerName}: select result.`;
+          returnText.textContent = '';
+          return;
+        }
+
+        summary.hidden = false;
+        summaryText.textContent = quantityLabel ? `${playerName} · ${quantityLabel} · ${multiplier}x` : `${playerName} · ${multiplier}x`;
+        returnText.textContent = stake > 0 && multiplier > 0
+          ? `Potential return: ${stake * multiplier} Mushybux`
+          : '';
+      }
+
+      quantityButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          quantityButtons.forEach(b => b.classList.remove('selected'));
+          button.classList.add('selected');
+          quantityInput.value = button.dataset.quantity;
+          multiplier = Number(button.dataset.multiplier || 0);
+          quantityLabel = button.dataset.label || '';
+          updatePropSummary();
+        });
+      });
+
+      playerSelect?.addEventListener('change', updatePropSummary);
+      stakeInput?.addEventListener('input', updatePropSummary);
+
+      const selectedQuantity = quantityButtons.find(b => b.classList.contains('selected'));
+      if (selectedQuantity) {
+        multiplier = Number(selectedQuantity.dataset.multiplier || 0);
+        quantityLabel = selectedQuantity.dataset.label || '';
+      }
+      updatePropSummary();
+    });
+  </script>
+</body>
+</html>

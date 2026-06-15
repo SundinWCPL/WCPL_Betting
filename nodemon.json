@@ -1,0 +1,11 @@
+{
+  "watch": [
+    "server.js",
+    "views",
+    "public"
+  ],
+  "ignore": [
+    "betting.json"
+  ],
+  "ext": "js,ejs,css"
+}

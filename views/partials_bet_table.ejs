@@ -1,0 +1,30 @@
+<% if (!bets.length) { %>
+  <p class="muted">No open bets found.</p>
+<% } else { %>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Type</th>
+          <th>Bet</th>
+          <th>Stake</th>
+          <th>Odds</th>
+          <th>Potential Return</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% bets.forEach(b => { %>
+          <tr>
+            <td><%= b.user_display_name %></td>
+            <td><%= b.bet_kind === 'prop' ? 'Prop' : 'Series' %></td>
+            <td><%= b.label %></td>
+            <td><%= b.stake %></td>
+            <td><%= b.multiplier %>x</td>
+            <td><%= b.potential_return %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+<% } %>
