@@ -213,10 +213,23 @@ app.get('/', async (req, res, next) => {
     const teamTotals = applyTeamNamesToTotals(getWeeklyBetTotalByTeam(currentWeek), series);
     const teamTotalMap = getTeamTotalMap(teamTotals);
     const matchupGroups = groupSeriesByDivision(series, teamTotalMap);
-    const topBets = getTopWeeklyBets(currentWeek, 5).map(b => ({
-      ...b,
-      label: String(b.label || '').split(': ').pop()
-    }));
+    function formatTopBetLabel(label) {
+  const raw = String(label || '');
+
+  const propMatch = raw.match(/^(Division \d+|League) (Top Scorer|Top Goalie|Hat Trick|Shutout): (.+)$/);
+  if (propMatch) {
+    const division = propMatch[1];
+    const prop = propMatch[2];
+    const pick = propMatch[3].replace(' · ', ' - ');
+    return `${pick} - ${prop} (${division})`;
+  }
+
+  return raw.split(': ').pop();
+}
+const topBets = getTopWeeklyBets(currentWeek, 8).map(b => ({
+  ...b,
+  label: formatTopBetLabel(b.label)
+}));
     const currentUserBalance = req.session.userId ? getBalanceSummaryForUser(req.session.userId) : null;
     res.render('index', { leaderboard, series, teamTotals, topBets, matchupGroups, currentUserBalance });
   } catch (err) {
