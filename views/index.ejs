@@ -15,7 +15,7 @@
         <h1>Leaderboard & Weekly Betting Board</h1>
         <p>Track the Mushybux race, weekly movement, and where the league is putting its Mushybux.</p>
         <% if (currentUserBalance) { %>
-          <p class="balance-line">Your Mushybux: <strong><%= currentUserBalance.display %></strong> <span class="muted">total (wagered)</span></p>
+          <p class="balance-line">Your Mushybux: <strong><%= currentUserBalance.display %></strong> <span class="muted"> - total (wagered)</span></p>
         <% } %>
       </div>
       <% if (!currentUser) { %><a class="primary" href="/login">Login to bet</a><% } else { %><a class="primary" href="/betting">Place bets</a><% } %>

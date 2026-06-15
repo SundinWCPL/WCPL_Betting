@@ -208,7 +208,7 @@ app.get('/', async (req, res, next) => {
   try {
     const settings = getAdminSettings();
     const currentWeek = Number(settings.currentWeek || 1);
-    const leaderboard = getLeaderboard().slice(0, 5).map(u => ({ ...u, last_week_display: formatSigned(u.last_week_change) }));
+    const leaderboard = getLeaderboard().map(u => ({ ...u, last_week_display: formatSigned(u.last_week_change) }));
     const series = await getUpcomingSeries(currentWeek, settings.seasonId);
     const teamTotals = applyTeamNamesToTotals(getWeeklyBetTotalByTeam(currentWeek), series);
     const teamTotalMap = getTeamTotalMap(teamTotals);
