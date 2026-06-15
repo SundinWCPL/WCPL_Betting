@@ -213,7 +213,7 @@ app.get('/', async (req, res, next) => {
     const teamTotals = applyTeamNamesToTotals(getWeeklyBetTotalByTeam(currentWeek), series);
     const teamTotalMap = getTeamTotalMap(teamTotals);
     const matchupGroups = groupSeriesByDivision(series, teamTotalMap);
-    function formatTopBetLabel(label) {
+function formatTopBetLabel(label) {
   const raw = String(label || '');
 
   const propMatch = raw.match(/^(Division \d+|League) (Top Scorer|Top Goalie|Hat Trick|Shutout): (.+)$/);
@@ -221,6 +221,11 @@ app.get('/', async (req, res, next) => {
     const division = propMatch[1];
     const prop = propMatch[2];
     const pick = propMatch[3].replace(' · ', ' - ');
+
+    if (prop === 'Hat Trick' || prop === 'Shutout') {
+      return `${pick} (${division})`;
+    }
+
     return `${pick} - ${prop} (${division})`;
   }
 
