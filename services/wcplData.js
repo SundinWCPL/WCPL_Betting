@@ -71,7 +71,7 @@ export function clearWcplDataCache() {
 
 export async function getAvailableSeasons() {
   if (dataMode() === 'github') {
-    const configured = String(process.env.AVAILABLE_SEASONS || process.env.SEASON_ID || 'S3')
+    const configured = String(process.env.AVAILABLE_SEASONS || 'S2,S3')
       .split(',')
       .map(s => s.trim())
       .filter(Boolean);

@@ -23,16 +23,13 @@ Copy `.env.example` to `.env` for local testing:
 copy .env.example .env
 ```
 
-The app currently uses local JSON storage for development. On first run it creates `betting.json` and seeds demo users.
+The app currently uses local JSON storage for development. On first run it creates `betting.json` and seeds the Sundin admin user.
 
-## Demo users
+## Default admin user
 
 | Username | Password | Role |
 |---|---|---|
-| logan | password | admin |
-| jay | password | user |
-| dane | password | user |
-| josh | password | user |
+| Sundin | cactusgoat13 | admin |
 
 ## Important files not committed
 
@@ -68,7 +65,7 @@ For live WCPL data, switch to GitHub read mode:
 DATA_MODE=github
 WCPL_DATA_BASE_URL=https://raw.githubusercontent.com/SundinWCPL/WCPL/main/data
 SEASON_ID=S3
-AVAILABLE_SEASONS=S3
+AVAILABLE_SEASONS=S2,S3
 DIVISIONS=D1,D2
 ```
 

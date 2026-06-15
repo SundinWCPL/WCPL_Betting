@@ -142,14 +142,27 @@ export function createJsonBackup() {
 export function initDb() {
   loadState();
   ensureSettings();
-  seedUser('logan', 'Logan', 'admin');
-  seedUser('jay', 'Jay', 'user');
-  seedUser('dane', 'Dane', 'user');
-  seedUser('josh', 'Josh', 'user');
+  removeDemoUsers();
+  seedUser('Sundin', 'Sundin', 'admin', 'cactusgoat13');
   saveState();
 }
 
-function seedUser(username, displayName, role) {
+function removeDemoUsers() {
+  const demoNames = new Set(['logan', 'jay', 'dane', 'josh']);
+  const demoIds = new Set(
+    state.users
+      .filter(u => demoNames.has(String(u.username || '').toLowerCase()))
+      .map(u => Number(u.id))
+  );
+
+  if (!demoIds.size) return;
+
+  state.users = state.users.filter(u => !demoIds.has(Number(u.id)));
+  state.bets = state.bets.filter(b => !demoIds.has(Number(b.user_id)));
+  state.transactions = state.transactions.filter(t => !demoIds.has(Number(t.user_id)));
+}
+
+function seedUser(username, displayName, role, password = 'password') {
   const exists = state.users.find(u => u.username.toLowerCase() === username.toLowerCase());
   if (exists) return;
 
@@ -157,7 +170,7 @@ function seedUser(username, displayName, role) {
   const user = {
     id: state.nextUserId++,
     username,
-    password_hash: bcrypt.hashSync('password', 10),
+    password_hash: bcrypt.hashSync(password, 10),
     display_name: displayName,
     role,
     balance: startingBalance,
@@ -959,10 +972,7 @@ export function resetBetsForWeek(week) {
 export function resetAllData() {
   state = defaultState();
   ensureSettings();
-  seedUser('logan', 'Logan', 'admin');
-  seedUser('jay', 'Jay', 'user');
-  seedUser('dane', 'Dane', 'user');
-  seedUser('josh', 'Josh', 'user');
+  seedUser('Sundin', 'Sundin', 'admin', 'cactusgoat13');
   saveState();
   return getAdminSettings();
 }
