@@ -23,8 +23,9 @@
 
     <section class="grid two">
       <div class="card">
-        <h2>Top 5 Leaderboard</h2>
-        <table>
+        <h2>Leaderboard</h2>
+		<div class="leaderboard-scroll">
+		<table>
           <thead><tr><th>#</th><th>User</th><th>Mushybux</th><th>Last Week</th></tr></thead>
           <tbody>
             <% leaderboard.forEach((u, i) => { %>
@@ -37,6 +38,7 @@
             <% }) %>
           </tbody>
         </table>
+		</div>
         <p class="small-note">Mushybux shown as total balance (currently wagered).</p>
       </div>
 

@@ -527,3 +527,12 @@ select {
     grid-template-columns: 1fr;
   }
 }
+.leaderboard-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  border-radius: 12px;
+}
+
+.leaderboard-scroll table {
+  margin-bottom: 0;
+}
