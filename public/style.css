@@ -248,26 +248,20 @@ ul { color: var(--muted); line-height: 1.7; }
   font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
-  color: white;
-  border: 1px solid rgba(255,255,255,0.08);
+
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 .community-odds.favorite {
-  background: rgba(
-    34,
-    197,
-    94,
-    calc(0.15 + var(--odds-intensity) * 0.85)
-  );
+  color: rgba(34, 197, 94, calc(0.35 + var(--odds-intensity) * 0.65));
+  border-color: rgba(34, 197, 94, calc(0.25 + var(--odds-intensity) * 0.75));
 }
 
 .community-odds.underdog {
-  background: rgba(
-    239,
-    68,
-    68,
-    calc(0.15 + var(--odds-intensity) * 0.85)
-  );
+  color: rgba(239, 68, 68, calc(0.35 + var(--odds-intensity) * 0.65));
+  border-color: rgba(239, 68, 68, calc(0.25 + var(--odds-intensity) * 0.75));
 }
 
 /* Prop betting layout */
