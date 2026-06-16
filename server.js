@@ -142,22 +142,18 @@ function formatCommunityOdds(teamStake, opponentStake) {
   }
 
   const percent = Number(teamStake || 0) / total;
+  const displayPercent = Math.round(percent * 100);
 
   if (percent === 0.5) {
     return { odds: '+100', percent: 50, title: '50% of Mushybux on this team.' };
   }
 
-  let odds;
-  if (percent > 0.5) {
-    odds = -Math.round(100 * percent / (1 - percent || 0.01));
-    odds = Math.max(odds, -1000);
-  } else {
-    odds = Math.round(100 * (1 - percent) / (percent || 0.01));
-    odds = Math.min(odds, 1000);
-  }
+  const distanceFromEven = Math.abs(percent - 0.5) / 0.5;
+  let odds = Math.round(100 + distanceFromEven * 900);
+
+  if (percent > 0.5) odds = -odds;
 
   const displayOdds = odds > 0 ? `+${odds}` : String(odds);
-  const displayPercent = Math.round(percent * 100);
 
   return {
     odds: displayOdds,
