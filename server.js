@@ -33,6 +33,11 @@ import {
   setSeasonId,
   buildSettlementPreview,
   settleWeek,
+  settleCompletedBets,
+  voidBetById,
+  voidBetsForSeries,
+  getVoidRefundsForWeek,
+  getOpenBetCountForWeek,
   getUserSettledBetHistory,
   getOddsAdjustmentsForWeek,
   saveSeriesOddsForWeek,
@@ -43,7 +48,7 @@ import {
   getBackupInfo,
   getDatabasePath
 } from './db.js';
-import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries } from './services/wcplData.js';
+import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries, getPlayers } from './services/wcplData.js';
 import { buildWeekSettlementResults, evaluateBetAgainstResults } from './services/settlement.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -180,6 +185,36 @@ function groupSeriesByDivision(series, teamTotalMap) {
     });
   }
   return [...groups.values()];
+}
+
+
+async function settleCompletedBetsOrThrow({ week, seasonId }) {
+  const weekResults = await buildWeekSettlementResults({ seasonId, week });
+  const preview = buildSettlementPreview({
+    week,
+    weekResults,
+    evaluator: evaluateBetAgainstResults
+  });
+
+  const evaluations = Object.fromEntries(preview.rows.map(r => [r.id, {
+    ready: r.ready,
+    won: r.won,
+    reason: r.evaluation_reason,
+    result_summary: r.result_summary
+  }]));
+
+  return settleCompletedBets({ week, results: { evaluations } });
+}
+
+async function buildSeriesVoidPayload({ seasonId, week, seriesKey }) {
+  const series = (await getUpcomingSeries(week, seasonId)).find(s => s.series_key === seriesKey);
+  if (!series) throw new Error('Series not found for this week.');
+  const teamIds = [series.home_team_id, series.away_team_id].map(v => String(v || '').trim());
+  const players = await getPlayers(series.division_id, seasonId);
+  const playerKeys = players
+    .filter(p => teamIds.includes(String(p.team_id || '').trim()))
+    .map(p => p.player_key);
+  return { series, teamIds, playerKeys };
 }
 
 async function settleWeekOrThrow({ week, seasonId }) {
@@ -386,6 +421,7 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
       category,
       playerKey: player.player_key,
       playerName: player.display_name,
+      playerTeamId: player.team_id,
       label,
       stake: Number(req.body.stake),
       multiplier,
@@ -424,6 +460,8 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     const users = getUserSummaries();
     const seasons = await getAvailableSeasons();
     const followingWeekOdds = getOddsAdjustmentsForWeek(followingWeek);
+    const currentWeekSeries = await getUpcomingSeries(currentWeek, settings.seasonId);
+    const voidRefunds = getVoidRefundsForWeek(currentWeek);
     const followingWeekSeries = await getUpcomingSeries(followingWeek, settings.seasonId);
     const followingWeekSeriesBoard = followingWeekSeries.map(s => ({
       ...s,
@@ -452,6 +490,8 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       openWeek: nextWeek,
       followingWeek,
       currentWeekBets,
+      currentWeekSeries,
+      voidRefunds,
       nextWeekBets,
       openWeekBets: nextWeekBets,
       users,
@@ -506,6 +546,49 @@ app.post('/admin/settle-week', requireAdmin, async (req, res) => {
     const week = Number(req.body.week || settings.currentWeek);
     const result = await settleWeekOrThrow({ week, seasonId: settings.seasonId });
     req.session.flash = { type: 'success', message: `Settled Week ${week}: ${result.winners} winner(s), ${result.losers} loser(s), ${result.payoutTotal} Mushybux paid.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin');
+});
+
+
+app.post('/admin/settle-completed', requireAdmin, async (req, res) => {
+  try {
+    const settings = getAdminSettings();
+    const week = Number(req.body.week || settings.currentWeek);
+    const result = await settleCompletedBetsOrThrow({ week, seasonId: settings.seasonId });
+    req.session.flash = { type: 'success', message: `Settled completed Week ${week} bets: ${result.winners} winner(s), ${result.losers} loser(s), ${result.payoutTotal} Mushybux paid. ${result.skipped} bet(s) still unresolved.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin');
+});
+
+app.post('/admin/refund-bet', requireAdmin, (req, res) => {
+  try {
+    const result = voidBetById(req.body.bet_id, 'Manual admin refund');
+    req.session.flash = { type: 'success', message: `Refunded ${result.refunded} Mushybux and voided ${result.count} bet.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin');
+});
+
+app.post('/admin/void-series', requireAdmin, async (req, res) => {
+  try {
+    const settings = getAdminSettings();
+    const week = Number(req.body.week || settings.currentWeek);
+    const seriesKey = String(req.body.series_key || '').trim();
+    const payload = await buildSeriesVoidPayload({ seasonId: settings.seasonId, week, seriesKey });
+    const result = voidBetsForSeries({
+      week,
+      seriesKey,
+      teamIds: payload.teamIds,
+      playerKeys: payload.playerKeys,
+      reason: `Postponed series refund (${payload.series.away_team_name} at ${payload.series.home_team_name})`
+    });
+    req.session.flash = { type: 'success', message: `Voided postponed series bets: ${result.seriesCount} series bet(s), ${result.propCount} prop bet(s), ${result.refunded} Mushybux refunded.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
@@ -580,12 +663,16 @@ app.post('/admin/reset-all-data', requireAdmin, (req, res) => {
 app.post('/admin/advance-week', requireAdmin, async (req, res) => {
   try {
     const before = getAdminSettings();
-    const settlement = await settleWeekOrThrow({ week: before.currentWeek, seasonId: before.seasonId });
+    const openCount = getOpenBetCountForWeek(before.currentWeek);
+    if (openCount > 0) {
+      throw new Error(`Week ${before.currentWeek} still has ${openCount} unsettled open bet(s). Settle completed bets, wait for incomplete results, or refund/void them before advancing.`);
+    }
+
     const after = advanceWeek();
     const allowance = applyWeeklyAllowance(after.currentWeek);
     req.session.flash = {
       type: 'success',
-      message: `Settled Week ${before.currentWeek}: ${settlement.winners} winner(s), ${settlement.losers} loser(s), ${settlement.payoutTotal} Mushybux paid. Advanced to Week ${after.currentWeek}. Week ${after.currentWeek} is locked, Week ${Number(after.currentWeek) + 1} is open, and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.`
+      message: `Advanced to Week ${after.currentWeek}. Week ${after.currentWeek} is locked, Week ${Number(after.currentWeek) + 1} is open, and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.`
     };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };

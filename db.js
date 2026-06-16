@@ -351,6 +351,7 @@ export function placeOrUpdatePropBet({
   category,
   playerKey,
   playerName,
+  playerTeamId = '',
   label,
   stake,
   multiplier,
@@ -381,6 +382,7 @@ export function placeOrUpdatePropBet({
     existingBet.prop_category = category;
     existingBet.player_key = playerKey;
     existingBet.player_name = playerName;
+    existingBet.player_team_id = String(playerTeamId || existingBet.player_team_id || '');
     existingBet.label = label;
     existingBet.stake = stake;
     existingBet.multiplier = Number(multiplier);
@@ -416,6 +418,7 @@ export function placeOrUpdatePropBet({
     team_id: '',
     player_key: playerKey,
     player_name: playerName,
+    player_team_id: String(playerTeamId || ''),
     quantity: quantity == null ? null : Number(quantity),
     label,
     stake,
@@ -651,7 +654,7 @@ export function setSeasonId(seasonId) {
   return getAdminSettings();
 }
 
-export function settleWeek({ week, results }) {
+function settleBetsInternal({ week, results, requireReady = false }) {
   const targetWeek = Number(week);
   if (!Number.isFinite(targetWeek) || targetWeek < 1) throw new Error('Invalid week.');
 
@@ -697,8 +700,18 @@ export function settleWeek({ week, results }) {
     payoutTotal += payout;
   }
 
+  if (requireReady && skipped > 0) throw new Error(`Week ${targetWeek} still has ${skipped} incomplete bet(s).`);
+
   saveState();
   return { settled, winners, losers, payoutTotal, skipped };
+}
+
+export function settleWeek({ week, results }) {
+  return settleBetsInternal({ week, results, requireReady: false });
+}
+
+export function settleCompletedBets({ week, results }) {
+  return settleBetsInternal({ week, results, requireReady: false });
 }
 
 export function buildSettlementPreview({ week, weekResults, evaluator }) {
@@ -943,30 +956,95 @@ export function resetBetsForWeek(week) {
   for (const bet of state.bets) {
     if (Number(bet.week) !== targetWeek || bet.status !== 'open') continue;
 
-    const user = state.users.find(u => u.id === Number(bet.user_id));
-    const stake = Number(bet.stake || 0);
-    if (user) {
-      user.balance = Number(user.balance || 0) + stake;
-      state.transactions.push({
-        id: state.nextTransactionId++,
-        user_id: user.id,
-        week: targetWeek,
-        amount: stake,
-        kind: 'bet_void_refund',
-        note: `Voided bet refund: ${bet.label}`,
-        created_at: nowIso()
-      });
-    }
-
-    bet.status = 'void';
-    bet.voided_at = nowIso();
-    bet.payout = 0;
-    count += 1;
-    refunded += stake;
+    const result = voidOpenBet(bet, 'Voided bet refund');
+    count += result.count;
+    refunded += result.refunded;
   }
 
   saveState();
   return { count, refunded };
+}
+
+
+function voidOpenBet(bet, reason = 'Manual refund') {
+  if (!bet || bet.status !== 'open') return { count: 0, refunded: 0 };
+  const user = state.users.find(u => u.id === Number(bet.user_id));
+  const stake = Number(bet.stake || 0);
+  if (user) {
+    user.balance = Number(user.balance || 0) + stake;
+    state.transactions.push({
+      id: state.nextTransactionId++,
+      user_id: user.id,
+      week: Number(bet.week || 0),
+      amount: stake,
+      kind: 'bet_void_refund',
+      note: `${reason}: ${bet.label}`,
+      bet_id: bet.id,
+      created_at: nowIso()
+    });
+  }
+
+  bet.status = 'void';
+  bet.voided_at = nowIso();
+  bet.void_reason = reason;
+  bet.payout = 0;
+  return { count: 1, refunded: stake };
+}
+
+export function voidBetById(betId, reason = 'Manual refund') {
+  const bet = state.bets.find(b => b.id === Number(betId));
+  if (!bet) throw new Error('Bet not found.');
+  if (bet.status !== 'open') throw new Error('Only open bets can be refunded.');
+  const result = voidOpenBet(bet, reason);
+  saveState();
+  return result;
+}
+
+export function voidBetsForSeries({ week, seriesKey, teamIds = [], playerKeys = [], reason = 'Postponed series refund' }) {
+  const targetWeek = Number(week);
+  const cleanSeriesKey = String(seriesKey || '').trim();
+  const teamSet = new Set((Array.isArray(teamIds) ? teamIds : [teamIds]).map(v => String(v || '').trim()).filter(Boolean));
+  const playerSet = new Set((Array.isArray(playerKeys) ? playerKeys : [playerKeys]).map(v => String(v || '').trim()).filter(Boolean));
+  if (!targetWeek || !cleanSeriesKey) throw new Error('Week and series are required.');
+  if (!teamSet.size) throw new Error('Series team IDs are required.');
+
+  let count = 0;
+  let refunded = 0;
+  let seriesCount = 0;
+  let propCount = 0;
+
+  for (const bet of state.bets) {
+    if (Number(bet.week) !== targetWeek || bet.status !== 'open') continue;
+
+    const isSeriesBet = (bet.bet_kind || 'series') === 'series' && bet.series_key === cleanSeriesKey;
+    const isTeamProp = bet.bet_kind === 'prop' && (teamSet.has(String(bet.player_team_id || '').trim()) || playerSet.has(String(bet.player_key || '').trim()));
+    if (!isSeriesBet && !isTeamProp) continue;
+
+    const result = voidOpenBet(bet, reason);
+    count += result.count;
+    refunded += result.refunded;
+    if (isSeriesBet) seriesCount += 1;
+    if (isTeamProp) propCount += 1;
+  }
+
+  saveState();
+  return { count, refunded, seriesCount, propCount };
+}
+
+export function getVoidRefundsForWeek(week, limit = 100) {
+  const usersById = new Map(state.users.map(u => [u.id, u]));
+  return state.transactions
+    .filter(t => t.kind === 'bet_void_refund' && Number(t.week) === Number(week))
+    .map(t => ({
+      ...t,
+      user_display_name: usersById.get(Number(t.user_id))?.display_name || `User ${t.user_id}`
+    }))
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || Number(b.id) - Number(a.id))
+    .slice(0, limit);
+}
+
+export function getOpenBetCountForWeek(week) {
+  return state.bets.filter(b => Number(b.week) === Number(week) && b.status === 'open').length;
 }
 
 export function resetAllData() {

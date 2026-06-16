@@ -73,10 +73,10 @@
           <button type="submit">Save Allowance</button>
         </form>
 
-        <form method="post" action="/admin/advance-week" class="admin-danger-zone" onsubmit="return confirm('Settle Week <%= currentWeek %> and advance to Week <%= currentWeek + 1 %>? If you are not ready to settle, click Cancel and check the settlement preview first.');">
+        <form method="post" action="/admin/advance-week" class="admin-danger-zone" onsubmit="return confirm('Advance to Week <%= currentWeek + 1 %>? This will be blocked if any Week <%= currentWeek %> bets are still unsettled.');">
           <div>
             <strong>Advance Week</strong>
-            <p class="muted">Settles Week <%= currentWeek %>, advances to Week <%= currentWeek + 1 %>, locks it, opens Week <%= currentWeek + 2 %>, and automatically applies allowance.</p>
+            <p class="muted">Advances to Week <%= currentWeek + 1 %>, locks it, opens Week <%= currentWeek + 2 %>, and applies allowance. This is blocked until all Week <%= currentWeek %> bets have been settled or voided.</p>
           </div>
           <button type="submit">Advance Week</button>
         </form>
@@ -164,6 +164,54 @@
       </form>
     </section>
 
+
+    <section class="card admin-card">
+      <h2>Void / Refund Tools · Week <%= currentWeek %></h2>
+      <p class="muted">Use this before moving a postponed series out of the week in the main WCPL schedule. It refunds matching open series bets plus prop bets on players from either team.</p>
+
+      <form method="post" action="/admin/void-series" class="admin-inline-form" onsubmit="return confirm('Void/refund all open bets tied to this series, including props for players on both teams?');">
+        <input type="hidden" name="week" value="<%= currentWeek %>">
+        <label>
+          Postponed series
+          <select name="series_key" required>
+            <option value="">Select series...</option>
+            <% currentWeekSeries.forEach(s => { %>
+              <option value="<%= s.series_key %>"><%= s.division_name %> · <%= s.away_team_name %> at <%= s.home_team_name %></option>
+            <% }) %>
+          </select>
+        </label>
+        <button type="submit">Void Series + Team Props</button>
+      </form>
+
+      <% if (voidRefunds && voidRefunds.length) { %>
+        <h3>Current Week Void/Refund Recap</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Refund</th>
+                <th>Reason</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% voidRefunds.forEach(v => { %>
+                <tr>
+                  <td><%= v.user_display_name %></td>
+                  <td><%= v.amount %></td>
+                  <td><%= v.note %></td>
+                  <td><%= new Date(v.created_at).toLocaleString() %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } else { %>
+        <p class="muted">No Week <%= currentWeek %> void/refund actions yet.</p>
+      <% } %>
+    </section>
+
     <section class="card admin-card">
       <h2>Settlement Preview · Week <%= currentWeek %></h2>
       <% if (settlementPreview && settlementPreview.error) { %>
@@ -177,14 +225,25 @@
           Payout: <strong><%= settlementPreview.payoutTotal %></strong> Mushybux
         </p>
 
-        <form method="post" action="/admin/settle-week" class="admin-danger-zone" onsubmit="return confirm('Settle Week <%= currentWeek %> and pay winners? This cannot be undone without manual balance edits.');">
-          <input type="hidden" name="week" value="<%= currentWeek %>">
-          <div>
-            <strong>Settle Week <%= currentWeek %></strong>
-            <p class="muted">Reads the selected season data, settles all open Week <%= currentWeek %> bets, and pays winning returns.</p>
-          </div>
-          <button type="submit" <%= settlementPreview.ready ? '' : 'disabled' %>>Settle Week</button>
-        </form>
+        <div class="admin-action-row">
+          <form method="post" action="/admin/settle-completed" class="admin-danger-zone" onsubmit="return confirm('Settle every currently resolved Week <%= currentWeek %> bet? Unresolved bets will stay in the preview.');">
+            <input type="hidden" name="week" value="<%= currentWeek %>">
+            <div>
+              <strong>Settle Completed Bets</strong>
+              <p class="muted">Pays only bets that are resolved right now. Settled bets disappear from this preview.</p>
+            </div>
+            <button type="submit">Settle Completed Bets</button>
+          </form>
+
+          <form method="post" action="/admin/settle-week" class="admin-danger-zone" onsubmit="return confirm('Settle every open Week <%= currentWeek %> bet? This only works when the entire week is ready.');">
+            <input type="hidden" name="week" value="<%= currentWeek %>">
+            <div>
+              <strong>Settle Entire Week</strong>
+              <p class="muted">Only enabled when every open Week <%= currentWeek %> bet is complete.</p>
+            </div>
+            <button type="submit" <%= settlementPreview.ready ? '' : 'disabled' %>>Settle Entire Week</button>
+          </form>
+        </div>
 
         <% if (settlementPreview.rows.length) { %>
           <div class="table-wrap">
@@ -197,6 +256,7 @@
                   <th>Odds</th>
                   <th>Result</th>
                   <th>Payout</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -217,6 +277,12 @@
                       <br><small class="muted"><%= r.result_summary || r.evaluation_reason %></small>
                     </td>
                     <td><%= r.payout %></td>
+                    <td>
+                      <form method="post" action="/admin/refund-bet" onsubmit="return confirm('Refund and void this bet?');">
+                        <input type="hidden" name="bet_id" value="<%= r.id %>">
+                        <button type="submit" class="ghost small-button">Refund</button>
+                      </form>
+                    </td>
                   </tr>
                 <% }) %>
               </tbody>
@@ -232,12 +298,6 @@
       <h2>Next Week Bets · Week <%= nextWeek %></h2>
       <p class="muted">This is the week users are normally betting on.</p>
       <%- include('partials_bet_table', { bets: nextWeekBets }) %>
-    </section>
-
-    <section class="card admin-card">
-      <h2>Current Week Bets · Week <%= currentWeek %></h2>
-      <p class="muted">Week <%= currentWeek %> may be open only during launch/week 1. Normally this is locked once games are underway.</p>
-      <%- include('partials_bet_table', { bets: currentWeekBets }) %>
     </section>
 
     <section class="card admin-card">

@@ -243,11 +243,23 @@ export async function getPlayers(divisionId, seasonId = process.env.SEASON_ID ||
 
 export async function getPropBoards(week = Number(process.env.CURRENT_WEEK || 1), seasonId = process.env.SEASON_ID || 'S3', odds = {}) {
   const divisions = await getDivisions(seasonId);
+  const weekSeries = await getUpcomingSeries(week, seasonId);
+  const eligibleTeamsByDivision = new Map();
+
+  for (const s of weekSeries) {
+    if (!eligibleTeamsByDivision.has(s.division_id)) eligibleTeamsByDivision.set(s.division_id, new Set());
+    const teams = eligibleTeamsByDivision.get(s.division_id);
+    teams.add(String(s.home_team_id || '').trim());
+    teams.add(String(s.away_team_id || '').trim());
+  }
+
   const boards = [];
 
   for (const div of divisions) {
     const divisionId = div.division_id;
-    const players = await getPlayers(divisionId, seasonId);
+    const eligibleTeams = eligibleTeamsByDivision.get(divisionId) || new Set();
+    const players = (await getPlayers(divisionId, seasonId))
+      .filter(p => eligibleTeams.has(String(p.team_id || '').trim()));
     const isSkaterPosition = (position) => {
       const p = String(position || '').toUpperCase();
       return p.includes('S') || (!p.includes('G'));
@@ -268,6 +280,7 @@ export async function getPropBoards(week = Number(process.env.CURRENT_WEEK || 1)
       division_id: divisionId,
       division_name: div.division_name,
       week: Number(week),
+      eligible_team_ids: [...eligibleTeams],
       skaters,
       goalies,
       categories: buildPropCategories({ divisionId, divisionName: div.division_name, week, skaters, goalies, odds })
