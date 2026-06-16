@@ -70,12 +70,20 @@
                 <div class="matchup-row compact-matchup-row">
                   <strong>
                     <%= s.away_team_name %>
-                    <span class="community-odds" title="<%= s.away_community_odds.title %>"><%= s.away_community_odds.odds %></span>
+                    <span
+  class="community-odds <%= s.away_community_odds.favorite ? 'favorite' : '' %> <%= s.away_community_odds.underdog ? 'underdog' : '' %>"
+  style="--odds-intensity:<%= s.away_community_odds.intensity || 0 %>"
+  title="<%= s.away_community_odds.title %>"
+><%= s.away_community_odds.odds %></span>
                   </strong>
                   <span>at</span>
                   <strong>
                     <%= s.home_team_name %>
-                    <span class="community-odds" title="<%= s.home_community_odds.title %>"><%= s.home_community_odds.odds %></span>
+                    <span
+  class="community-odds <%= s.home_community_odds.favorite ? 'favorite' : '' %> <%= s.home_community_odds.underdog ? 'underdog' : '' %>"
+  style="--odds-intensity:<%= s.home_community_odds.intensity || 0 %>"
+  title="<%= s.home_community_odds.title %>"
+><%= s.home_community_odds.odds %></span>
                   </strong>
                 </div>
               <% }) %>

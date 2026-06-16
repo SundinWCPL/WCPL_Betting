@@ -155,11 +155,16 @@ function formatCommunityOdds(teamStake, opponentStake) {
 
   const displayOdds = odds > 0 ? `+${odds}` : String(odds);
 
-  return {
-    odds: displayOdds,
-    percent: displayPercent,
-    title: `${displayPercent}% of Mushybux on this team.`
-  };
+  const intensity = Math.abs(displayPercent - 50) / 50;
+
+return {
+  odds: displayOdds,
+  percent: displayPercent,
+  title: `${displayPercent}% of Mushybux on this team.`,
+  intensity,
+  favorite: percent > 0.5,
+  underdog: percent < 0.5
+};
 }
 
 function groupSeriesByDivision(series, teamTotalMap) {
