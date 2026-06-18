@@ -566,3 +566,29 @@ select {
 .leaderboard-scroll table {
   margin-bottom: 0;
 }
+
+.settlement-preview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 14px;
+  margin: 14px 0 12px;
+}
+
+.settlement-preview-controls label {
+  display: grid;
+  gap: 6px;
+}
+
+.settlement-preview-checkbox {
+  display: flex !important;
+  grid-template-columns: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--muted);
+}
+
+.settlement-preview-checkbox input {
+  width: auto;
+}

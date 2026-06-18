@@ -246,8 +246,29 @@
         </div>
 
         <% if (settlementPreview.rows.length) { %>
+          <div class="settlement-preview-controls">
+            <label>
+              Sort preview
+              <select id="settlementPreviewSort">
+                <option value="original">Original order</option>
+                <option value="ready">Complete first</option>
+                <option value="incomplete">Incomplete first</option>
+                <option value="result">Win/Loss/Incomplete</option>
+                <option value="payout_desc">Payout high to low</option>
+                <option value="stake_desc">Stake high to low</option>
+                <option value="stake_asc">Stake low to high</option>
+                <option value="user_asc">User A-Z</option>
+                <option value="bet_asc">Bet A-Z</option>
+              </select>
+            </label>
+            <label class="settlement-preview-checkbox">
+              <input type="checkbox" id="settlementPreviewHideIncomplete">
+              Hide incomplete bets
+            </label>
+          </div>
+
           <div class="table-wrap">
-            <table>
+            <table id="settlementPreviewTable">
               <thead>
                 <tr>
                   <th>User</th>
@@ -260,8 +281,17 @@
                 </tr>
               </thead>
               <tbody>
-                <% settlementPreview.rows.forEach(r => { %>
-                  <tr>
+                <% settlementPreview.rows.forEach((r, idx) => { %>
+                  <tr
+                    data-original-index="<%= idx %>"
+                    data-ready="<%= r.ready ? '1' : '0' %>"
+                    data-won="<%= r.ready ? (r.won ? '1' : '0') : '' %>"
+                    data-user="<%= r.user_display_name %>"
+                    data-bet="<%= r.label %>"
+                    data-stake="<%= Number(r.stake || 0) %>"
+                    data-multiplier="<%= Number(r.multiplier || 0) %>"
+                    data-payout="<%= Number(r.payout || 0) %>"
+                  >
                     <td><%= r.user_display_name %></td>
                     <td><%= r.label %></td>
                     <td><%= r.stake %></td>
@@ -464,5 +494,63 @@
       <% }) %>
     </section>
   </main>
+
+  <script>
+    (() => {
+      const table = document.getElementById('settlementPreviewTable');
+      const sortSelect = document.getElementById('settlementPreviewSort');
+      const hideIncomplete = document.getElementById('settlementPreviewHideIncomplete');
+      if (!table || !sortSelect || !hideIncomplete) return;
+
+      const tbody = table.querySelector('tbody');
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+
+      const num = (row, key) => Number(row.dataset[key] || 0);
+      const text = (row, key) => String(row.dataset[key] || '').toLowerCase();
+      const cmpText = (a, b, key) => text(a, key).localeCompare(text(b, key));
+
+      const resultRank = (row) => {
+        if (row.dataset.ready !== '1') return 2;
+        return row.dataset.won === '1' ? 0 : 1;
+      };
+
+      const compareRows = (a, b) => {
+        switch (sortSelect.value) {
+          case 'ready':
+            return num(b, 'ready') - num(a, 'ready') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'incomplete':
+            return num(a, 'ready') - num(b, 'ready') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'result':
+            return resultRank(a) - resultRank(b) || num(b, 'payout') - num(a, 'payout') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'payout_desc':
+            return num(b, 'payout') - num(a, 'payout') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'stake_desc':
+            return num(b, 'stake') - num(a, 'stake') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'stake_asc':
+            return num(a, 'stake') - num(b, 'stake') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'user_asc':
+            return cmpText(a, b, 'user') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'bet_asc':
+            return cmpText(a, b, 'bet') || num(a, 'originalIndex') - num(b, 'originalIndex');
+          case 'original':
+          default:
+            return num(a, 'originalIndex') - num(b, 'originalIndex');
+        }
+      };
+
+      const applyPreviewControls = () => {
+        const sortedRows = rows.slice().sort(compareRows);
+        for (const row of sortedRows) {
+          row.hidden = hideIncomplete.checked && row.dataset.ready !== '1';
+          tbody.appendChild(row);
+        }
+      };
+
+      sortSelect.addEventListener('change', applyPreviewControls);
+      hideIncomplete.addEventListener('change', applyPreviewControls);
+      applyPreviewControls();
+    })();
+  </script>
+
 </body>
 </html>
