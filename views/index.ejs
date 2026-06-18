@@ -68,40 +68,37 @@
             <h3><%= group.division_name %></h3>
             <div class="matchup-list compact-matchup-list">
               <% group.series.forEach(s => { %>
-                <div class="matchup-row compact-matchup-row" style="flex-direction:column;align-items:center;">
-                  <div>
-                  <strong>
-                    <span
-  class="community-odds <%= s.away_community_odds.favorite ? 'favorite' : '' %> <%= s.away_community_odds.underdog ? 'underdog' : '' %>"
-  style="--odds-intensity:<%= s.away_community_odds.intensity || 0 %>"
-  title="<%= s.away_community_odds.title %>"
-><%= s.away_community_odds.odds %></span>
-                    <%= s.away_team_name %>
-                  </strong>
-                  <span>at</span>
-                  <strong>
-                    <%= s.home_team_name %>
-                    <span
-  class="community-odds <%= s.home_community_odds.favorite ? 'favorite' : '' %> <%= s.home_community_odds.underdog ? 'underdog' : '' %>"
-  style="--odds-intensity:<%= s.home_community_odds.intensity || 0 %>"
-  title="<%= s.home_community_odds.title %>"
-><%= s.home_community_odds.odds %></span>
-                  </strong>
+                <div class="matchup-row compact-matchup-row compact-matchup-card">
+                  <div class="matchup-line">
+                    <strong>
+                      <span
+                        class="community-odds <%= s.away_community_odds.favorite ? 'favorite' : '' %> <%= s.away_community_odds.underdog ? 'underdog' : '' %>"
+                        style="--odds-intensity:<%= s.away_community_odds.intensity || 0 %>"
+                        title="<%= s.away_community_odds.title %>"
+                      ><%= s.away_community_odds.odds %></span>
+                      <%= s.away_team_name %>
+                    </strong>
+                    <span>at</span>
+                    <strong>
+                      <%= s.home_team_name %>
+                      <span
+                        class="community-odds <%= s.home_community_odds.favorite ? 'favorite' : '' %> <%= s.home_community_odds.underdog ? 'underdog' : '' %>"
+                        style="--odds-intensity:<%= s.home_community_odds.intensity || 0 %>"
+                        title="<%= s.home_community_odds.title %>"
+                      ><%= s.home_community_odds.odds %></span>
+                    </strong>
                   </div>
-                  <div class="matchup-result">
-                  <% if (s.result_label) { %>
-<% if (s.result_label) { %>
-  <% if (s.result_boxscore_url) { %>
-    <a class="matchup-result" href="<%= s.result_boxscore_url %>" target="_blank" rel="noopener">
-      <%= s.result_label %>
-    </a>
-  <% } else { %>
-    <span class="matchup-result"><%= s.result_label %></span>
-  <% } %>
-<% } else { %>
-  TBD
-<% } %>
-                  <% } %>
+
+                  <div class="matchup-result-row">
+                    <% if (s.result_label) { %>
+                      <% if (s.result_boxscore_url) { %>
+                        <a class="matchup-result-badge" href="<%= s.result_boxscore_url %>" target="_blank" rel="noopener"><%= s.result_label %></a>
+                      <% } else { %>
+                        <span class="matchup-result-badge"><%= s.result_label %></span>
+                      <% } %>
+                    <% } else { %>
+                      <span class="matchup-result-badge matchup-result-tbd">TBD</span>
+                    <% } %>
                   </div>
                 </div>
               <% }) %>

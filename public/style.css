@@ -593,9 +593,38 @@ select {
   width: auto;
 }
 
-.matchup-result {
-  margin-left: auto;
-  padding: 3px 8px;
+.compact-matchup-card {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+}
+
+.matchup-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.matchup-line strong:first-child .community-odds {
+  margin-left: 0;
+  margin-right: 6px;
+}
+
+.matchup-result-row {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.matchup-result-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 3px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -606,6 +635,19 @@ select {
   text-decoration: none;
 }
 
-a.matchup-result:hover {
+.matchup-result-tbd {
+  color: var(--muted);
+}
+
+
+.compact-matchup-row .matchup-result-badge {
+  color: var(--text);
+}
+
+.compact-matchup-row .matchup-result-tbd {
+  color: var(--muted);
+}
+
+a.matchup-result-badge:hover {
   text-decoration: underline;
 }
