@@ -199,7 +199,9 @@ export function getUserById(id) {
   return user ? safeUser(user) : null;
 }
 
-export function getLeaderboard() {
+export function getLeaderboard(currentWeek = null) {
+  const weekNum = Number(currentWeek ?? state.settings?.currentWeek ?? 1);
+
   return state.users
     .map(user => {
       const openWagered = getOpenWageredForUser(user.id);
@@ -212,18 +214,24 @@ export function getLeaderboard() {
         open_wagered: openWagered,
         total_balance: totalBalance,
         balance_display: formatBalanceDisplay(totalBalance, openWagered),
-        last_week_change: getLastWeekChangeForUser(user.id)
+        last_week_change: getSettledBetNetForUser(user.id, weekNum - 1),
+        current_week_change: getSettledBetNetForUser(user.id, weekNum)
       };
     })
     .sort((a, b) => b.total_balance - a.total_balance || a.display_name.localeCompare(b.display_name));
 }
 
-function getLastWeekChangeForUser(userId) {
-  // Placeholder until settlement exists. Once bets are settled, settlement transactions
-  // can carry week numbers and this can show last week's actual net +/-.
-  return state.transactions
-    .filter(t => t.user_id === Number(userId) && t.kind === 'settlement_last_week')
-    .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+function getSettledBetNetForUser(userId, week) {
+  const targetWeek = Number(week);
+  if (!Number.isFinite(targetWeek) || targetWeek < 1) return 0;
+
+  return state.bets
+    .filter(b =>
+      Number(b.user_id) === Number(userId) &&
+      Number(b.week) === targetWeek &&
+      b.status === 'settled'
+    )
+    .reduce((sum, b) => sum + Number(b.payout || 0) - Number(b.stake || 0), 0);
 }
 
 export function getOpenWageredForUser(userId) {

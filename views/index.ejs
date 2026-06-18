@@ -26,7 +26,7 @@
         <h2>Leaderboard</h2>
 		<div class="leaderboard-scroll">
 		<table>
-          <thead><tr><th>#</th><th>User</th><th>Mushybux</th><th>Last Week</th></tr></thead>
+          <thead><tr><th>#</th><th>User</th><th>Mushybux</th><th>Last Week</th><th>Current Week</th></tr></thead>
           <tbody>
             <% leaderboard.forEach((u, i) => { %>
               <tr class="<%= currentUser && Number(currentUser.id) === Number(u.id) ? 'self-row' : '' %>">
@@ -34,6 +34,7 @@
                 <td><%= u.display_name %></td>
                 <td><%= u.balance_display %></td>
                 <td class="<%= Number(u.last_week_change) > 0 ? 'positive' : (Number(u.last_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.last_week_display %></td>
+                <td class="<%= Number(u.current_week_change) > 0 ? 'positive' : (Number(u.current_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.current_week_display %></td>
               </tr>
             <% }) %>
           </tbody>
