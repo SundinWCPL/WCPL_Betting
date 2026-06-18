@@ -209,6 +209,7 @@ export async function getUpcomingSeries(week = Number(process.env.CURRENT_WEEK |
       const awayTeam = teamMap.get(first.away_team_id) || { team_id: first.away_team_id, team_name: first.away_team_id };
       all.push({
         series_key: `${divisionId}-${seriesId}`,
+        season_id: seasonId,
         division_id: divisionId,
         division_name: div.division_name,
         series_id: seriesId,

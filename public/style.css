@@ -603,4 +603,9 @@ select {
   font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
+  text-decoration: none;
+}
+
+a.matchup-result:hover {
+  text-decoration: underline;
 }

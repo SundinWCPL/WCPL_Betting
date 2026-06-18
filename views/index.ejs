@@ -26,15 +26,15 @@
         <h2>Leaderboard</h2>
 		<div class="leaderboard-scroll">
 		<table>
-          <thead><tr><th>#</th><th>User</th><th>Mushybux</th><th>Last Week</th><th>Current Week</th></tr></thead>
+          <thead><tr><th>#</th><th>User</th><th>Mushybux</th><th>Current Week</th><th>Last Week</th></tr></thead>
           <tbody>
             <% leaderboard.forEach((u, i) => { %>
               <tr class="<%= currentUser && Number(currentUser.id) === Number(u.id) ? 'self-row' : '' %>">
                 <td><%= i + 1 %></td>
                 <td><%= u.display_name %></td>
                 <td><%= u.balance_display %></td>
-                <td class="<%= Number(u.last_week_change) > 0 ? 'positive' : (Number(u.last_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.last_week_display %></td>
                 <td class="<%= Number(u.current_week_change) > 0 ? 'positive' : (Number(u.current_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.current_week_display %></td>
+                <td class="<%= Number(u.last_week_change) > 0 ? 'positive' : (Number(u.last_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.last_week_display %></td>
               </tr>
             <% }) %>
           </tbody>
@@ -70,12 +70,12 @@
               <% group.series.forEach(s => { %>
                 <div class="matchup-row compact-matchup-row">
                   <strong>
-                    <%= s.away_team_name %>
                     <span
   class="community-odds <%= s.away_community_odds.favorite ? 'favorite' : '' %> <%= s.away_community_odds.underdog ? 'underdog' : '' %>"
   style="--odds-intensity:<%= s.away_community_odds.intensity || 0 %>"
   title="<%= s.away_community_odds.title %>"
 ><%= s.away_community_odds.odds %></span>
+                    <%= s.away_team_name %>
                   </strong>
                   <span>at</span>
                   <strong>
@@ -87,7 +87,11 @@
 ><%= s.home_community_odds.odds %></span>
                   </strong>
                   <% if (s.result_label) { %>
-                    <span class="matchup-result"><%= s.result_label %></span>
+                    <% if (s.result_boxscore_url) { %>
+                      <a class="matchup-result" href="<%= s.result_boxscore_url %>" target="_blank" rel="noopener"><%= s.result_label %></a>
+                    <% } else { %>
+                      <span class="matchup-result"><%= s.result_label %></span>
+                    <% } %>
                   <% } %>
                 </div>
               <% }) %>

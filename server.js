@@ -180,6 +180,10 @@ function groupSeriesByDivision(series, teamTotalMap, seriesResults = {}) {
     const resultLabel = result?.complete
       ? `${result.winner_team_name} W ${result.winner_wins}-${result.loser_wins}`
       : '';
+    const firstMatchId = String(s.games?.[0]?.match_id || '').trim();
+    const resultBoxscoreUrl = result?.complete && firstMatchId
+      ? `https://mushyfiles.ca/pages/boxscore.html?season=${encodeURIComponent(String(s.season_id || process.env.SEASON_ID || 'S3'))}&match_id=${encodeURIComponent(firstMatchId)}&division=${encodeURIComponent(String(s.division_id || ''))}`
+      : '';
 
     groups.get(s.division_id).series.push({
       ...s,
@@ -187,7 +191,8 @@ function groupSeriesByDivision(series, teamTotalMap, seriesResults = {}) {
       home_total: homeTotal,
       away_community_odds: formatCommunityOdds(awayTotal, homeTotal),
       home_community_odds: formatCommunityOdds(homeTotal, awayTotal),
-      result_label: resultLabel
+      result_label: resultLabel,
+      result_boxscore_url: resultBoxscoreUrl
     });
   }
   return [...groups.values()];
