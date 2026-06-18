@@ -8,6 +8,34 @@
 </head>
 <body>
   <%- include('partials_header') %>
+
+  <%
+  function formatScheduleDateTime(value) {
+    const v = String(value || '').trim();
+    if (!v) return '';
+
+    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
+    if (!m) return v;
+
+    const [, yyyy, mm, dd, hh, min] = m;
+
+    const d = new Date(
+      Number(yyyy),
+      Number(mm) - 1,
+      Number(dd),
+      hh ? Number(hh) : 0,
+      min ? Number(min) : 0
+    );
+
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  }
+  %>
+
   <main class="container">
     <section class="hero card">
       <div>
@@ -97,7 +125,16 @@
                         <span class="matchup-result-badge"><%= s.result_label %></span>
                       <% } %>
                     <% } else { %>
-                      <span class="matchup-result-badge matchup-result-tbd">TBD</span>
+                      <%
+const scheduledTime =
+  s.games?.find(g => String(g.imported_on || '').trim())?.imported_on;
+%>
+
+<span class="matchup-result-badge matchup-result-tbd">
+  <%= scheduledTime
+      ? formatScheduleDateTime(scheduledTime)
+      : 'TBD' %>
+</span>
                     <% } %>
                   </div>
                 </div>
