@@ -49,10 +49,20 @@
                 <h2><%= s.away_team_name %> at <%= s.home_team_name %></h2>
               </div>
               <% if (s.currentBet) { %>
-                <div class="current-bet-box compact-current-bet">
-                  <span class="pill">Current bet</span>
+                <%
+                  const betSettled = s.currentBet.status === 'settled';
+                  const betWon = betSettled && (s.currentBet.won || Number(s.currentBet.payout || 0) > 0);
+                  const betStateClass = betSettled ? (betWon ? 'bet-won' : 'bet-lost') : 'bet-pending';
+                  const betStateLabel = betSettled ? (betWon ? 'Won' : 'Lost') : 'Pending';
+                %>
+                <div class="current-bet-box compact-current-bet <%= betStateClass %>">
+                  <span class="pill"><%= betStateLabel %></span>
                   <strong><%= s.currentBet.label.split(': ').pop() %></strong>
-                  <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Return <strong><%= Number(s.currentBet.stake) * Number(s.currentBet.multiplier) %></strong></span>
+                  <% if (betSettled) { %>
+                    <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Payout <strong><%= Number(s.currentBet.payout || 0) %></strong></span>
+                  <% } else { %>
+                    <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Return <strong><%= Number(s.currentBet.stake) * Number(s.currentBet.multiplier) %></strong></span>
+                  <% } %>
                 </div>
               <% } else { %>
                 <p class="muted compact-no-bet">No bet placed.</p>
@@ -145,10 +155,20 @@
                       <p class="muted"><%= prop.description %></p>
                     </div>
                     <% if (prop.currentBet) { %>
-                      <div class="current-bet-box compact-current-bet prop-current-bet">
-                        <span class="pill">Current bet</span>
+                      <%
+                        const propBetSettled = prop.currentBet.status === 'settled';
+                        const propBetWon = propBetSettled && (prop.currentBet.won || Number(prop.currentBet.payout || 0) > 0);
+                        const propBetStateClass = propBetSettled ? (propBetWon ? 'bet-won' : 'bet-lost') : 'bet-pending';
+                        const propBetStateLabel = propBetSettled ? (propBetWon ? 'Won' : 'Lost') : 'Pending';
+                      %>
+                      <div class="current-bet-box compact-current-bet prop-current-bet <%= propBetStateClass %>">
+                        <span class="pill"><%= propBetStateLabel %></span>
                         <strong><%= prop.currentBet.label.split(': ').pop() %></strong>
-                        <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Return <strong><%= Number(prop.currentBet.stake) * Number(prop.currentBet.multiplier) %></strong></span>
+                        <% if (propBetSettled) { %>
+                          <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Payout <strong><%= Number(prop.currentBet.payout || 0) %></strong></span>
+                        <% } else { %>
+                          <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Return <strong><%= Number(prop.currentBet.stake) * Number(prop.currentBet.multiplier) %></strong></span>
+                        <% } %>
                       </div>
                     <% } else { %>
                       <p class="muted compact-no-bet">No bet placed.</p>

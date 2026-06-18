@@ -58,6 +58,12 @@ ul { color: var(--muted); line-height: 1.7; }
 .button-link.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
 .button-link.ghost-active { background: var(--card2); border: 1px solid var(--accent); color: var(--text); }
 .current-bet-box { display: grid; gap: 6px; background: rgba(102,217,163,.10); border: 1px solid rgba(102,217,163,.35); border-radius: 14px; padding: 14px; margin: 12px 0 16px; }
+.current-bet-box.bet-pending { background: rgba(255,176,86,.10); border-color: rgba(255,176,86,.48); }
+.current-bet-box.bet-won { background: rgba(102,217,163,.10); border-color: rgba(102,217,163,.45); }
+.current-bet-box.bet-lost { background: rgba(255,107,107,.10); border-color: rgba(255,107,107,.48); }
+.current-bet-box.bet-pending .pill { color: #ffcf91; border-color: rgba(255,176,86,.48); }
+.current-bet-box.bet-won .pill { color: var(--accent); border-color: rgba(102,217,163,.45); }
+.current-bet-box.bet-lost .pill { color: var(--danger); border-color: rgba(255,107,107,.48); }
 .builder-form { display: grid; gap: 16px; }
 .stake-label { max-width: 220px; }
 .builder-step { display: grid; gap: 8px; }
@@ -325,7 +331,6 @@ select {
   font-size: 13px;
 }
 .prop-current-bet {
-  background: rgba(102,217,163,.08);
   min-width: 0;
   max-width: none;
 }

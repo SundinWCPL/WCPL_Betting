@@ -282,9 +282,20 @@ export function getUserBetForSeries(userId, week, seriesKey) {
 
 export function getUserBetsBySeries(userId, week) {
   const map = new Map();
+  const visibleStatuses = new Set(['open', 'settled']);
+
   for (const bet of getUserBetsForWeek(userId, week)) {
-    if (bet.status === 'open' && (bet.bet_kind || 'series') === 'series') map.set(bet.series_key, bet);
+    if (!visibleStatuses.has(String(bet.status || 'open'))) continue;
+    if ((bet.bet_kind || 'series') !== 'series') continue;
+
+    const existing = map.get(bet.series_key);
+    // Prefer an open editable bet if one somehow exists; otherwise show the
+    // settled result so completed matchups do not look like "no bet placed".
+    if (!existing || existing.status !== 'open' || bet.status === 'open') {
+      map.set(bet.series_key, bet);
+    }
   }
+
   return Object.fromEntries(map);
 }
 
@@ -354,10 +365,19 @@ export function getUserBetForProp(userId, week, divisionId, category) {
 
 export function getUserPropBetsByCategory(userId, week) {
   const map = new Map();
+  const visibleStatuses = new Set(['open', 'settled']);
+
   for (const bet of getUserBetsForWeek(userId, week)) {
-    if (bet.status !== 'open' || bet.bet_kind !== 'prop') continue;
-    map.set(`${bet.division_id}|${bet.prop_category}`, bet);
+    if (!visibleStatuses.has(String(bet.status || 'open'))) continue;
+    if (bet.bet_kind !== 'prop') continue;
+
+    const key = `${bet.division_id}|${bet.prop_category}`;
+    const existing = map.get(key);
+    if (!existing || existing.status !== 'open' || bet.status === 'open') {
+      map.set(key, bet);
+    }
   }
+
   return Object.fromEntries(map);
 }
 
