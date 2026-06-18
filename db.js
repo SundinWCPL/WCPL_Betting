@@ -311,7 +311,7 @@ export function getWeeklyBetTotalByTeam(week) {
 
 export function getTopWeeklyBets(week, limit = 5) {
   const totals = new Map();
-  for (const bet of state.bets.filter(b => Number(b.week) === Number(week) && b.status === 'open')) {
+  for (const bet of state.bets.filter(b => Number(b.week) === Number(week) && ['open', 'settled'].includes(b.status))) {
     const key = bet.market_key || bet.label;
     const current = totals.get(key) || {
       market_key: key,
