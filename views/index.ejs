@@ -68,7 +68,8 @@
             <h3><%= group.division_name %></h3>
             <div class="matchup-list compact-matchup-list">
               <% group.series.forEach(s => { %>
-                <div class="matchup-row compact-matchup-row">
+                <div class="matchup-row compact-matchup-row" style="flex-direction:column;align-items:center;">
+                  <div>
                   <strong>
                     <span
   class="community-odds <%= s.away_community_odds.favorite ? 'favorite' : '' %> <%= s.away_community_odds.underdog ? 'underdog' : '' %>"
@@ -86,13 +87,22 @@
   title="<%= s.home_community_odds.title %>"
 ><%= s.home_community_odds.odds %></span>
                   </strong>
+                  </div>
+                  <div class="matchup-result">
                   <% if (s.result_label) { %>
-                    <% if (s.result_boxscore_url) { %>
-                      <a class="matchup-result" href="<%= s.result_boxscore_url %>" target="_blank" rel="noopener"><%= s.result_label %></a>
-                    <% } else { %>
-                      <span class="matchup-result"><%= s.result_label %></span>
-                    <% } %>
+<% if (s.result_label) { %>
+  <% if (s.result_boxscore_url) { %>
+    <a class="matchup-result" href="<%= s.result_boxscore_url %>" target="_blank" rel="noopener">
+      <%= s.result_label %>
+    </a>
+  <% } else { %>
+    <span class="matchup-result"><%= s.result_label %></span>
+  <% } %>
+<% } else { %>
+  TBD
+<% } %>
                   <% } %>
+                  </div>
                 </div>
               <% }) %>
             </div>
