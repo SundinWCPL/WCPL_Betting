@@ -167,7 +167,7 @@ return {
 };
 }
 
-function groupSeriesByDivision(series, teamTotalMap) {
+function groupSeriesByDivision(series, teamTotalMap, seriesResults = {}) {
   const groups = new Map();
   for (const s of series) {
     if (!groups.has(s.division_id)) {
@@ -176,13 +176,18 @@ function groupSeriesByDivision(series, teamTotalMap) {
 
     const awayTotal = teamTotalMap[s.away_team_id] || 0;
     const homeTotal = teamTotalMap[s.home_team_id] || 0;
+    const result = seriesResults[s.series_key];
+    const resultLabel = result?.complete
+      ? `${result.winner_team_name} W ${result.winner_wins}-${result.loser_wins}`
+      : '';
 
     groups.get(s.division_id).series.push({
       ...s,
       away_total: awayTotal,
       home_total: homeTotal,
       away_community_odds: formatCommunityOdds(awayTotal, homeTotal),
-      home_community_odds: formatCommunityOdds(homeTotal, awayTotal)
+      home_community_odds: formatCommunityOdds(homeTotal, awayTotal),
+      result_label: resultLabel
     });
   }
   return [...groups.values()];
@@ -252,7 +257,8 @@ app.get('/', async (req, res, next) => {
     const series = await getUpcomingSeries(currentWeek, settings.seasonId);
     const teamTotals = applyTeamNamesToTotals(getWeeklyBetTotalByTeam(currentWeek), series);
     const teamTotalMap = getTeamTotalMap(teamTotals);
-    const matchupGroups = groupSeriesByDivision(series, teamTotalMap);
+    const weekResults = await buildWeekSettlementResults({ seasonId: settings.seasonId, week: currentWeek });
+    const matchupGroups = groupSeriesByDivision(series, teamTotalMap, weekResults.seriesResults);
 function formatTopBetLabel(label) {
   const raw = String(label || '');
 

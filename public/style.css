@@ -592,3 +592,15 @@ select {
 .settlement-preview-checkbox input {
   width: auto;
 }
+
+.matchup-result {
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}

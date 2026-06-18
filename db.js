@@ -290,7 +290,17 @@ export function getUserBetsBySeries(userId, week) {
 
 export function getWeeklyBetTotalByTeam(week) {
   const totals = new Map();
-  for (const bet of state.bets.filter(b => Number(b.week) === Number(week) && b.status === 'open' && (b.bet_kind || 'series') === 'series')) {
+
+  // Community odds should reflect that week's betting activity even after
+  // completed series bets are settled. Exclude void/refund/deleted statuses,
+  // but keep both open and settled series stakes in the odds pool.
+  const oddsStatuses = new Set(['open', 'settled']);
+
+  for (const bet of state.bets.filter(b =>
+    Number(b.week) === Number(week) &&
+    oddsStatuses.has(String(b.status || 'open')) &&
+    (b.bet_kind || 'series') === 'series'
+  )) {
     const current = totals.get(bet.team_id) || { team_id: bet.team_id, total_stake: 0, bet_count: 0 };
     current.total_stake += Number(bet.stake || 0);
     current.bet_count += 1;

@@ -86,6 +86,9 @@
   title="<%= s.home_community_odds.title %>"
 ><%= s.home_community_odds.odds %></span>
                   </strong>
+                  <% if (s.result_label) { %>
+                    <span class="matchup-result"><%= s.result_label %></span>
+                  <% } %>
                 </div>
               <% }) %>
             </div>
