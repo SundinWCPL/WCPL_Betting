@@ -656,3 +656,314 @@ select {
 a.matchup-result-badge:hover {
   text-decoration: underline;
 }
+
+/* Casino */
+.casino-container { max-width: 1180px; padding-top: 18px; }
+.casino-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.casino-balance {
+  padding: 14px 18px;
+  min-width: 220px;
+  display: grid;
+  gap: 4px;
+  text-align: right;
+  background: linear-gradient(135deg, rgba(102,217,163,.08), var(--card) 55%);
+}
+.casino-balance strong { font-size: 28px; line-height: 1; color: var(--accent); }
+.casino-tabs { margin: 0; }
+.casino-tab-disabled { cursor: default; opacity: .65; }
+.jackpot-card {
+  text-align: center;
+  margin-bottom: 20px;
+  padding: 20px 24px;
+  background:
+    radial-gradient(circle at top, rgba(102,217,163,.22), transparent 38%),
+    linear-gradient(135deg, rgba(18,24,38,.98), rgba(15,19,32,.98));
+  border-color: rgba(102,217,163,.22);
+  overflow: hidden;
+  position: relative;
+}
+.jackpot-card::before,
+.jackpot-card::after {
+  content: '';
+  position: absolute;
+  inset: auto auto -70px -70px;
+  width: 160px;
+  height: 160px;
+  border-radius: 999px;
+  background: rgba(102,217,163,.07);
+  pointer-events: none;
+}
+.jackpot-card::after { inset: -80px -70px auto auto; }
+.jackpot-amount {
+  position: relative;
+  z-index: 1;
+  font-size: clamp(34px, 6vw, 64px);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: .02em;
+  color: var(--accent);
+  text-shadow: 0 0 22px rgba(102,217,163,.24);
+}
+.slot-card {
+  display: grid;
+  gap: 18px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.03), transparent 38%),
+    var(--card);
+}
+.slot-reels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  padding: 14px;
+  border-radius: 22px;
+  background: rgba(0,0,0,.18);
+  border: 1px solid rgba(255,255,255,.05);
+}
+.slot-reel {
+  min-height: 198px;
+  background: linear-gradient(180deg, #101625, #0d1220);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  padding: 18px;
+  box-shadow: inset 0 0 32px rgba(0,0,0,.34), 0 12px 28px rgba(0,0,0,.16);
+  overflow: hidden;
+}
+.slot-reel-window {
+  width: 132px;
+  height: 132px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+}
+.slot-reel img,
+.slot-reel-strip-item img {
+  width: 118px;
+  height: 118px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 14px rgba(0,0,0,.38));
+  transition: transform .16s ease, filter .16s ease;
+}
+.slot-reel-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+.slot-reel-strip-item {
+  display: grid;
+  place-items: center;
+}
+.slot-reel-window-spinning::before,
+.slot-reel-window-spinning::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  z-index: 2;
+  pointer-events: none;
+}
+.slot-reel-window-spinning::before {
+  top: 0;
+  background: linear-gradient(180deg, rgba(13,18,32,.92), transparent);
+}
+.slot-reel-window-spinning::after {
+  bottom: 0;
+  background: linear-gradient(0deg, rgba(13,18,32,.92), transparent);
+}
+.slot-reel-stopping img {
+  transform: scale(1.12);
+  filter: drop-shadow(0 0 16px rgba(245,248,255,.32));
+}
+.slot-reel-stopping.slot-reel-stop-d3 img {
+  filter: drop-shadow(0 0 16px rgba(245,248,255,.42));
+}
+.slot-reel-stopping.slot-reel-stop-d2 img {
+  filter: drop-shadow(0 0 16px rgba(102,217,163,.46));
+}
+.slot-reel-stopping.slot-reel-stop-d1 img {
+  filter: drop-shadow(0 0 17px rgba(92,154,255,.46));
+}
+.slot-reel-stopping.slot-reel-stop-wcpl img {
+  filter: drop-shadow(0 0 18px rgba(177,116,255,.52));
+}
+.slot-reel-stopping.slot-reel-stop-mushy img {
+  filter: drop-shadow(0 0 20px rgba(255,211,92,.58));
+}
+
+.slot-reel-win {
+  animation: slotWinPop .34s ease-out;
+}
+.slot-reel-win-d3 {
+  border-color: rgba(245,248,255,.92);
+  box-shadow:
+    inset 0 0 32px rgba(245,248,255,.12),
+    0 0 0 2px rgba(245,248,255,.36),
+    0 0 22px rgba(245,248,255,.28);
+}
+.slot-reel-win-d2 {
+  border-color: rgba(102,217,163,.95);
+  box-shadow:
+    inset 0 0 32px rgba(102,217,163,.14),
+    0 0 0 2px rgba(102,217,163,.38),
+    0 0 24px rgba(102,217,163,.34);
+}
+.slot-reel-win-d1 {
+  border-color: rgba(92,154,255,.95);
+  box-shadow:
+    inset 0 0 32px rgba(92,154,255,.14),
+    0 0 0 2px rgba(92,154,255,.40),
+    0 0 26px rgba(92,154,255,.34);
+}
+.slot-reel-win-wcpl {
+  border-color: rgba(177,116,255,.98);
+  box-shadow:
+    inset 0 0 34px rgba(177,116,255,.16),
+    0 0 0 2px rgba(177,116,255,.42),
+    0 0 28px rgba(177,116,255,.38);
+}
+.slot-reel-win-mushy {
+  border-color: rgba(255,211,92,.98);
+  box-shadow:
+    inset 0 0 38px rgba(255,211,92,.18),
+    0 0 0 2px rgba(255,211,92,.46),
+    0 0 34px rgba(255,211,92,.46);
+}
+.slot-reel-win img {
+  transform: scale(1.08);
+}
+.jackpot-card.jackpot-hit {
+  border-color: rgba(255,211,92,.75);
+  animation: jackpotPulse .9s ease-in-out 2;
+}
+.jackpot-card.jackpot-hit .jackpot-amount {
+  color: #ffd35c;
+  text-shadow: 0 0 28px rgba(255,211,92,.46);
+}
+@keyframes slotWinPop {
+  0% { transform: scale(.98); }
+  55% { transform: scale(1.025); }
+  100% { transform: scale(1); }
+}
+@keyframes jackpotPulse {
+  0%, 100% { box-shadow: 0 12px 30px rgba(0,0,0,.2); }
+  50% { box-shadow: 0 0 0 2px rgba(255,211,92,.34), 0 0 42px rgba(255,211,92,.34); }
+}
+.slot-reel span {
+  min-height: 28px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  text-align: center;
+}
+.slot-result {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: var(--card2);
+}
+.slot-result strong { font-size: 20px; }
+.slot-win { border-color: rgba(102,217,163,.55); background: rgba(102,217,163,.12); }
+.slot-push { border-color: rgba(245,248,255,.38); background: rgba(245,248,255,.07); }
+.slot-loss { border-color: rgba(255,107,107,.42); background: rgba(255,107,107,.08); }
+.slot-spinning { border-color: rgba(126,166,255,.42); background: rgba(126,166,255,.08); }
+.slot-result-tier-d3 {
+  border-color: rgba(245,248,255,.82);
+  background: rgba(245,248,255,.10);
+  box-shadow: 0 0 20px rgba(245,248,255,.12);
+}
+.slot-result-tier-d2 {
+  border-color: rgba(102,217,163,.78);
+  background: rgba(102,217,163,.12);
+  box-shadow: 0 0 22px rgba(102,217,163,.13);
+}
+.slot-result-tier-d1 {
+  border-color: rgba(92,154,255,.80);
+  background: rgba(92,154,255,.12);
+  box-shadow: 0 0 22px rgba(92,154,255,.13);
+}
+.slot-result-tier-wcpl {
+  border-color: rgba(177,116,255,.84);
+  background: rgba(177,116,255,.13);
+  box-shadow: 0 0 24px rgba(177,116,255,.16);
+}
+.slot-result-tier-mushy {
+  border-color: rgba(255,211,92,.88);
+  background: rgba(255,211,92,.13);
+  box-shadow: 0 0 28px rgba(255,211,92,.18);
+}
+.slot-form { display: grid; gap: 14px; justify-items: center; }
+.slot-wager-row {
+  display: grid;
+  grid-template-columns: 54px minmax(180px, 260px) 54px;
+  gap: 12px;
+  align-items: stretch;
+}
+.slot-step-btn { font-size: 28px; padding: 0; border-radius: 14px; }
+.slot-step-btn:disabled { opacity: .45; cursor: not-allowed; }
+.slot-wager-display {
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  padding: 12px 18px;
+  text-align: center;
+}
+.slot-wager-display strong { font-size: 24px; }
+.slot-spin-button {
+  min-width: 220px;
+  min-height: 54px;
+  font-size: 20px;
+  letter-spacing: .08em;
+}
+.casino-info-grid { align-items: start; }
+@media (max-width: 800px) {
+  .casino-topbar { align-items: stretch; flex-direction: column; }
+  .casino-balance { text-align: left; width: 100%; }
+  .slot-reels { gap: 8px; padding: 8px; }
+  .slot-reel { min-height: 140px; padding: 10px; }
+  .slot-reel-window { width: 86px; height: 86px; }
+  .slot-reel img,
+  .slot-reel-strip-item img { width: 78px; height: 78px; }
+  .slot-reel span { font-size: 10px; min-height: 24px; }
+  .slot-wager-row { grid-template-columns: 48px minmax(140px, 1fr) 48px; width: 100%; }
+  .slot-spin-button { width: 100%; }
+}
+
+.payout-symbols {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.payout-symbols img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.payout-logo-cycle {
+  min-width: 64px;
+}

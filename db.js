@@ -28,9 +28,17 @@ function defaultState() {
       propDefaults: {},
       propPlayerOverrides: {}
     },
+    casino: {
+      jackpotAmount: Number(process.env.CASINO_JACKPOT_SEED || 1000),
+      jackpotSeed: Number(process.env.CASINO_JACKPOT_SEED || 1000),
+      totalWagered: 0,
+      totalPaid: 0,
+      spins: []
+    },
     nextUserId: 1,
     nextBetId: 1,
-    nextTransactionId: 1
+    nextTransactionId: 1,
+    nextCasinoSpinId: 1
   };
 }
 
@@ -98,6 +106,24 @@ function ensureSettings() {
   };
 }
 
+function ensureCasinoState() {
+  const seed = Number(process.env.CASINO_JACKPOT_SEED || 1000);
+  state.casino = {
+    jackpotAmount: seed,
+    jackpotSeed: seed,
+    totalWagered: 0,
+    totalPaid: 0,
+    spins: [],
+    ...(state.casino || {})
+  };
+  state.casino.jackpotSeed = Number(state.casino.jackpotSeed || seed);
+  state.casino.jackpotAmount = Number(state.casino.jackpotAmount || state.casino.jackpotSeed);
+  state.casino.totalWagered = Number(state.casino.totalWagered || 0);
+  state.casino.totalPaid = Number(state.casino.totalPaid || 0);
+  state.casino.spins = Array.isArray(state.casino.spins) ? state.casino.spins : [];
+  state.nextCasinoSpinId = Number(state.nextCasinoSpinId || 1);
+}
+
 
 export function getDatabasePath() {
   return dbPath;
@@ -142,6 +168,7 @@ export function createJsonBackup() {
 export function initDb() {
   loadState();
   ensureSettings();
+  ensureCasinoState();
   removeDemoUsers();
   seedUser('Sundin', 'Sundin', 'admin', 'cactusgoat13');
   saveState();
@@ -1094,6 +1121,234 @@ export function resetAllData() {
 }
 
 
+
+
+const CASINO_SLOT_WAGERS = [10, 20, 30, 40, 50];
+const CASINO_MAX_SLOT_WAGER = 50;
+const CASINO_JACKPOT_CONTRIBUTION_RATE = 0.10;
+
+const CASINO_SLOT_OUTCOMES = [
+  { key: 'loss', label: 'Loss', weight: 56986, multiplier: 0, kind: 'loss' },
+  { key: 'd3_pair', label: 'D3 Logo Pair', weight: 18000, multiplier: 1.0, tier: 'd3', matchCount: 2 },
+  { key: 'd2_pair', label: 'D2 Logo Pair', weight: 9364, multiplier: 1.1, tier: 'd2', matchCount: 2 },
+  { key: 'd1_pair', label: 'D1 Logo Pair', weight: 6800, multiplier: 1.5, tier: 'd1', matchCount: 2 },
+  { key: 'wcpl_pair', label: 'WCPL Pair', weight: 2500, multiplier: 2.5, tier: 'wcpl', matchCount: 2 },
+  { key: 'mushy_pair', label: 'Mushy Pair', weight: 1000, multiplier: 5, tier: 'mushy', matchCount: 2 },
+  { key: 'd3_triple', label: 'D3 Logo Triple', weight: 3000, multiplier: 2, tier: 'd3', matchCount: 3 },
+  { key: 'd2_triple', label: 'D2 Logo Triple', weight: 1500, multiplier: 5, tier: 'd2', matchCount: 3 },
+  { key: 'd1_triple', label: 'D1 Logo Triple', weight: 600, multiplier: 10, tier: 'd1', matchCount: 3 },
+  { key: 'wcpl_triple', label: 'WCPL Triple', weight: 150, multiplier: 25, tier: 'wcpl', matchCount: 3 },
+  { key: 'mushy_jackpot', label: 'Mushy Jackpot', weight: 100, multiplier: 10, tier: 'mushy', matchCount: 3, jackpot: true }
+];
+
+const CASINO_SYMBOL_POOLS = {
+  mushy: [
+    { id: 'mushy', label: 'Mushy', image: '/images/casino/mushy.png', tier: 'mushy' }
+  ],
+  wcpl: [
+    { id: 'wcpl', label: 'WCPL', image: '/images/casino/wcpl.png', tier: 'wcpl' }
+  ],
+  d3: [
+    { id: '206', label: '206', image: '/images/casino/D3/206.png', tier: 'd3' },
+    { id: 'cgy', label: 'Calgary', image: '/images/casino/D3/CGY.png', tier: 'd3' },
+    { id: 'evt', label: 'Everett', image: '/images/casino/D3/EVT.png', tier: 'd3' },
+    { id: 'kln', label: 'Kelowna', image: '/images/casino/D3/KLN.png', tier: 'd3' },
+    { id: 'van', label: 'Vancouver', image: '/images/casino/D3/VAN.png', tier: 'd3' },
+    { id: 'vic', label: 'Victoria', image: '/images/casino/D3/VIC.png', tier: 'd3' }
+  ],
+  d1: [
+    { id: 'bcl', label: 'BC Legless', image: '/images/casino/D1/BCL.png', tier: 'd1' },
+    { id: 'll', label: 'Lot Lizards', image: '/images/casino/D1/LL.png', tier: 'd1' },
+    { id: 'nk', label: 'Niagra Nicks', image: '/images/casino/D1/NK.png', tier: 'd1' },
+    { id: 'pkn', label: 'Puckin Penguins', image: '/images/casino/D1/PKN.png', tier: 'd1' },
+    { id: 'sea', label: 'Summer Seals', image: '/images/casino/D1/SEA.png', tier: 'd1' },
+    { id: 'tor', label: 'Toronto Badgers', image: '/images/casino/D1/TOR.png', tier: 'd1' }
+  ],
+  d2: [
+    { id: 'bck', label: 'Bucktown', image: '/images/casino/D2/BCK.png', tier: 'd2' },
+    { id: 'bld', label: 'San Jose Blades', image: '/images/casino/D2/BLD.png', tier: 'd2' },
+    { id: 'blm', label: 'Blooming Onions', image: '/images/casino/D2/BLM.png', tier: 'd2' },
+    { id: 'cle', label: 'Cleveland Spiders', image: '/images/casino/D2/CLE.png', tier: 'd2' },
+    { id: 'lgt', label: 'Lethbridge Light-Weights', image: '/images/casino/D2/LGT.png', tier: 'd2' },
+    { id: 'rch', label: 'Richmond Drivers', image: '/images/casino/D2/RCH.png', tier: 'd2' }
+  ]
+};
+
+const CASINO_ALL_SYMBOLS = Object.values(CASINO_SYMBOL_POOLS).flat();
+
+function pickRandom(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function pickSlotOutcome(wager = CASINO_MAX_SLOT_WAGER) {
+  // Keep normal pair/triple odds the same for every wager, but scale the rare jackpot
+  // chance by wager so the fixed jackpot seed does not make small spins better EV.
+  const wagerScale = Math.max(0, Math.min(1, Number(wager || 0) / CASINO_MAX_SLOT_WAGER));
+  const baseJackpotWeight = CASINO_SLOT_OUTCOMES
+    .filter(o => o.jackpot)
+    .reduce((sum, o) => sum + Number(o.weight || 0), 0);
+
+  const scaledJackpotWeight = Math.round(baseJackpotWeight * wagerScale);
+  const removedJackpotWeight = baseJackpotWeight - scaledJackpotWeight;
+
+  const adjustedOutcomes = CASINO_SLOT_OUTCOMES.map(o => {
+    if (o.jackpot) {
+      return { ...o, weight: Math.round(Number(o.weight || 0) * wagerScale) };
+    }
+    if (o.kind === 'loss') {
+      return { ...o, weight: Number(o.weight || 0) + removedJackpotWeight };
+    }
+    return o;
+  });
+
+  const totalWeight = adjustedOutcomes.reduce((sum, o) => sum + Number(o.weight || 0), 0);
+  let roll = Math.floor(Math.random() * totalWeight) + 1;
+  for (const outcome of adjustedOutcomes) {
+    roll -= Number(outcome.weight || 0);
+    if (roll <= 0) return outcome;
+  }
+  return adjustedOutcomes[0];
+}
+
+function buildWinningReels(outcome) {
+  const match = pickRandom(CASINO_SYMBOL_POOLS[outcome.tier] || CASINO_SYMBOL_POOLS.d3);
+  if (Number(outcome.matchCount) === 3) return [match, match, match];
+
+  const others = CASINO_ALL_SYMBOLS.filter(s => s.id !== match.id);
+  const miss = pickRandom(others);
+  const reels = [match, match, miss];
+  for (let i = reels.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [reels[i], reels[j]] = [reels[j], reels[i]];
+  }
+  return reels;
+}
+
+function buildLosingReels() {
+  const symbols = [...CASINO_ALL_SYMBOLS];
+  const reels = [];
+  while (reels.length < 3 && symbols.length) {
+    const index = Math.floor(Math.random() * symbols.length);
+    reels.push(symbols.splice(index, 1)[0]);
+  }
+  return reels;
+}
+
+export function getCasinoStateForUser(userId = null) {
+  ensureCasinoState();
+
+  const wageredByUser = new Map();
+  for (const spin of state.casino.spins) {
+    const uid = Number(spin.user_id);
+    wageredByUser.set(uid, (wageredByUser.get(uid) || 0) + Number(spin.wager || 0));
+  }
+
+  const slotLeaderboard = [...wageredByUser.entries()]
+    .map(([uid, totalWagered]) => {
+      const user = state.users.find(u => Number(u.id) === Number(uid));
+      return {
+        user_id: uid,
+        user_display_name: user?.display_name || `User ${uid}`,
+        total_wagered: totalWagered
+      };
+    })
+    .sort((a, b) => Number(b.total_wagered || 0) - Number(a.total_wagered || 0))
+    .slice(0, 10);
+
+  return {
+    jackpotAmount: Math.floor(Number(state.casino.jackpotAmount || 0)),
+    jackpotSeed: Math.floor(Number(state.casino.jackpotSeed || 0)),
+    contributionRate: CASINO_JACKPOT_CONTRIBUTION_RATE,
+    allowedWagers: [...CASINO_SLOT_WAGERS],
+    slotLeaderboard,
+    allSymbols: CASINO_ALL_SYMBOLS,
+    balanceSummary: userId ? getBalanceSummaryForUser(userId) : null
+  };
+}
+
+export function spinCasinoSlots({ userId, wager }) {
+  ensureCasinoState();
+  const cleanWager = Number(wager);
+  if (!CASINO_SLOT_WAGERS.includes(cleanWager)) throw new Error('Select a valid spin amount.');
+
+  const user = state.users.find(u => Number(u.id) === Number(userId));
+  if (!user) throw new Error('User not found.');
+  if (Number(user.balance || 0) < cleanWager) throw new Error('Insufficient balance.');
+
+  const jackpotBefore = Math.floor(Number(state.casino.jackpotAmount || state.casino.jackpotSeed || 1000));
+  const jackpotContribution = Math.round(cleanWager * CASINO_JACKPOT_CONTRIBUTION_RATE);
+  const outcome = pickSlotOutcome(cleanWager);
+  const reels = outcome.kind === 'loss' ? buildLosingReels() : buildWinningReels(outcome);
+
+  let payout = 0;
+  if (outcome.jackpot) {
+    payout = jackpotBefore + jackpotContribution + Math.round(cleanWager * Number(outcome.multiplier || 0));
+    state.casino.jackpotAmount = Number(state.casino.jackpotSeed || 1000);
+  } else {
+    payout = Math.round(cleanWager * Number(outcome.multiplier || 0));
+    state.casino.jackpotAmount = jackpotBefore + jackpotContribution;
+  }
+
+  const net = payout - cleanWager;
+  user.balance = Number(user.balance || 0) - cleanWager + payout;
+
+  state.casino.totalWagered = Number(state.casino.totalWagered || 0) + cleanWager;
+  state.casino.totalPaid = Number(state.casino.totalPaid || 0) + payout;
+
+  const spin = {
+    id: state.nextCasinoSpinId++,
+    user_id: Number(userId),
+    game: 'slots',
+    wager: cleanWager,
+    payout,
+    net,
+    outcome_key: outcome.key,
+    outcome_label: outcome.label,
+    multiplier: Number(outcome.multiplier || 0),
+    jackpot: Boolean(outcome.jackpot),
+    jackpot_before: jackpotBefore,
+    jackpot_after: Math.floor(Number(state.casino.jackpotAmount || 0)),
+    jackpot_contribution: jackpotContribution,
+    reels,
+    created_at: nowIso()
+  };
+
+  state.casino.spins.push(spin);
+
+  state.transactions.push({
+    id: state.nextTransactionId++,
+    user_id: Number(userId),
+    amount: -cleanWager,
+    kind: 'casino_slots_wager',
+    category: 'casino',
+    game: 'slots',
+    note: `Slots wager (${outcome.label})`,
+    casino_spin_id: spin.id,
+    created_at: nowIso()
+  });
+
+  if (payout > 0) {
+    state.transactions.push({
+      id: state.nextTransactionId++,
+      user_id: Number(userId),
+      amount: payout,
+      kind: outcome.jackpot ? 'casino_jackpot_payout' : 'casino_slots_payout',
+      category: 'casino',
+      game: 'slots',
+      note: outcome.jackpot ? `Mushy Jackpot won: ${payout}` : `Slots payout: ${outcome.label}`,
+      casino_spin_id: spin.id,
+      created_at: nowIso()
+    });
+  }
+
+  saveState();
+
+  return {
+    ...spin,
+    balanceSummary: getBalanceSummaryForUser(user.id),
+    jackpotAmount: Math.floor(Number(state.casino.jackpotAmount || 0))
+  };
+}
 
 export function getUserSettledBetHistory(userId, limit = 200) {
   return state.bets

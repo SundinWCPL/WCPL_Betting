@@ -46,7 +46,9 @@ import {
   clearPropPlayerOverrideForWeek,
   createJsonBackup,
   getBackupInfo,
-  getDatabasePath
+  getDatabasePath,
+  getCasinoStateForUser,
+  spinCasinoSlots
 } from './db.js';
 import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries, getPlayers } from './services/wcplData.js';
 import { buildWeekSettlementResults, evaluateBetAgainstResults } from './services/settlement.js';
@@ -315,6 +317,38 @@ app.post('/logout', (req, res) => {
 app.get('/history', requireLogin, (req, res) => {
   const history = getUserSettledBetHistory(req.session.userId);
   res.render('history', { history });
+});
+
+app.get('/casino', requireLogin, (req, res) => {
+  const casinoState = getCasinoStateForUser(req.session.userId);
+  const lastSpin = req.session.lastCasinoSpin || null;
+  const lastWager = Number(req.session.lastCasinoWager || casinoState.allowedWagers[0] || 10);
+  delete req.session.lastCasinoSpin;
+  res.render('casino', { casinoState, lastSpin, lastWager });
+});
+
+app.post('/casino/slots/spin', requireLogin, (req, res) => {
+  const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
+  try {
+    const spin = spinCasinoSlots({
+      userId: req.session.userId,
+      wager: req.body.wager
+    });
+    req.session.lastCasinoSpin = spin;
+    req.session.lastCasinoWager = spin.wager;
+
+    if (wantsJson) {
+      return res.json({ ok: true, spin, casinoState: getCasinoStateForUser(req.session.userId) });
+    }
+
+    return res.redirect('/casino');
+  } catch (err) {
+    if (wantsJson) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+    req.session.flash = { type: 'error', message: err.message };
+    return res.redirect('/casino');
+  }
 });
 
 app.get('/betting', requireLogin, async (req, res, next) => {

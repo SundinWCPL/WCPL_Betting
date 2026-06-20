@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WCPL Casino</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<%- include('partials_header') %>
+<main class="container casino-container">
+  <section class="casino-topbar">
+    <div class="toggle-row casino-tabs">
+      <a class="button-link ghost-active" href="/casino">Slots</a>
+      <span class="button-link ghost casino-tab-disabled">Blackjack · Coming Soon</span>
+      <span class="button-link ghost casino-tab-disabled">50/50 · Coming Soon</span>
+    </div>
+    <div class="casino-balance card">
+      <span class="muted">Available Balance</span>
+      <strong data-balance-display><%= casinoState.balanceSummary.available_balance.toLocaleString() %></strong>
+    </div>
+  </section>
+
+  <section class="card jackpot-card">
+    <p class="eyebrow">Mushy Jackpot</p>
+    <div class="jackpot-amount" data-jackpot-display><%= casinoState.jackpotAmount.toLocaleString() %></div>
+  </section>
+
+  <section class="card slot-card">
+    <div class="slot-reels" aria-label="Slot machine reels" data-slot-reels>
+      <% const reels = lastSpin && lastSpin.reels ? lastSpin.reels : [
+        { label: 'Mushy', image: '/images/casino/mushy.png' },
+        { label: 'WCPL', image: '/images/casino/wcpl.png' },
+        { label: 'D3 Logo', image: '/images/casino/D3/CGY.png', tier: 'd3' }
+      ]; %>
+      <% reels.forEach((symbol, i) => { %>
+        <div class="slot-reel" data-reel-index="<%= i %>">
+          <div class="slot-reel-window">
+            <img src="<%= symbol.image %>" alt="<%= symbol.label %>" data-reel-img>
+          </div>
+          <span data-reel-label><%= symbol.label %></span>
+        </div>
+      <% }) %>
+    </div>
+
+    <% if (lastSpin) { %>
+      <div class="slot-result <%= lastSpin.net > 0 ? 'slot-win' : (lastSpin.net === 0 ? 'slot-push' : 'slot-loss') %>" data-slot-result>
+        <strong data-result-label><%= lastSpin.outcome_label %></strong>
+        <span data-result-detail>
+          Wagered <%= lastSpin.wager %>, won <%= lastSpin.payout %>
+          (<%= lastSpin.net > 0 ? '+' : '' %><%= lastSpin.net %>)
+        </span>
+      </div>
+    <% } else { %>
+      <div class="slot-result slot-push" data-slot-result>
+        <strong data-result-label>Ready to spin</strong>
+        <span data-result-detail>Choose 10–50 Mushybux and send it.</span>
+      </div>
+    <% } %>
+
+    <form method="post" action="/casino/slots/spin" class="slot-form" data-slot-form>
+      <input type="hidden" name="wager" value="<%= lastWager %>" data-wager-input>
+      <div class="slot-wager-row">
+        <button type="button" class="slot-step-btn" data-wager-minus>-</button>
+        <div class="slot-wager-display">
+          <span class="muted">Spin Amount</span>
+          <strong><span data-wager-display><%= lastWager %></span> Mushybux</strong>
+        </div>
+        <button type="button" class="slot-step-btn" data-wager-plus>+</button>
+      </div>
+      <button class="slot-spin-button" type="submit" data-spin-button>SPIN</button>
+    </form>
+  </section>
+
+  <section class="grid two casino-info-grid">
+    <div class="card">
+      <h2>Payouts</h2>
+      <table>
+        <thead><tr><th>Result</th><th>Payout</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>
+              <span class="payout-symbols">
+                <img src="/images/casino/mushy.png" alt="Mushy">
+                <img src="/images/casino/mushy.png" alt="Mushy">
+                <img src="/images/casino/mushy.png" alt="Mushy">
+              </span>
+            </td>
+            <td>Jackpot + 10x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols">
+                <img src="/images/casino/wcpl.png" alt="WCPL">
+                <img src="/images/casino/wcpl.png" alt="WCPL">
+                <img src="/images/casino/wcpl.png" alt="WCPL">
+              </span>
+            </td>
+            <td>25x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d1" data-payout-count="3" aria-label="Any D1 Logo x3"></span>
+            </td>
+            <td>10x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d2" data-payout-count="3" aria-label="Any D2 Logo x3"></span>
+            </td>
+            <td>5x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d3" data-payout-count="3" aria-label="Any D3 Logo x3"></span>
+            </td>
+            <td>2x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols">
+                <img src="/images/casino/mushy.png" alt="Mushy">
+                <img src="/images/casino/mushy.png" alt="Mushy">
+              </span>
+            </td>
+            <td>5x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols">
+                <img src="/images/casino/wcpl.png" alt="WCPL">
+                <img src="/images/casino/wcpl.png" alt="WCPL">
+              </span>
+            </td>
+            <td>2.5x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d1" data-payout-count="2" aria-label="Any D1 Logo x2"></span>
+            </td>
+            <td>1.5x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d2" data-payout-count="2" aria-label="Any D2 Logo x2"></span>
+            </td>
+            <td>1.1x</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d3" data-payout-count="2" aria-label="Any D3 Logo x2"></span>
+            </td>
+            <td>1x</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Slot Degeneracy Leaderboard</h2>
+      <p class="muted">Ranked by total Mushybux wagered on slots.</p>
+      <% if (!casinoState.slotLeaderboard.length) { %>
+        <p>No spins yet.</p>
+      <% } else { %>
+        <table>
+          <thead><tr><th>#</th><th>User</th><th>Wagered</th></tr></thead>
+          <tbody data-slot-leaderboard>
+            <% casinoState.slotLeaderboard.forEach((row, i) => { %>
+              <tr>
+                <td><%= i + 1 %></td>
+                <td><%= row.user_display_name %></td>
+                <td><%= Number(row.total_wagered || 0).toLocaleString() %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      <% } %>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const allowed = <%- JSON.stringify(casinoState.allowedWagers) %>;
+  const symbols = <%- JSON.stringify(casinoState.allSymbols) %>;
+  let index = Math.max(0, allowed.indexOf(Number(<%- JSON.stringify(lastWager) %>)));
+
+  const form = document.querySelector('[data-slot-form]');
+  const input = document.querySelector('[data-wager-input]');
+  const display = document.querySelector('[data-wager-display]');
+  const minus = document.querySelector('[data-wager-minus]');
+  const plus = document.querySelector('[data-wager-plus]');
+  const spinButton = document.querySelector('[data-spin-button]');
+  const resultBox = document.querySelector('[data-slot-result]');
+  const resultLabel = document.querySelector('[data-result-label]');
+  const resultDetail = document.querySelector('[data-result-detail]');
+  const balanceDisplay = document.querySelector('[data-balance-display]');
+  const jackpotDisplay = document.querySelector('[data-jackpot-display]');
+  const leaderboardBody = document.querySelector('[data-slot-leaderboard]');
+  const reels = [...document.querySelectorAll('[data-reel-index]')].map(reel => ({
+    el: reel,
+    window: reel.querySelector('.slot-reel-window'),
+    img: reel.querySelector('[data-reel-img]'),
+    label: reel.querySelector('[data-reel-label]')
+  }));
+
+  const fmt = (n) => Number(n || 0).toLocaleString();
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const randomSymbol = () => symbols[Math.floor(Math.random() * symbols.length)] || symbols[0];
+
+  const payoutLogoPools = {
+    d1: [
+      '/images/casino/D1/BCL.png',
+      '/images/casino/D1/LL.png',
+      '/images/casino/D1/NK.png',
+      '/images/casino/D1/PKN.png',
+      '/images/casino/D1/SEA.png',
+      '/images/casino/D1/TOR.png'
+    ],
+    d2: [
+      '/images/casino/D2/BCK.png',
+      '/images/casino/D2/BLD.png',
+      '/images/casino/D2/BLM.png',
+      '/images/casino/D2/CLE.png',
+      '/images/casino/D2/LGT.png',
+      '/images/casino/D2/RCH.png'
+    ],
+    d3: [
+      '/images/casino/D3/206.png',
+      '/images/casino/D3/CGY.png',
+      '/images/casino/D3/EVT.png',
+      '/images/casino/D3/KLN.png',
+      '/images/casino/D3/VAN.png',
+      '/images/casino/D3/VIC.png'
+    ]
+  };
+
+function initPayoutLogoCycles() {
+  const rows = [...document.querySelectorAll('[data-payout-cycle]')];
+
+  rows.forEach((row) => {
+    const tier = row.dataset.payoutCycle;
+    const pool = payoutLogoPools[tier] || [];
+    const count = Math.max(1, Number(row.dataset.payoutCount || 1));
+    if (!pool.length) return;
+
+    row.dataset.logoPool = JSON.stringify(pool);
+    row.dataset.logoCount = count;
+
+    row.innerHTML = Array.from({ length: count }, () =>
+      `<img src="${escapeHtml(pool[0])}" alt="${escapeHtml(String(tier || '').toUpperCase())} logo">`
+    ).join('');
+  });
+
+  let payoutOffset = 0;
+
+  setInterval(() => {
+    rows.forEach((row) => {
+      const pool = JSON.parse(row.dataset.logoPool || '[]');
+      if (!pool.length) return;
+
+      const logo = pool[payoutOffset % pool.length];
+
+      row.querySelectorAll('img').forEach((img) => {
+        img.src = logo;
+      });
+    });
+
+    payoutOffset++;
+  }, 1000);
+}
+
+
+  function setReel(reel, symbol) {
+    if (!reel || !symbol) return;
+    reel.window?.classList.remove('slot-reel-window-spinning');
+    reel.window.innerHTML = `<img src="${escapeHtml(symbol.image)}" alt="${escapeHtml(symbol.label)}" data-reel-img>`;
+    reel.img = reel.window.querySelector('[data-reel-img]');
+    reel.label.textContent = symbol.label;
+  }
+
+  function updateWager() {
+    const value = allowed[index] || allowed[0];
+    input.value = value;
+    display.textContent = value;
+    minus.disabled = index <= 0;
+    plus.disabled = index >= allowed.length - 1;
+  }
+
+  function clearResultClasses() {
+    resultBox.classList.remove(
+      'slot-win',
+      'slot-push',
+      'slot-loss',
+      'slot-spinning',
+      'slot-result-tier-d3',
+      'slot-result-tier-d2',
+      'slot-result-tier-d1',
+      'slot-result-tier-wcpl',
+      'slot-result-tier-mushy'
+    );
+  }
+
+  function setResult(spin) {
+    const tier = getWinTier(spin);
+    clearResultClasses();
+    resultBox.classList.add(tier ? 'slot-win' : (spin.net === 0 ? 'slot-push' : 'slot-loss'));
+    if (tier) resultBox.classList.add(`slot-result-tier-${tier}`);
+    resultLabel.textContent = spin.outcome_label;
+    resultDetail.textContent = `Wagered ${spin.wager}, won ${spin.payout} (${spin.net > 0 ? '+' : ''}${spin.net})`;
+  }
+
+  function renderLeaderboard(rows) {
+    if (!leaderboardBody || !Array.isArray(rows)) return;
+    leaderboardBody.innerHTML = rows.map((row, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(row.user_display_name || 'Unknown')}</td>
+        <td>${fmt(row.total_wagered)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function clearWinHighlights() {
+    reels.forEach(reel => {
+      reel.el.classList.remove(
+        'slot-reel-win',
+        'slot-reel-win-d3',
+        'slot-reel-win-d2',
+        'slot-reel-win-d1',
+        'slot-reel-win-wcpl',
+        'slot-reel-win-mushy',
+        'slot-reel-stop-d3',
+        'slot-reel-stop-d2',
+        'slot-reel-stop-d1',
+        'slot-reel-stop-wcpl',
+        'slot-reel-stop-mushy'
+      );
+    });
+    jackpotDisplay?.closest('.jackpot-card')?.classList.remove('jackpot-hit');
+  }
+
+  function getWinTier(spin) {
+    const key = String(spin?.outcome_key || '');
+    if (key.includes('mushy')) return 'mushy';
+    if (key.includes('wcpl')) return 'wcpl';
+    if (key.includes('d1')) return 'd1';
+    if (key.includes('d2')) return 'd2';
+    if (key.includes('d3')) return 'd3';
+    return null;
+  }
+
+  function getSymbolTier(symbol) {
+    const tier = String(symbol?.tier || '').trim().toLowerCase();
+    if (['d3', 'd2', 'd1', 'wcpl', 'mushy'].includes(tier)) return tier;
+
+    const id = String(symbol?.id || '').trim().toLowerCase();
+    if (id === 'mushy') return 'mushy';
+    if (id === 'wcpl') return 'wcpl';
+
+    const image = String(symbol?.image || '').toLowerCase();
+    if (image.includes('/d1/')) return 'd1';
+    if (image.includes('/d2/')) return 'd2';
+    if (image.includes('/d3/')) return 'd3';
+
+    return 'd3';
+  }
+
+  function getWinningReelIndexes(spin) {
+    if (!spin || String(spin.outcome_key || '') === 'loss') return [];
+
+    const counts = new Map();
+    for (const symbol of spin.reels || []) {
+      const key = symbol?.id || symbol?.image || symbol?.label;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+
+    let winningKey = null;
+    let winningCount = 0;
+    for (const [key, count] of counts.entries()) {
+      if (count > winningCount) {
+        winningKey = key;
+        winningCount = count;
+      }
+    }
+
+    if (!winningKey || winningCount < 2) return [];
+    return (spin.reels || [])
+      .map((symbol, i) => ((symbol?.id || symbol?.image || symbol?.label) === winningKey ? i : -1))
+      .filter(i => i >= 0);
+  }
+
+  function applyWinHighlights(spin) {
+    clearWinHighlights();
+
+    const tier = getWinTier(spin);
+    const indexes = getWinningReelIndexes(spin);
+    if (!tier || !indexes.length) return;
+
+    indexes.forEach(i => {
+      reels[i]?.el.classList.add('slot-reel-win', `slot-reel-win-${tier}`);
+    });
+
+    if (tier === 'mushy' && spin?.jackpot) {
+      jackpotDisplay?.closest('.jackpot-card')?.classList.add('jackpot-hit');
+    }
+  }
+
+  function buildReelStrip(finalSymbol, length = 22) {
+    const strip = [];
+    for (let i = 0; i < length; i += 1) strip.push(randomSymbol());
+    strip.push(finalSymbol);
+    return strip;
+  }
+
+  function animateOneReel(reel, finalSymbol, reelIndex) {
+    return new Promise(resolve => {
+      const reelLengths = [18, 24, 30];
+      const reelDurations = [2400, 3200, 4000];
+      const stripSymbols = buildReelStrip(finalSymbol, reelLengths[reelIndex] || 34);
+      const finalIndex = stripSymbols.length - 1;
+      const itemHeight = reel.window?.clientHeight || 132;
+      const finalOffset = -(finalIndex * itemHeight);
+      const strip = document.createElement('div');
+      strip.className = 'slot-reel-strip';
+      stripSymbols.forEach(symbol => {
+        const item = document.createElement('div');
+        item.className = 'slot-reel-strip-item';
+        item.style.height = `${itemHeight}px`;
+        item.innerHTML = `<img src="${escapeHtml(symbol.image)}" alt="${escapeHtml(symbol.label)}">`;
+        strip.appendChild(item);
+      });
+
+      reel.window.classList.add('slot-reel-window-spinning');
+      reel.window.innerHTML = '';
+      reel.window.appendChild(strip);
+      reel.label.textContent = 'Spinning...';
+
+      requestAnimationFrame(() => {
+        const duration = reelDurations[reelIndex] || 5000;
+        strip.style.transition = `transform ${duration}ms cubic-bezier(.12,.72,.11,1)`;
+        strip.style.transform = `translateY(${finalOffset}px)`;
+
+        setTimeout(() => {
+          const stopTier = getSymbolTier(finalSymbol);
+          reel.el.classList.remove(
+            'slot-reel-stop-d3',
+            'slot-reel-stop-d2',
+            'slot-reel-stop-d1',
+            'slot-reel-stop-wcpl',
+            'slot-reel-stop-mushy'
+          );
+          reel.el.classList.add('slot-reel-stopping', `slot-reel-stop-${stopTier}`);
+          setReel(reel, finalSymbol);
+          setTimeout(() => {
+            reel.el.classList.remove('slot-reel-stopping', `slot-reel-stop-${stopTier}`);
+          }, 300);
+          resolve();
+        }, duration + 30);
+      });
+    });
+  }
+
+  async function animateSpin(finalReels) {
+    clearWinHighlights();
+    clearResultClasses();
+    resultBox.classList.add('slot-spinning');
+    resultLabel.textContent = 'Spinning...';
+    resultDetail.textContent = 'Mushy is deciding your fate.';
+
+    await Promise.all(reels.map((reel, i) => animateOneReel(reel, finalReels[i], i)));
+    await sleep(150);
+  }
+
+  minus?.addEventListener('click', () => { index = Math.max(0, index - 1); updateWager(); });
+  plus?.addEventListener('click', () => { index = Math.min(allowed.length - 1, index + 1); updateWager(); });
+  initPayoutLogoCycles();
+  updateWager();
+
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (spinButton.disabled) return;
+
+    spinButton.disabled = true;
+    minus.disabled = true;
+    plus.disabled = true;
+    spinButton.textContent = 'SPINNING...';
+
+    try {
+      const body = new URLSearchParams(new FormData(form));
+      const response = await fetch(form.action, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Spin failed.');
+
+      await animateSpin(payload.spin.reels);
+      setResult(payload.spin);
+      applyWinHighlights(payload.spin);
+      balanceDisplay.textContent = fmt(payload.spin.balanceSummary.available_balance);
+      jackpotDisplay.textContent = fmt(payload.spin.jackpotAmount);
+      renderLeaderboard(payload.casinoState.slotLeaderboard);
+    } catch (err) {
+      clearWinHighlights();
+      clearResultClasses();
+      resultBox.classList.add('slot-loss');
+      resultLabel.textContent = 'Spin failed';
+      resultDetail.textContent = err.message || 'Something went wrong.';
+    } finally {
+      spinButton.disabled = false;
+      spinButton.textContent = 'SPIN';
+      updateWager();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

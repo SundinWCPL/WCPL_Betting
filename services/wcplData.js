@@ -89,6 +89,23 @@ export async function getAvailableSeasons() {
   }
 }
 
+function bettingExcludedDivisionIds() {
+  return new Set(
+    String(process.env.BETTING_EXCLUDED_DIVISIONS ?? 'D3')
+      .split(',')
+      .map(s => s.trim().toUpperCase())
+      .filter(Boolean)
+  );
+}
+
+export function isBettingDivision(divisionId) {
+  return !bettingExcludedDivisionIds().has(String(divisionId || '').trim().toUpperCase());
+}
+
+export async function getBettingDivisions(seasonId = process.env.SEASON_ID || 'S3') {
+  return (await getDivisions(seasonId)).filter(d => isBettingDivision(d.division_id));
+}
+
 export async function getDivisions(seasonId = process.env.SEASON_ID || 'S3') {
   const season = String(seasonId || '').trim();
 
@@ -182,7 +199,7 @@ export async function getBoxscores(divisionId, seasonId = process.env.SEASON_ID 
 }
 
 export async function getUpcomingSeries(week = Number(process.env.CURRENT_WEEK || 1), seasonId = process.env.SEASON_ID || 'S3') {
-  const divisions = await getDivisions(seasonId);
+  const divisions = await getBettingDivisions(seasonId);
   const all = [];
 
   for (const div of divisions) {
@@ -243,7 +260,7 @@ export async function getPlayers(divisionId, seasonId = process.env.SEASON_ID ||
 }
 
 export async function getPropBoards(week = Number(process.env.CURRENT_WEEK || 1), seasonId = process.env.SEASON_ID || 'S3', odds = {}) {
-  const divisions = await getDivisions(seasonId);
+  const divisions = await getBettingDivisions(seasonId);
   const weekSeries = await getUpcomingSeries(week, seasonId);
   const eligibleTeamsByDivision = new Map();
 
