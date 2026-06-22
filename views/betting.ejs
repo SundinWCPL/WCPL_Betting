@@ -43,6 +43,14 @@
               <div>
                 <span class="pill"><%= s.division_name %></span>
                 <h2><%= s.away_team_name %> at <%= s.home_team_name %></h2>
+                <% if (s.bettingClosed) { %>
+                  <p class="negative compact-no-bet">
+                    Series complete · betting closed
+                    <% if (s.result?.winner_team_name) { %>
+                      · <%= s.result.winner_team_name %> won <%= s.result.winner_wins %>-<%= s.result.loser_wins %>
+                    <% } %>
+                  </p>
+                <% } %>
               </div>
               <% if (s.currentBet) { %>
                 <%
@@ -59,7 +67,7 @@
                   <% } else { %>
                     <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Return <strong><%= Math.ceil(Number(s.currentBet.stake) * Number(s.currentBet.multiplier)) %></strong></span>
                   <% } %>
-                  <% if (!betSettled && !bettingView.locked) { %>
+                  <% if (!betSettled && !bettingView.locked && !s.bettingClosed) { %>
                     <form method="post" action="/bets/cancel" class="cancel-bet-form" onsubmit="return confirm('Cancel this bet and return <%= s.currentBet.stake %> Mushybux?');">
                       <input type="hidden" name="view" value="<%= bettingView.view %>">
                       <input type="hidden" name="type" value="series">
@@ -69,11 +77,11 @@
                   <% } %>
                 </div>
               <% } else { %>
-                <p class="muted compact-no-bet">No bet placed.</p>
+                <p class="muted compact-no-bet"><%= s.bettingClosed ? 'No bet placed before this series closed.' : 'No bet placed.' %></p>
               <% } %>
             </div>
 
-            <% if (!bettingView.locked) { %>
+            <% if (!bettingView.locked && !s.bettingClosed) { %>
               <form method="post" action="/bets" class="builder-form compact-builder-form">
                 <input type="hidden" name="view" value="<%= bettingView.view %>">
                 <input type="hidden" name="series_key" value="<%= s.series_key %>">
@@ -146,6 +154,9 @@
               <div>
                 <span class="pill"><%= div.division_name %></span>
                 <h2><%= div.division_name %> Prop Bets</h2>
+                <% if (div.bettingClosed) { %>
+                  <p class="negative compact-no-bet">Prop betting is closed because a series in this division is complete.</p>
+                <% } %>
               </div>
               <p class="muted compact-no-bet">Max prop bet: <strong><%= propMaxBet %></strong> Mushybux</p>
             </div>
@@ -173,7 +184,7 @@
                         <% } else { %>
                           <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Return <strong><%= Math.ceil(Number(prop.currentBet.stake) * Number(prop.currentBet.multiplier)) %></strong></span>
                         <% } %>
-                        <% if (!propBetSettled && !bettingView.locked) { %>
+                        <% if (!propBetSettled && !bettingView.locked && !div.bettingClosed) { %>
                           <form method="post" action="/bets/cancel" class="cancel-bet-form" onsubmit="return confirm('Cancel this prop bet and return <%= prop.currentBet.stake %> Mushybux?');">
                             <input type="hidden" name="view" value="<%= bettingView.view %>">
                             <input type="hidden" name="type" value="props">
@@ -187,7 +198,7 @@
                     <% } %>
                   </div>
 
-                  <% if (!bettingView.locked) { %>
+                  <% if (!bettingView.locked && !div.bettingClosed) { %>
                     <form method="post" action="/prop-bets" class="builder-form compact-builder-form prop-form">
                       <input type="hidden" name="view" value="<%= bettingView.view %>">
                       <input type="hidden" name="prop_key" value="<%= prop.prop_key %>">

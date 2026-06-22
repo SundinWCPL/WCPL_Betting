@@ -8,6 +8,7 @@ import {
   initDb,
   authenticate,
   getUserById,
+  getUserBets,
   getLeaderboard,
   getUserBetsBySeries,
   getWeeklyBetTotalByTeam,
@@ -115,6 +116,21 @@ function getBettingView(req) {
   const settings = getAdminSettings();
   const currentWeek = Number(settings.currentWeek || 1);
   return { view: 'current', week: currentWeek, locked: isWeekLocked(currentWeek), openWeek: currentWeek };
+}
+
+async function getBetClosureState({ seasonId, week }) {
+  const weekResults = await buildWeekSettlementResults({ seasonId, week });
+  const completedSeriesKeys = new Set(
+    Object.values(weekResults.seriesResults || {})
+      .filter(result => result.complete)
+      .map(result => result.series_key)
+  );
+  const closedDivisionIds = new Set(
+    Object.values(weekResults.seriesResults || {})
+      .filter(result => result.complete)
+      .map(result => result.division_id)
+  );
+  return { weekResults, completedSeriesKeys, closedDivisionIds };
 }
 
 async function filterLeaderPropPools(boards, { seasonId, week }) {
@@ -494,13 +510,19 @@ app.get('/betting', requireLogin, async (req, res, next) => {
     const bettingView = getBettingView(req);
     const betType = String(req.query.type || 'series').toLowerCase() === 'props' ? 'props' : 'series';
     const activeOdds = getOddsAdjustmentsForWeek(bettingView.week);
-    const series = await getUpcomingSeries(bettingView.week, getAdminSettings().seasonId);
+    const seasonId = getAdminSettings().seasonId;
+    const [series, closureState] = await Promise.all([
+      getUpcomingSeries(bettingView.week, seasonId),
+      getBetClosureState({ seasonId, week: bettingView.week })
+    ]);
     const betsBySeries = getUserBetsBySeries(req.session.userId, bettingView.week);
     const board = series.map(s => ({
       ...s,
       markets: buildMarketsForSeries(s, activeOdds),
       goalTotal: getGoalTotalForSeries(s, activeOdds),
-      currentBet: betsBySeries[s.series_key] || null
+      currentBet: betsBySeries[s.series_key] || null,
+      bettingClosed: closureState.completedSeriesKeys.has(s.series_key),
+      result: closureState.weekResults.seriesResults[s.series_key] || null
     }));
 
     const propBetsByCategory = getUserPropBetsByCategory(req.session.userId, bettingView.week);
@@ -525,7 +547,10 @@ app.get('/betting', requireLogin, async (req, res, next) => {
       seriesPropMarkets,
       basePropBoards,
       propBetsByCategory
-    );
+    ).map(board => ({
+      ...board,
+      bettingClosed: closureState.closedDivisionIds.has(board.division_id)
+    }));
 
     const balanceSummary = getBalanceSummaryForUser(req.session.userId);
     res.render('betting', { board, propBoards, bettingView, betType, balanceSummary });
@@ -543,6 +568,13 @@ app.post('/bets', requireLogin, async (req, res) => {
     const activeOdds = getOddsAdjustmentsForWeek(bettingView.week);
     const series = (await getUpcomingSeries(bettingView.week, getAdminSettings().seasonId)).find(s => s.series_key === req.body.series_key);
     if (!series) throw new Error('Series not found.');
+    const closureState = await getBetClosureState({
+      seasonId: getAdminSettings().seasonId,
+      week: bettingView.week
+    });
+    if (closureState.completedSeriesKeys.has(series.series_key)) {
+      throw new Error('Betting is closed because this series is complete.');
+    }
 
     const market = buildMarketsForSeries(series, activeOdds).find(m => m.market_key === req.body.market_key);
     if (!market) throw new Error('Market not found.');
@@ -590,6 +622,13 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
     const propKey = String(req.body.prop_key || '');
     const [divisionId, category] = propKey.split('|');
     if (!divisionId || !category) throw new Error('Prop not found.');
+    const closureState = await getBetClosureState({
+      seasonId: getAdminSettings().seasonId,
+      week: bettingView.week
+    });
+    if (closureState.closedDivisionIds.has(divisionId)) {
+      throw new Error(`${divisionId} prop betting is closed because a series in that division is complete.`);
+    }
 
     const activeOdds = getOddsAdjustmentsForWeek(bettingView.week);
     const basePropBoards = await filterLeaderPropPools(
@@ -663,12 +702,28 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
   res.redirect('/betting?type=props');
 });
 
-app.post('/bets/cancel', requireLogin, (req, res) => {
+app.post('/bets/cancel', requireLogin, async (req, res) => {
   const bettingView = getBettingView(req);
   const betType = String(req.body.type || 'series').toLowerCase() === 'props' ? 'props' : 'series';
 
   try {
     if (bettingView.locked) throw new Error('Betting is locked for this week.');
+    const bet = getUserBets(req.session.userId, 10000).find(
+      candidate => Number(candidate.id) === Number(req.body.bet_id)
+    );
+    if (!bet) throw new Error('Bet not found.');
+    const closureState = await getBetClosureState({
+      seasonId: getAdminSettings().seasonId,
+      week: bettingView.week
+    });
+    if ((bet.bet_kind || 'series') === 'series' &&
+      closureState.completedSeriesKeys.has(String(bet.series_key || ''))) {
+      throw new Error('This bet cannot be cancelled because its series is complete.');
+    }
+    if (bet.bet_kind === 'prop' &&
+      closureState.closedDivisionIds.has(String(bet.division_id || ''))) {
+      throw new Error(`${bet.division_id} prop betting is closed for this week.`);
+    }
 
     const result = cancelOpenBet({
       userId: req.session.userId,
