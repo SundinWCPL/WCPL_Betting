@@ -667,11 +667,13 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     const settings = getAdminSettings();
     const currentWeek = Number(settings.currentWeek || 1);
     const nextWeek = currentWeek + 1;
+    const oddsWeekMode = String(req.query.odds_week || '') === 'current' ? 'current' : 'next';
+    const oddsWeek = oddsWeekMode === 'current' ? currentWeek : nextWeek;
     const currentWeekBets = getAdminBetsForWeek(currentWeek);
     const nextWeekBets = getAdminBetsForWeek(nextWeek);
     const users = getUserSummaries();
     const seasons = await getAvailableSeasons();
-    const nextWeekOdds = getOddsAdjustmentsForWeek(nextWeek);
+    const reviewedOdds = getOddsAdjustmentsForWeek(oddsWeek);
     const currentWeekSeries = await getUpcomingSeries(currentWeek, settings.seasonId);
     const voidRefunds = getVoidRefundsForWeek(currentWeek);
     const backupInfo = getBackupInfo();
@@ -695,16 +697,16 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     try {
       const recommendationReport = await buildSeriesOddsRecommendations({
         seasonId: settings.seasonId,
-        targetWeek: nextWeek
+        targetWeek: oddsWeek
       });
-      const nextWeekSeries = await getUpcomingSeries(nextWeek, settings.seasonId);
-      const seriesByKey = new Map(nextWeekSeries.map(series => [series.series_key, series]));
+      const reviewedSeries = await getUpcomingSeries(oddsWeek, settings.seasonId);
+      const seriesByKey = new Map(reviewedSeries.map(series => [series.series_key, series]));
 
       seriesOddsRecommendations = {
         ...recommendationReport,
         recommendations: recommendationReport.recommendations.map(recommendation => {
           const series = seriesByKey.get(recommendation.seriesKey);
-          const currentMarkets = series ? buildMarketsForSeries(series, nextWeekOdds) : [];
+          const currentMarkets = series ? buildMarketsForSeries(series, reviewedOdds) : [];
           const currentByKey = Object.fromEntries(
             currentMarkets.map(market => [market.market_key, market.multiplier])
           );
@@ -713,22 +715,22 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
 
           return {
             ...recommendation,
-            hasSavedGoalLine: Boolean(nextWeekOdds.goalTotals[recommendation.seriesKey]),
+            hasSavedGoalLine: Boolean(reviewedOdds.goalTotals[recommendation.seriesKey]),
             currentGoalLine: series
-              ? getGoalTotalForSeries(series, nextWeekOdds).line
+              ? getGoalTotalForSeries(series, reviewedOdds).line
               : Number(process.env.GOAL_TOTAL_LINE || 10.5),
             awayCurrent: {
-              hasSeriesWin: nextWeekOdds.series[marketKey('series_win', recommendation.awayTeamId)] != null,
-              hasExact21: nextWeekOdds.series[marketKey('exact_2_1', recommendation.awayTeamId)] != null,
-              hasSweep: nextWeekOdds.series[marketKey('sweep_3_0', recommendation.awayTeamId)] != null,
+              hasSeriesWin: reviewedOdds.series[marketKey('series_win', recommendation.awayTeamId)] != null,
+              hasExact21: reviewedOdds.series[marketKey('exact_2_1', recommendation.awayTeamId)] != null,
+              hasSweep: reviewedOdds.series[marketKey('sweep_3_0', recommendation.awayTeamId)] != null,
               seriesWinOdds: Number(currentByKey[marketKey('series_win', recommendation.awayTeamId)] || 2),
               exact21Odds: Number(currentByKey[marketKey('exact_2_1', recommendation.awayTeamId)] || 3),
               sweepOdds: Number(currentByKey[marketKey('sweep_3_0', recommendation.awayTeamId)] || 4)
             },
             homeCurrent: {
-              hasSeriesWin: nextWeekOdds.series[marketKey('series_win', recommendation.homeTeamId)] != null,
-              hasExact21: nextWeekOdds.series[marketKey('exact_2_1', recommendation.homeTeamId)] != null,
-              hasSweep: nextWeekOdds.series[marketKey('sweep_3_0', recommendation.homeTeamId)] != null,
+              hasSeriesWin: reviewedOdds.series[marketKey('series_win', recommendation.homeTeamId)] != null,
+              hasExact21: reviewedOdds.series[marketKey('exact_2_1', recommendation.homeTeamId)] != null,
+              hasSweep: reviewedOdds.series[marketKey('sweep_3_0', recommendation.homeTeamId)] != null,
               seriesWinOdds: Number(currentByKey[marketKey('series_win', recommendation.homeTeamId)] || 2),
               exact21Odds: Number(currentByKey[marketKey('exact_2_1', recommendation.homeTeamId)] || 3),
               sweepOdds: Number(currentByKey[marketKey('sweep_3_0', recommendation.homeTeamId)] || 4)
@@ -743,8 +745,8 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     try {
       propOddsRecommendations = await buildWeeklyPropMarkets({
         seasonId: settings.seasonId,
-        week: nextWeek,
-        odds: nextWeekOdds
+        week: oddsWeek,
+        odds: reviewedOdds
       });
     } catch (err) {
       propOddsRecommendations = [{ error: err.message }];
@@ -752,20 +754,20 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
 
     try {
       const divisionIds = [...new Set(
-        (await getUpcomingSeries(nextWeek, settings.seasonId)).map(series => series.division_id)
+        (await getUpcomingSeries(oddsWeek, settings.seasonId)).map(series => series.division_id)
       )];
       leaderPropRecommendations = await Promise.all(divisionIds.map(async divisionId => {
         const report = await buildLeaderPropRecommendations({
           seasonId: settings.seasonId,
           divisionId,
-          targetWeek: nextWeek
+          targetWeek: oddsWeek
         });
         for (const category of ['topScorer', 'topGoalie']) {
           const storageCategory = category === 'topScorer' ? 'top_scorer' : 'top_goalie';
           report[category] = report[category].map(player => ({
             ...player,
             currentOdds: Number(
-              nextWeekOdds.propPlayerOverrides[
+              reviewedOdds.propPlayerOverrides[
                 `${divisionId}|${storageCategory}|${player.playerKey}`
               ] ?? player.recommendedOdds
             )
@@ -781,6 +783,8 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       settings,
       currentWeek,
       nextWeek,
+      oddsWeek,
+      oddsWeekMode,
       openWeek: currentWeek,
       currentWeekBets,
       currentWeekSeries,
@@ -1102,6 +1106,29 @@ app.post('/admin/odds/series', requireAdmin, (req, res) => {
   res.redirect('/admin#series-odds-recommendations');
 });
 
+app.post('/admin/odds/bulk-series', requireAdmin, (req, res) => {
+  try {
+    const targetWeek = Number(req.body.week);
+    const rows = JSON.parse(String(req.body.payload || '[]'));
+    if (!Array.isArray(rows) || !rows.length) throw new Error('No series odds were submitted.');
+    for (const row of rows) {
+      saveSeriesOddsForWeek({
+        week: targetWeek,
+        seriesKey: row.series_key,
+        marketKeys: row.market_key || [],
+        multipliers: row.multiplier || [],
+        goalTotalLine: row.goal_total_line,
+        goalTotalBoost: row.goal_total_boost
+      });
+    }
+    req.session.flash = { type: 'success', message: `Applied all displayed Week ${targetWeek} series odds.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  const current = Number(req.body.week) === Number(getAdminSettings().currentWeek);
+  res.redirect(`/admin?odds_week=${current ? 'current' : 'next'}#series-odds-recommendations`);
+});
+
 app.post('/admin/odds/apply-series-recommendations', requireAdmin, async (req, res) => {
   try {
     const settings = getAdminSettings();
@@ -1234,6 +1261,57 @@ app.post('/admin/odds/apply-leader-prop-recommendations', requireAdmin, async (r
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/admin#leader-prop-recommendations');
+});
+
+app.post('/admin/odds/bulk-leader-props', requireAdmin, (req, res) => {
+  try {
+    const targetWeek = Number(req.body.week);
+    const rows = JSON.parse(String(req.body.payload || '[]'));
+    if (!Array.isArray(rows) || !rows.length) throw new Error('No leader prop odds were submitted.');
+    for (const row of rows) {
+      savePropPlayerOverrideForWeek({
+        week: targetWeek,
+        divisionId: row.division_id,
+        category: row.category,
+        playerKey: row.player_key,
+        multiplier: row.multiplier
+      });
+    }
+    req.session.flash = { type: 'success', message: `Applied all displayed Week ${targetWeek} Top Scorer and Top Goalie odds.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  const current = Number(req.body.week) === Number(getAdminSettings().currentWeek);
+  res.redirect(`/admin?odds_week=${current ? 'current' : 'next'}#leader-prop-recommendations`);
+});
+
+app.post('/admin/odds/bulk-player-props', requireAdmin, (req, res) => {
+  try {
+    const targetWeek = Number(req.body.week);
+    const rows = JSON.parse(String(req.body.payload || '[]'));
+    if (!Array.isArray(rows) || !rows.length) throw new Error('No player props were submitted.');
+    saveSeriesPropsForWeek({
+      week: targetWeek,
+      markets: rows.map(row => ({
+        marketKey: row.market_key,
+        seriesKey: row.series_key,
+        divisionId: row.division_id,
+        category: row.category,
+        playerKey: row.player_key,
+        playerName: row.player_name,
+        playerTeamId: row.player_team_id,
+        opponentTeamId: row.opponent_team_id,
+        eligibility: row.eligibility,
+        enabled: Boolean(row.enabled),
+        tiers: row.tiers
+      }))
+    });
+    req.session.flash = { type: 'success', message: `Applied all displayed Week ${targetWeek} player props.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  const current = Number(req.body.week) === Number(getAdminSettings().currentWeek);
+  res.redirect(`/admin?odds_week=${current ? 'current' : 'next'}#prop-odds-recommendations`);
 });
 
 app.post('/admin/odds/prop-default', requireAdmin, (req, res) => {

@@ -441,23 +441,30 @@
 
     <section class="card admin-card" id="series-odds-recommendations">
       <div class="admin-section-head">
-        <h2>Next Week Series Odds Recommendations · Week <%= nextWeek %></h2>
+        <h2><%= oddsWeekMode === 'current' ? 'Current Week' : 'Next Week' %> Series Odds Recommendations · Week <%= oddsWeek %></h2>
         <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminSeriesRecommendationsBody">Show</button>
       </div>
       <div id="adminSeriesRecommendationsBody" class="admin-collapsible-body" hidden>
+        <div class="toggle-row admin-odds-week-toggle">
+          <a class="button-link <%= oddsWeekMode === 'next' ? 'ghost-active' : 'ghost' %>" href="/admin?odds_week=next#series-odds-recommendations">Next Week</a>
+          <a class="button-link <%= oddsWeekMode === 'current' ? 'ghost-active' : 'ghost' %>" href="/admin?odds_week=current#series-odds-recommendations">Current Week Override</a>
+        </div>
+        <% if (oddsWeekMode === 'current') { %>
+          <p class="negative small-note">Current-week changes immediately reprice matching open bets. Use this only to correct lines before betting locks.</p>
+        <% } %>
         <p class="muted">
-          Model preview using S1/S2 player history and completed S3 games before Week <%= nextWeek %>.
-          Apply all recommendations, then use each editable card for manual overrides.
+          Model preview using S1/S2 player history and completed S3 games before Week <%= oddsWeek %>.
+          Review every editable value, then apply the entire section once.
         </p>
-        <form method="post" action="/admin/odds/apply-series-recommendations" class="admin-action-row" onsubmit="return confirm('Apply every recommended Week <%= nextWeek %> series line?');">
-          <input type="hidden" name="week" value="<%= nextWeek %>">
-          <button type="submit">Apply All Series Recommendations</button>
+        <form id="bulkSeriesOddsForm" method="post" action="/admin/odds/bulk-series" data-bulk-series-form>
+          <input type="hidden" name="week" value="<%= oddsWeek %>">
+          <input type="hidden" name="payload" value="">
         </form>
 
         <% if (seriesOddsRecommendations && seriesOddsRecommendations.error) { %>
           <p class="negative">Unable to build recommendations: <%= seriesOddsRecommendations.error %></p>
         <% } else if (!seriesOddsRecommendations || !seriesOddsRecommendations.recommendations.length) { %>
-          <p class="muted">No Week <%= nextWeek %> series found.</p>
+          <p class="muted">No Week <%= oddsWeek %> series found.</p>
         <% } else { %>
           <div class="odds-model-summary">
             <span><strong><%= Math.round(seriesOddsRecommendations.xgWeight * 100) %>%</strong> xG</span>
@@ -470,8 +477,8 @@
           <div class="odds-recommendation-grid">
             <% seriesOddsRecommendations.recommendations.forEach(rec => { %>
               <article class="odds-recommendation-card">
-                <form method="post" action="/admin/odds/series">
-                  <input type="hidden" name="week" value="<%= nextWeek %>">
+                <form method="post" action="/admin/odds/series" data-series-odds-form>
+                  <input type="hidden" name="week" value="<%= oddsWeek %>">
                   <input type="hidden" name="series_key" value="<%= rec.seriesKey %>">
                 <div class="odds-recommendation-head">
                   <div>
@@ -510,43 +517,43 @@
                         <td><%= rec.awayTeamId %> wins series</td>
                         <td><%= (rec.away.seriesWinProbability * 100).toFixed(1) %>%</td>
                         <td><%= rec.awayCurrent.seriesWinOdds.toFixed(1) %>x</td>
-                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|series_win|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.away.seriesWinOdds.toFixed(1) %>"></td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|series_win|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= (rec.awayCurrent.hasSeriesWin ? rec.awayCurrent.seriesWinOdds : rec.away.seriesWinOdds).toFixed(1) %>"></td>
                       </tr>
                       <tr>
                         <td><%= rec.awayTeamId %> wins 2–1</td>
                         <td><%= (rec.away.exact21Probability * 100).toFixed(1) %>%</td>
                         <td><%= rec.awayCurrent.exact21Odds.toFixed(1) %>x</td>
-                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|exact_2_1|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.away.exact21Odds.toFixed(1) %>"></td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|exact_2_1|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= (rec.awayCurrent.hasExact21 ? rec.awayCurrent.exact21Odds : rec.away.exact21Odds).toFixed(1) %>"></td>
                       </tr>
                       <tr>
                         <td><%= rec.awayTeamId %> sweeps 3–0</td>
                         <td><%= (rec.away.sweepProbability * 100).toFixed(1) %>%</td>
                         <td><%= rec.awayCurrent.sweepOdds.toFixed(1) %>x</td>
-                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|sweep_3_0|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.away.sweepOdds.toFixed(1) %>"></td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|sweep_3_0|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= (rec.awayCurrent.hasSweep ? rec.awayCurrent.sweepOdds : rec.away.sweepOdds).toFixed(1) %>"></td>
                       </tr>
                       <tr>
                         <td><%= rec.homeTeamId %> wins series</td>
                         <td><%= (rec.home.seriesWinProbability * 100).toFixed(1) %>%</td>
                         <td><%= rec.homeCurrent.seriesWinOdds.toFixed(1) %>x</td>
-                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|series_win|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.home.seriesWinOdds.toFixed(1) %>"></td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|series_win|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= (rec.homeCurrent.hasSeriesWin ? rec.homeCurrent.seriesWinOdds : rec.home.seriesWinOdds).toFixed(1) %>"></td>
                       </tr>
                       <tr>
                         <td><%= rec.homeTeamId %> wins 2–1</td>
                         <td><%= (rec.home.exact21Probability * 100).toFixed(1) %>%</td>
                         <td><%= rec.homeCurrent.exact21Odds.toFixed(1) %>x</td>
-                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|exact_2_1|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.home.exact21Odds.toFixed(1) %>"></td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|exact_2_1|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= (rec.homeCurrent.hasExact21 ? rec.homeCurrent.exact21Odds : rec.home.exact21Odds).toFixed(1) %>"></td>
                       </tr>
                       <tr>
                         <td><%= rec.homeTeamId %> sweeps 3–0</td>
                         <td><%= (rec.home.sweepProbability * 100).toFixed(1) %>%</td>
                         <td><%= rec.homeCurrent.sweepOdds.toFixed(1) %>x</td>
-                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|sweep_3_0|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.home.sweepOdds.toFixed(1) %>"></td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|sweep_3_0|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= (rec.homeCurrent.hasSweep ? rec.homeCurrent.sweepOdds : rec.home.sweepOdds).toFixed(1) %>"></td>
                       </tr>
                       <tr class="odds-total-row">
                         <td>Series goal total</td>
                         <td>Projected <%= rec.projectedSeriesGoals.toFixed(1) %></td>
                         <td><%= Number(rec.currentGoalLine).toFixed(1) %></td>
-                        <td><input type="number" name="goal_total_line" min="0.5" step="0.5" value="<%= rec.recommendedGoalLine.toFixed(1) %>"><input type="hidden" name="goal_total_boost" value="<%= rec.goalTotalBoost %>"></td>
+                        <td><input type="number" name="goal_total_line" min="0.5" step="0.5" value="<%= Number(rec.hasSavedGoalLine ? rec.currentGoalLine : rec.recommendedGoalLine).toFixed(1) %>"><input type="hidden" name="goal_total_boost" value="<%= rec.goalTotalBoost %>"></td>
                       </tr>
                     </tbody>
                   </table>
@@ -558,10 +565,12 @@
                   <strong><%= rec.homeTeamId %> <%= (rec.evidence.homeHistoryCoverage * 100).toFixed(0) %>%</strong>
                   · S3 games included: <%= rec.evidence.awayCurrentGames %>/<%= rec.evidence.homeCurrentGames %>
                 </p>
-                <button type="submit">Save This Series</button>
                 </form>
               </article>
             <% }) %>
+          </div>
+          <div class="admin-action-row bulk-odds-submit">
+            <button type="submit" form="bulkSeriesOddsForm">Apply All Displayed Series Odds</button>
           </div>
         <% } %>
       </div>
@@ -695,14 +704,14 @@
 
     <section class="card admin-card" id="leader-prop-recommendations">
       <div class="admin-section-head">
-        <h2>Top Scorer / Top Goalie Recommendations · Week <%= nextWeek %></h2>
+        <h2>Top Scorer / Top Goalie Recommendations · Week <%= oddsWeek %></h2>
         <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminLeaderPropBody">Show</button>
       </div>
       <div id="adminLeaderPropBody" class="admin-collapsible-body" hidden>
         <p class="muted">Player-specific odds based on historical performance and completed S3 games. D2 uses the faster two-game prior.</p>
-        <form method="post" action="/admin/odds/apply-leader-prop-recommendations" class="admin-action-row">
-          <input type="hidden" name="week" value="<%= nextWeek %>">
-          <button type="submit">Apply Top Scorer / Goalie Recommendations</button>
+        <form id="bulkLeaderPropsForm" method="post" action="/admin/odds/bulk-leader-props" data-bulk-leader-form>
+          <input type="hidden" name="week" value="<%= oddsWeek %>">
+          <input type="hidden" name="payload" value="">
         </form>
         <% if (leaderPropRecommendations.length && leaderPropRecommendations[0].error) { %>
           <p class="negative"><%= leaderPropRecommendations[0].error %></p>
@@ -723,15 +732,15 @@
                             <td><%= category === 'top_scorer' ? `${player.projectedPpg.toFixed(2)} PPG` : `${(player.projectedSavePct * 100).toFixed(1)} SV%` %></td>
                             <td><%= (player.probability * 100).toFixed(1) %>%</td>
                             <td>
-                              <form id="leader-<%= report.divisionId %>-<%= category %>-<%= player.playerKey.replace(/[^a-zA-Z0-9]/g, '-') %>" method="post" action="/admin/odds/player-override">
-                                <input type="hidden" name="week" value="<%= nextWeek %>">
+                              <form id="leader-<%= report.divisionId %>-<%= category %>-<%= player.playerKey.replace(/[^a-zA-Z0-9]/g, '-') %>" method="post" action="/admin/odds/player-override" data-leader-odds-form>
+                                <input type="hidden" name="week" value="<%= oddsWeek %>">
                                 <input type="hidden" name="division_id" value="<%= report.divisionId %>">
                                 <input type="hidden" name="category" value="<%= category %>">
                                 <input type="hidden" name="player_key" value="<%= player.playerKey %>">
                                 <input type="number" name="multiplier" min="1.1" step="0.1" value="<%= player.currentOdds %>">
                               </form>
                             </td>
-                            <td><button type="submit" form="leader-<%= report.divisionId %>-<%= category %>-<%= player.playerKey.replace(/[^a-zA-Z0-9]/g, '-') %>" class="small-button">Save</button></td>
+                            <td></td>
                           </tr>
                         <% }) %>
                       </tbody>
@@ -741,20 +750,23 @@
               <% }) %>
             </div>
           <% }) %>
+          <div class="admin-action-row bulk-odds-submit">
+            <button type="submit" form="bulkLeaderPropsForm">Apply All Displayed Top Scorer / Goalie Odds</button>
+          </div>
         <% } %>
       </div>
     </section>
 
     <section class="card admin-card" id="prop-odds-recommendations">
       <div class="admin-section-head">
-        <h2>Next Week Player Prop Recommendations · Week <%= nextWeek %></h2>
+        <h2><%= oddsWeekMode === 'current' ? 'Current Week' : 'Next Week' %> Player Prop Recommendations · Week <%= oddsWeek %></h2>
         <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminPropRecommendationsBody">Show</button>
       </div>
       <div id="adminPropRecommendationsBody" class="admin-collapsible-body" hidden>
         <p class="muted">Apply all automatic recommendations, then inspect review-only players and manually adjust any line or payout that looks wrong.</p>
-        <form method="post" action="/admin/odds/apply-prop-recommendations" class="admin-action-row" onsubmit="return confirm('Apply all automatic Week <%= nextWeek %> player prop recommendations? Review-only players will stay disabled.');">
-          <input type="hidden" name="week" value="<%= nextWeek %>">
-          <button type="submit">Apply Automatic Prop Recommendations</button>
+        <form id="bulkPlayerPropsForm" method="post" action="/admin/odds/bulk-player-props" data-bulk-player-props-form>
+          <input type="hidden" name="week" value="<%= oddsWeek %>">
+          <input type="hidden" name="payload" value="">
         </form>
         <label class="admin-prop-search">
           Filter props
@@ -764,12 +776,12 @@
         <% if (propOddsRecommendations.length && propOddsRecommendations[0].error) { %>
           <p class="negative"><%= propOddsRecommendations[0].error %></p>
         <% } else if (!propOddsRecommendations.length) { %>
-          <p class="muted">No player prop recommendations found for Week <%= nextWeek %>.</p>
+          <p class="muted">No player prop recommendations found for Week <%= oddsWeek %>.</p>
         <% } else { %>
           <div class="admin-odds-grid">
             <% propOddsRecommendations.forEach(market => { %>
-              <form method="post" action="/admin/odds/series-prop" class="admin-odds-card" data-prop-search="<%= `${market.playerName} ${market.playerTeamId} ${market.opponentTeamId} ${market.matchupLabel} ${market.divisionId} ${market.category} ${market.eligibility}`.toLowerCase() %>">
-                <input type="hidden" name="week" value="<%= nextWeek %>">
+              <form method="post" action="/admin/odds/series-prop" class="admin-odds-card" data-player-prop-form data-prop-search="<%= `${market.playerName} ${market.playerTeamId} ${market.opponentTeamId} ${market.matchupLabel} ${market.divisionId} ${market.category} ${market.eligibility}`.toLowerCase() %>">
+                <input type="hidden" name="week" value="<%= oddsWeek %>">
                 <input type="hidden" name="market_key" value="<%= market.marketKey %>">
                 <input type="hidden" name="series_key" value="<%= market.seriesKey %>">
                 <input type="hidden" name="division_id" value="<%= market.divisionId %>">
@@ -819,9 +831,11 @@
                     </div>
                   <% }) %>
                 </div>
-                <button type="submit">Save / Override Prop</button>
               </form>
             <% }) %>
+          </div>
+          <div class="admin-action-row bulk-odds-submit">
+            <button type="submit" form="bulkPlayerPropsForm">Apply All Displayed Player Props</button>
           </div>
         <% } %>
       </div>
@@ -830,6 +844,69 @@
 
   <script>
     (() => {
+      const formValues = (form) => {
+        const data = new FormData(form);
+        const out = {};
+        for (const key of new Set(data.keys())) {
+          const values = data.getAll(key);
+          out[key] = values.length > 1 ? values : values[0];
+        }
+        return out;
+      };
+
+      document.querySelectorAll(
+        '[data-series-odds-form], [data-leader-odds-form], [data-player-prop-form]'
+      ).forEach(form => form.addEventListener('submit', event => event.preventDefault()));
+
+      const bulkSeriesForm = document.querySelector('[data-bulk-series-form]');
+      bulkSeriesForm?.addEventListener('submit', event => {
+        const rows = [...document.querySelectorAll('[data-series-odds-form]')].map(formValues);
+        if (!rows.length || !confirm(`Apply all displayed Week ${bulkSeriesForm.elements.week.value} series odds?`)) {
+          event.preventDefault();
+          return;
+        }
+        bulkSeriesForm.elements.payload.value = JSON.stringify(rows);
+      });
+
+      const bulkLeaderForm = document.querySelector('[data-bulk-leader-form]');
+      bulkLeaderForm?.addEventListener('submit', event => {
+        const rows = [...document.querySelectorAll('[data-leader-odds-form]')].map(formValues);
+        if (!rows.length || !confirm(`Apply all displayed Week ${bulkLeaderForm.elements.week.value} leader prop odds?`)) {
+          event.preventDefault();
+          return;
+        }
+        bulkLeaderForm.elements.payload.value = JSON.stringify(rows);
+      });
+
+      const bulkPlayerPropsForm = document.querySelector('[data-bulk-player-props-form]');
+      bulkPlayerPropsForm?.addEventListener('submit', event => {
+        const rows = [...document.querySelectorAll('[data-player-prop-form]')].map(form => {
+          const values = formValues(form);
+          return {
+            market_key: values.market_key,
+            series_key: values.series_key,
+            division_id: values.division_id,
+            category: values.category,
+            player_key: values.player_key,
+            player_name: values.player_name,
+            player_team_id: values.player_team_id,
+            opponent_team_id: values.opponent_team_id,
+            eligibility: values.eligibility,
+            enabled: new FormData(form).has('enabled'),
+            tiers: [1, 2, 3].map(quantity => ({
+              label: values[`label_${quantity}`],
+              line: values[`line_${quantity}`],
+              multiplier: values[`multiplier_${quantity}`]
+            }))
+          };
+        });
+        if (!rows.length || !confirm(`Apply all displayed Week ${bulkPlayerPropsForm.elements.week.value} player props?`)) {
+          event.preventDefault();
+          return;
+        }
+        bulkPlayerPropsForm.elements.payload.value = JSON.stringify(rows);
+      });
+
       const propSearch = document.getElementById('adminPropSearch');
       if (propSearch) {
         const cards = [...document.querySelectorAll('#prop-odds-recommendations [data-prop-search]')];

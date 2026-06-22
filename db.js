@@ -136,6 +136,16 @@ function ensureCasinoState() {
   state.nextShotDoctorRunId = Number(state.nextShotDoctorRunId || 1);
 }
 
+function normalizeWholeMushybux() {
+  for (const user of state.users || []) {
+    user.balance = Math.ceil(Number(user.balance || 0));
+  }
+  for (const bet of state.bets || []) {
+    bet.stake = Math.ceil(Number(bet.stake || 0));
+    if (bet.payout != null) bet.payout = Math.ceil(Number(bet.payout || 0));
+  }
+}
+
 
 export function getDatabasePath() {
   return dbPath;
@@ -181,6 +191,7 @@ export function initDb() {
   loadState();
   ensureSettings();
   ensureCasinoState();
+  normalizeWholeMushybux();
   removeDemoUsers();
   seedUser('Sundin', 'Sundin', 'admin', 'cactusgoat13');
   saveState();
@@ -205,7 +216,7 @@ function seedUser(username, displayName, role, password = 'password') {
   const exists = state.users.find(u => u.username.toLowerCase() === username.toLowerCase());
   if (exists) return;
 
-  const startingBalance = Number(process.env.STARTING_BALANCE || 1000);
+  const startingBalance = Math.ceil(Number(process.env.STARTING_BALANCE || 1000));
   const user = {
     id: state.nextUserId++,
     username,
@@ -747,6 +758,7 @@ export function saveSeriesPropForWeek({ week, marketKey, config }) {
     enabled: config.enabled !== false,
     tiers
   };
+  repriceOpenSeriesPropBets(Number(week), key, state.oddsAdjustments.seriesProps[wk][key]);
   migrateLegacyShutoutBetsForWeek(Number(week));
   saveState();
   return getOddsAdjustmentsForWeek(week);
@@ -778,10 +790,28 @@ export function saveSeriesPropsForWeek({ week, markets }) {
       enabled: market.enabled !== false,
       tiers
     };
+    repriceOpenSeriesPropBets(Number(week), key, state.oddsAdjustments.seriesProps[wk][key]);
   }
   migrateLegacyShutoutBetsForWeek(Number(week));
   saveState();
   return getOddsAdjustmentsForWeek(week);
+}
+
+function repriceOpenSeriesPropBets(week, marketKey, market) {
+  for (const bet of state.bets) {
+    if (
+      Number(bet.week) !== Number(week) ||
+      bet.status !== 'open' ||
+      bet.bet_kind !== 'prop' ||
+      String(bet.market_key || '') !== String(marketKey)
+    ) continue;
+    const tier = market.tiers.find(item => Number(item.quantity) === Number(bet.quantity || 1));
+    if (!tier) continue;
+    bet.multiplier = Number(tier.multiplier);
+    bet.prop_line = Number(tier.line);
+    bet.label = `${market.divisionId} ${market.category === 'player_goals' ? 'Player Goals' : 'Goalie Shutouts'}: ${market.playerName} vs ${market.opponentTeamId} · ${tier.label}`;
+    bet.odds_updated_at = nowIso();
+  }
 }
 
 function migrateLegacyShutoutBetsForWeek(week) {
@@ -982,7 +1012,7 @@ function settleBetsInternal({ week, results, requireReady = false }) {
       continue;
     }
 
-    const payout = evaluation.won ? Math.round(Number(bet.stake || 0) * Number(bet.multiplier || 0)) : 0;
+    const payout = evaluation.won ? Math.ceil(Number(bet.stake || 0) * Number(bet.multiplier || 0)) : 0;
     const user = state.users.find(u => u.id === Number(bet.user_id));
     if (user && payout > 0) user.balance = Number(user.balance || 0) + payout;
 
@@ -1029,7 +1059,7 @@ export function buildSettlementPreview({ week, weekResults, evaluator }) {
     .filter(b => Number(b.week) === targetWeek && b.status === 'open')
     .map(b => {
       const evaluation = evaluator(b, weekResults);
-      const payout = evaluation.ready && evaluation.won ? Math.round(Number(b.stake || 0) * Number(b.multiplier || 0)) : 0;
+      const payout = evaluation.ready && evaluation.won ? Math.ceil(Number(b.stake || 0) * Number(b.multiplier || 0)) : 0;
       const user = usersById.get(Number(b.user_id));
       return {
         ...b,
@@ -1157,7 +1187,7 @@ export function getAdminBetsForWeek(week) {
       return {
         ...b,
         user_display_name: user?.display_name || `User ${b.user_id}`,
-        potential_return: Number(b.stake || 0) * Number(b.multiplier || 0)
+        potential_return: Math.ceil(Number(b.stake || 0) * Number(b.multiplier || 0))
       };
     })
     .sort((a, b) =>
@@ -1190,7 +1220,7 @@ export function getUserSummaries() {
 
 export function adjustUserBalance(userId, amount, note = '') {
   const value = Number(amount);
-  if (!Number.isFinite(value) || value === 0) throw new Error('Balance adjustment must be a non-zero number.');
+  if (!Number.isInteger(value) || value === 0) throw new Error('Balance adjustment must be a non-zero whole number.');
 
   const user = state.users.find(u => u.id === Number(userId));
   if (!user) throw new Error('User not found.');
@@ -1223,7 +1253,7 @@ export function addUser({ username, password, displayName = '', role = 'user' })
     throw new Error('Username already exists.');
   }
 
-  const startingBalance = Number(process.env.STARTING_BALANCE || 1000);
+  const startingBalance = Math.ceil(Number(process.env.STARTING_BALANCE || 1000));
   const user = {
     id: state.nextUserId++,
     username: cleanUsername,
@@ -1537,7 +1567,7 @@ export function getCasinoSummary() {
   return {
     totalWagered,
     totalPaid,
-    netProfit: totalWagered - totalPaid,
+    netProfit: totalPaid - totalWagered,
     slotSpins: state.casino.spins.length,
     puckIqRuns: state.casino.shotDoctorRuns.length
   };

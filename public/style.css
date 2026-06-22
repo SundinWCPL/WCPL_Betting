@@ -438,6 +438,11 @@ select {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+.admin-odds-week-toggle { margin-bottom: 12px; }
+.bulk-odds-submit {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
 
 .admin-collapsible-body[hidden] {
   display: none !important;

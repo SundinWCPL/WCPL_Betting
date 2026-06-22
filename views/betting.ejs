@@ -57,7 +57,7 @@
                   <% if (betSettled) { %>
                     <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Payout <strong><%= Number(s.currentBet.payout || 0) %></strong></span>
                   <% } else { %>
-                    <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Return <strong><%= Number(s.currentBet.stake) * Number(s.currentBet.multiplier) %></strong></span>
+                    <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Return <strong><%= Math.ceil(Number(s.currentBet.stake) * Number(s.currentBet.multiplier)) %></strong></span>
                   <% } %>
                   <% if (!betSettled && !bettingView.locked) { %>
                     <form method="post" action="/bets/cancel" class="cancel-bet-form" onsubmit="return confirm('Cancel this bet and return <%= s.currentBet.stake %> Mushybux?');">
@@ -97,7 +97,7 @@
                 <div class="compact-control-row">
                   <label class="stake-label compact-stake inline-stake">
                     <span class="step-label">Stake</span>
-                    <input name="stake" type="number" min="1" max="<%= maxBet %>" placeholder="Stake" value="<%= s.currentBet ? s.currentBet.stake : '' %>" data-stake-input required>
+                    <input name="stake" type="number" min="1" max="<%= maxBet %>" step="1" placeholder="Stake" value="<%= s.currentBet ? s.currentBet.stake : '' %>" data-stake-input required>
                   </label>
 
                   <div class="builder-step compact-step">
@@ -171,7 +171,7 @@
                         <% if (propBetSettled) { %>
                           <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Payout <strong><%= Number(prop.currentBet.payout || 0) %></strong></span>
                         <% } else { %>
-                          <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Return <strong><%= Number(prop.currentBet.stake) * Number(prop.currentBet.multiplier) %></strong></span>
+                          <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Return <strong><%= Math.ceil(Number(prop.currentBet.stake) * Number(prop.currentBet.multiplier)) %></strong></span>
                         <% } %>
                         <% if (!propBetSettled && !bettingView.locked) { %>
                           <form method="post" action="/bets/cancel" class="cancel-bet-form" onsubmit="return confirm('Cancel this prop bet and return <%= prop.currentBet.stake %> Mushybux?');">
@@ -195,7 +195,7 @@
                       <div class="prop-control-row <%= prop.quantity_options.length ? '' : 'no-quantity' %>">
                         <label class="stake-label compact-stake inline-stake">
                           <span class="step-label">Stake</span>
-                          <input name="stake" type="number" min="1" max="<%= propMaxBet %>" placeholder="Stake" value="<%= prop.currentBet ? prop.currentBet.stake : '' %>" data-prop-stake-input required>
+                          <input name="stake" type="number" min="1" max="<%= propMaxBet %>" step="1" placeholder="Stake" value="<%= prop.currentBet ? prop.currentBet.stake : '' %>" data-prop-stake-input required>
                         </label>
 
                         <label class="prop-select-label">
@@ -319,7 +319,7 @@
         summary.hidden = false;
         summaryText.textContent = `${selectedLabel || 'Selection ready.'}${ouLabel}`;
         returnText.textContent = stake > 0 && boostedMultiplier > 0
-          ? `Potential return: ${stake * boostedMultiplier} Mushybux`
+          ? `Potential return: ${Math.ceil(stake * boostedMultiplier)} Mushybux`
           : '';
       }
 
@@ -414,7 +414,7 @@
         summary.hidden = false;
         summaryText.textContent = quantityLabel ? `${playerName} · ${quantityLabel} · ${multiplier}x` : `${playerName} · ${multiplier}x`;
         returnText.textContent = stake > 0 && multiplier > 0
-          ? `Potential return: ${stake * multiplier} Mushybux`
+          ? `Potential return: ${Math.ceil(stake * multiplier)} Mushybux`
           : '';
       }
 

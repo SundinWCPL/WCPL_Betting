@@ -107,6 +107,23 @@ function aggregateHistoricalPlayers(rows, seasonId) {
   }));
 }
 
+function historicalStatsFromRoster(row, seasonId) {
+  if (!row) return null;
+  const position = clean(row.position).toUpperCase();
+  const flex = position.includes('S') && position.includes('G');
+  const rawSkaterGames = n(row.gp_s);
+  const skaterGames = seasonId === 'S1' && flex && rawSkaterGames < 5
+    ? 0
+    : rawSkaterGames;
+  return {
+    skaterGames,
+    points: skaterGames > 0 ? n(row.pts) : 0,
+    goalieGames: n(row.gp_g),
+    shotsAgainst: n(row.sa),
+    goalsAgainst: n(row.ga)
+  };
+}
+
 function softmax(rows, score, temperature) {
   if (!rows.length) return [];
   const values = rows.map(row => score(row) / temperature);
@@ -187,7 +204,8 @@ export async function buildLeaderPropRecommendations({
       const matchedSeasons = [];
       for (const season of history) {
         const match = findPlayer(player, season.indexes);
-        const positionMatch = findPlayer(player, season.positionIndexes);
+        const positionMatch = findPlayer(player, season.positionIndexes) ||
+          historicalStatsFromRoster(match, season.id);
         if (!match && !positionMatch) continue;
         matchedSeasons.push(season.id);
         historicalSkaterGames += season.weight * n(positionMatch?.skaterGames);
