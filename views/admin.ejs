@@ -170,7 +170,7 @@
 
 
 
-    <section class="card admin-card">
+    <section class="card admin-card" id="user-balances">
       <h2>Backups</h2>
       <p class="muted">
         Database file: <code><%= backupInfo.backupDir %></code>
@@ -395,6 +395,15 @@
         <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminUserBalancesBody">Show</button>
       </div>
       <div id="adminUserBalancesBody" class="admin-collapsible-body" hidden>
+      <form method="post" action="/admin/adjust-all-balances" class="admin-bulk-balance-form" onsubmit="return confirm(`Apply ${this.amount.value} Mushybux to ALL <%= users.length %> users?`);">
+        <div>
+          <strong>Adjust All User Balances</strong>
+          <p class="muted small-note">Use a positive amount to add Mushybux or a negative amount to subtract it.</p>
+        </div>
+        <input type="number" name="amount" step="1" placeholder="+/- Mushybux each" required>
+        <input type="text" name="note" placeholder="Reason (optional)">
+        <button type="submit">Adjust All Users</button>
+      </form>
       <div class="table-wrap">
         <table>
           <thead>

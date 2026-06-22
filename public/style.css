@@ -537,9 +537,22 @@ select {
   align-items: center;
   min-width: 660px;
 }
+.admin-bulk-balance-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 180px minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card2);
+}
+.admin-bulk-balance-form p { margin: 4px 0 0; }
 @media (max-width: 1100px) {
   .admin-user-form,
-  .admin-user-edit-form {
+  .admin-user-edit-form,
+  .admin-bulk-balance-form {
     grid-template-columns: 1fr;
   }
   .admin-user-edit-form {

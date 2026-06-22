@@ -1240,6 +1240,31 @@ export function adjustUserBalance(userId, amount, note = '') {
   return getBalanceSummaryForUser(user.id);
 }
 
+export function adjustAllUserBalances(amount, note = '') {
+  const value = Number(amount);
+  if (!Number.isInteger(value) || value === 0) {
+    throw new Error('Bulk balance adjustment must be a non-zero whole number.');
+  }
+
+  const cleanNote = String(note || '').trim();
+  for (const user of state.users) {
+    user.balance = Number(user.balance || 0) + value;
+    state.transactions.push({
+      id: state.nextTransactionId++,
+      user_id: user.id,
+      amount: value,
+      kind: 'admin_bulk_balance_adjustment',
+      note: cleanNote
+        ? `Bulk admin adjustment: ${cleanNote}`
+        : 'Bulk admin balance adjustment',
+      created_at: nowIso()
+    });
+  }
+
+  saveState();
+  return { amount: value, count: state.users.length };
+}
+
 
 export function addUser({ username, password, displayName = '', role = 'user' }) {
   const cleanUsername = String(username || '').trim();

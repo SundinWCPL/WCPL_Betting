@@ -28,6 +28,7 @@ import {
   resetBetsForWeek,
   resetAllData,
   adjustUserBalance,
+  adjustAllUserBalances,
   addUser,
   updateUserDetails,
   setSeasonId,
@@ -1086,6 +1087,21 @@ app.post('/admin/adjust-balance', requireAdmin, (req, res) => {
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/admin');
+});
+
+app.post('/admin/adjust-all-balances', requireAdmin, (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+    const note = String(req.body.note || '').trim();
+    const result = adjustAllUserBalances(amount, note);
+    req.session.flash = {
+      type: 'success',
+      message: `Adjusted ${result.count} user balances by ${result.amount > 0 ? '+' : ''}${result.amount} Mushybux each.`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#user-balances');
 });
 
 app.post('/admin/add-user', requireAdmin, (req, res) => {
