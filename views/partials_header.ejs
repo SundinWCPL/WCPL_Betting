@@ -5,6 +5,13 @@
     <% if (currentUser) { %>
       <a href="/history">History</a>
       <a href="/betting">Betting</a>
+      <% if (casinoLinkVisible) { %>
+        <% if (casinoOpen) { %>
+          <a href="/casino">Casino</a>
+        <% } else { %>
+          <span class="nav-link-disabled" title="The casino is currently closed." aria-disabled="true">Casino</span>
+        <% } %>
+      <% } %>
       <% if (currentUser.role === 'admin') { %><a href="/admin">Admin</a><% } %>
       <form method="post" action="/logout" class="inline-form"><button>Logout</button></form>
     <% } else { %>

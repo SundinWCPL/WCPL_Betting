@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Puck IQ</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+<%- include('partials_header') %>
+
+<main class="container casino-container shot-doctor-container">
+  <section class="casino-topbar">
+    <div class="toggle-row casino-tabs">
+      <a class="button-link ghost" href="/casino">Slots</a>
+      <a class="button-link ghost-active" href="/casino/puckIQ">Puck IQ</a>
+    </div>
+    <div class="casino-balance card">
+      <span class="muted">Available Balance</span>
+      <strong data-balance-display><%= shotDoctorState.balanceSummary.available_balance.toLocaleString() %></strong>
+    </div>
+  </section>
+
+  <% if (!shotDoctorState.isOpen) { %>
+    <section class="casino-closed-notice card">
+      <strong>Casino Closed</strong>
+      <span>Puck IQ is currently disabled. Any active run will remain available when the casino reopens.</span>
+    </section>
+  <% } %>
+
+  <section class="shot-doctor-grid">
+    <div class="card shot-doctor-game-card">
+      <div class="shot-doctor-status-row">
+        <button class="button-link shot-start-button" data-start-run <%= shotDoctorState.isOpen ? '' : 'disabled' %>><%= shotDoctorState.isOpen ? `Start Run (${shotDoctorState.entryFee} Mushybux)` : 'CASINO CLOSED' %></button>
+        <div class="shot-runs-remaining" data-runs-remaining><%= shotDoctorState.weeklyLimit > 0 ? `${shotDoctorState.weeklyRunsRemaining}/${shotDoctorState.weeklyLimit} Weekly Runs Remaining` : 'Unlimited Testing Runs' %></div>
+        <div class="shot-timer" data-shot-timer hidden>--</div>
+      </div>
+
+      <div class="shot-map-wrap">
+        <div id="shotDoctorMap" class="shot-doctor-map"></div>
+        <div class="shot-map-empty" data-shot-empty>Start a run to see your first shot.</div>
+      </div>
+
+      <div class="shot-info-panel" data-shot-info>
+        <div><span>Shooter</span><strong data-shot-shooter>—</strong></div>
+        <div><span>Goalie</span><strong data-shot-goalie>—</strong></div>
+        <div><span>Distance</span><strong data-shot-distance>—</strong></div>
+        <div><span>Type</span><strong data-shot-type>—</strong></div>
+        <div><span>Speed</span><strong data-shot-speed>—</strong></div>
+      </div>
+
+      <div class="shot-doctor-actions" data-shot-actions>
+        <button class="button-link shot-guess-button" data-guess="G" hidden>Goal</button>
+        <button class="button-link shot-guess-button" data-guess="S" hidden>Save</button>
+        <button class="button-link shot-next-button" data-next-shot hidden>Next Shot</button>
+      </div>
+
+      <div class="shot-result-bar" data-shot-result hidden>
+        <strong data-shot-result-title>—</strong>
+        <span data-shot-result-detail></span>
+      </div>
+    </div>
+
+    <aside class="card shot-payout-card">
+      <h2>Payout Ladder</h2>
+      <p class="muted">Lights up as you rack up correct guesses.</p>
+      <table class="shot-payout-table">
+        <thead><tr><th>Correct</th><th>Payout</th></tr></thead>
+        <tbody data-payout-ladder>
+          <% Object.entries(shotDoctorState.payouts).sort((a, b) => Number(b[0]) - Number(a[0])).forEach(([correct, payout]) => { %>
+            <tr data-payout-row="<%= correct %>">
+              <td><%= correct %></td>
+              <td><%= Number(payout).toLocaleString() %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+
+    </aside>
+  </section>
+
+  <section class="card shot-leaderboard-card">
+    <div class="shot-leaderboard-head">
+      <div>
+        <h2>Puck IQ Leaderboard</h2>
+        <p class="muted">Average score and total Mushybux wagered on Puck IQ.</p>
+      </div>
+      <div class="toggle-row">
+        <button class="button-link ghost-active" type="button" data-shot-sort="avg">Average Score</button>
+        <button class="button-link ghost" type="button" data-shot-sort="wagered">Wagered</button>
+      </div>
+    </div>
+    <table class="shot-leaderboard-table">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Average Score</th>
+          <th>Wagered</th>
+        </tr>
+      </thead>
+      <tbody data-shot-leaderboard></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+(() => {
+  const initialState = <%- JSON.stringify(shotDoctorState) %>;
+  let state = initialState;
+  let run = state.activeRun || null;
+  let revealMode = false;
+  let timerHandle = null;
+  let revealedShots = [];
+  let balanceAnimating = false;
+
+  const mapEl = document.getElementById('shotDoctorMap');
+  const emptyEl = document.querySelector('[data-shot-empty]');
+  const timerEl = document.querySelector('[data-shot-timer]');
+  const statusRow = document.querySelector('.shot-doctor-status-row');
+  const balanceEl = document.querySelector('[data-balance-display]');
+  const startBtn = document.querySelector('[data-start-run]');
+  const runsRemainingEl = document.querySelector('[data-runs-remaining]');
+  const guessBtns = [...document.querySelectorAll('[data-guess]')];
+  const nextBtn = document.querySelector('[data-next-shot]');
+  const payoutRows = [...document.querySelectorAll('[data-payout-row]')];
+  const resultBar = document.querySelector('[data-shot-result]');
+  const resultTitle = document.querySelector('[data-shot-result-title]');
+  const resultDetail = document.querySelector('[data-shot-result-detail]');
+  const leaderboardBody = document.querySelector('[data-shot-leaderboard]');
+  const sortButtons = [...document.querySelectorAll('[data-shot-sort]')];
+  let leaderboardSort = 'avg';
+  const startButtonLabel = state.isOpen ? (startBtn?.textContent || 'Start Run') : 'CASINO CLOSED';
+
+  const shotFields = {
+    shooter: document.querySelector('[data-shot-shooter]'),
+    goalie: document.querySelector('[data-shot-goalie]'),
+    distance: document.querySelector('[data-shot-distance]'),
+    type: document.querySelector('[data-shot-type]'),
+    speed: document.querySelector('[data-shot-speed]')
+  };
+
+  const fmt = (n) => Number(n || 0).toLocaleString();
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const escapeHtml = (value) => String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+  function parseBalance(value) {
+    return Number(String(value || '').replace(/,/g, ''));
+  }
+
+  function setBalanceState(direction = '') {
+    if (!balanceEl) return;
+    balanceEl.classList.toggle('balance-increasing', direction === 'increase');
+    balanceEl.classList.toggle('balance-decreasing', direction === 'decrease');
+  }
+
+  function animateBalance(from, to) {
+    if (!balanceEl) return Promise.resolve();
+
+    const start = Number(from || 0);
+    const target = Number(to || 0);
+    const difference = target - start;
+    if (!Number.isFinite(start) || !Number.isFinite(target) || difference === 0) {
+      balanceEl.textContent = fmt(target);
+      setBalanceState();
+      return Promise.resolve();
+    }
+
+    const duration = Math.min(5000, Math.max(120, Math.abs(difference) * 10));
+    setBalanceState(difference > 0 ? 'increase' : 'decrease');
+
+    return new Promise(resolve => {
+      const startedAt = performance.now();
+      const tick = (now) => {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        balanceEl.textContent = fmt(Math.round(start + difference * progress));
+        if (progress < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          balanceEl.textContent = fmt(target);
+          setBalanceState();
+          resolve();
+        }
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
+  function setReveal(kind, label, detail) {
+    if (!resultBar) return;
+
+    const hasMessage = Boolean(label || detail);
+    resultBar.hidden = !hasMessage;
+    resultBar.classList.remove('is-win', 'is-loss', 'is-push');
+
+    if (kind === 'win') resultBar.classList.add('is-win');
+    else if (kind === 'loss') resultBar.classList.add('is-loss');
+    else resultBar.classList.add('is-push');
+
+    if (resultTitle) resultTitle.textContent = label || '';
+    if (resultDetail) resultDetail.textContent = detail || '';
+  }
+
+  function currentShot() {
+    return run && run.status === 'active' ? run.current_shot : null;
+  }
+
+  function updatePayoutLadder() {
+    const correct = Number(run?.correct || 0);
+    payoutRows.forEach(row => {
+      const target = Number(row.dataset.payoutRow || 0);
+      row.classList.toggle('is-current', target === correct);
+      row.classList.toggle('is-earned', target <= correct);
+    });
+  }
+
+  function renderLeaderboard() {
+    if (!leaderboardBody) return;
+
+    const rows = [...(state.leaderboard || [])];
+    rows.sort((a, b) => {
+      if (leaderboardSort === 'wagered') {
+        return (Number(b.total_wagered || 0) - Number(a.total_wagered || 0)) ||
+          (Number(b.average_score || 0) - Number(a.average_score || 0)) ||
+          String(a.display_name || '').localeCompare(String(b.display_name || ''));
+      }
+
+      return (Number(b.average_score || 0) - Number(a.average_score || 0)) ||
+        (Number(b.total_wagered || 0) - Number(a.total_wagered || 0)) ||
+        String(a.display_name || '').localeCompare(String(b.display_name || ''));
+    });
+
+    if (!rows.length) {
+      leaderboardBody.innerHTML = `<tr><td colspan="3" class="muted">No completed runs yet.</td></tr>`;
+      return;
+    }
+
+    leaderboardBody.innerHTML = rows.map(row => `
+      <tr>
+        <td>${escapeHtml(row.display_name || 'Unknown')}</td>
+        <td>${Number(row.average_score || 0).toFixed(2)}/10</td>
+        <td>${fmt(row.total_wagered || 0)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function updateSortButtons() {
+    sortButtons.forEach(btn => {
+      const active = btn.dataset.shotSort === leaderboardSort;
+      btn.classList.toggle('ghost-active', active);
+      btn.classList.toggle('ghost', !active);
+    });
+  }
+
+  function updateRunsRemaining() {
+    if (!runsRemainingEl) return;
+    const limit = Number(state.weeklyLimit || 0);
+    if (limit > 0) {
+      const remaining = Math.max(0, Number(state.weeklyRunsRemaining ?? limit));
+      runsRemainingEl.textContent = `${remaining}/${limit} Weekly Runs Remaining`;
+      if (startBtn) startBtn.disabled = !state.isOpen || balanceAnimating || (remaining <= 0 && !(run && run.status === 'active'));
+    } else {
+      runsRemainingEl.textContent = 'Unlimited Testing Runs';
+      if (startBtn) startBtn.disabled = !state.isOpen || balanceAnimating;
+    }
+  }
+
+
+  function updateShotInfo(shot) {
+    shotFields.shooter.textContent = shot?.shooter_name || '—';
+    shotFields.goalie.textContent = shot?.goalie_name || '—';
+    shotFields.distance.textContent = shot ? `${Number(shot.distance_m || 0).toFixed(1)} m` : '—';
+    shotFields.type.textContent = shot?.shot_type || '—';
+    shotFields.speed.textContent = shot ? `${Number(shot.speed_kmh || 0).toFixed(1)} km/h` : '—';
+  }
+
+  function clearTimer() {
+    if (timerHandle) clearInterval(timerHandle);
+    timerHandle = null;
+  }
+
+  function startTimer() {
+    clearTimer();
+    if (!state.isOpen || !run || run.status !== 'active' || !run.deadline_at || revealMode) {
+      timerEl.textContent = '--';
+      timerEl.hidden = true;
+      return;
+    }
+
+    timerEl.hidden = false;
+
+    const tick = () => {
+      const ms = new Date(run.deadline_at).getTime() - Date.now();
+      const seconds = Math.max(0, ms / 1000);
+      timerEl.textContent = `${seconds.toFixed(1)}s`;
+      timerEl.classList.toggle('is-danger', seconds <= 5);
+      if (seconds <= 0) {
+        clearTimer();
+        submitGuess('TIMEOUT');
+      }
+    };
+
+    tick();
+    timerHandle = setInterval(tick, 100);
+  }
+
+  function updateButtons() {
+    const active = run && run.status === 'active';
+    startBtn.hidden = Boolean(active);
+    if (runsRemainingEl) runsRemainingEl.hidden = Boolean(active);
+    timerEl.hidden = !active;
+    statusRow?.classList.toggle('is-timing', Boolean(active));
+    updateRunsRemaining();
+    guessBtns.forEach(btn => {
+      btn.hidden = !active || revealMode;
+      btn.disabled = !state.isOpen || !active || revealMode;
+    });
+    nextBtn.hidden = !active || !revealMode;
+    nextBtn.disabled = !state.isOpen;
+  }
+
+  function renderRun() {
+    const shot = currentShot();
+    const active = run && run.status === 'active';
+
+    updateShotInfo(shot);
+    updatePayoutLadder();
+    updateButtons();
+
+    if (shot) {
+      emptyEl.style.display = 'none';
+      renderShotMap(shot, null);
+      if (!revealMode) startTimer();
+    } else {
+      clearTimer();
+      timerEl.textContent = '--';
+      emptyEl.style.display = 'block';
+      if (typeof Plotly !== 'undefined') Plotly.purge(mapEl);
+    }
+  }
+
+  async function postJson(url, body) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: new URLSearchParams(body)
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || 'Request failed.');
+    return payload;
+  }
+
+  async function startRun() {
+    if (!state.isOpen) return;
+    const balanceBeforeRun = parseBalance(balanceEl?.textContent);
+    const balanceAfterEntry = balanceBeforeRun - Number(state.entryFee || 0);
+    balanceAnimating = true;
+    startBtn.disabled = true;
+    startBtn.textContent = 'STARTING RUN...';
+    let balanceDebit = Promise.resolve();
+    try {
+      setReveal('push', 'Loading shots...', 'Mushy is digging through the Season 2 archives.');
+      balanceDebit = animateBalance(balanceBeforeRun, balanceAfterEntry);
+      const payload = await postJson('/casino/puckIQ/start', {});
+      state = payload.shotDoctorState || state;
+      run = payload.run;
+      revealMode = false;
+      revealedShots = [];
+      renderLeaderboard();
+      setReveal('push', 'Shot 1', 'Goal or save?');
+      renderRun();
+      await balanceDebit;
+    } catch (err) {
+      await balanceDebit;
+      balanceEl.textContent = fmt(balanceBeforeRun);
+      setBalanceState();
+      setReveal('loss', 'Could not start', err.message || 'Something went wrong.');
+    } finally {
+      balanceAnimating = false;
+      startBtn.textContent = startButtonLabel;
+      updateButtons();
+    }
+  }
+
+  async function submitGuess(guess) {
+    if (!state.isOpen || !run || run.status !== 'active' || revealMode) return;
+    revealMode = true;
+    clearTimer();
+    guessBtns.forEach(btn => btn.disabled = true);
+
+    try {
+      const payload = await postJson('/casino/puckIQ/guess', { run_id: run.id, guess });
+      const reveal = payload.reveal;
+      const actual = reveal.result === 'G' ? 'GOAL' : 'SAVE';
+      const guessed = reveal.timed_out ? 'No answer' : (reveal.guess === 'G' ? 'Goal' : 'Save');
+      const detail = reveal.correct
+        ? `Correct. It was a ${actual}. xG: ${reveal.shot.xg != null ? Number(reveal.shot.xg).toFixed(3) : '—'}`
+        : `${guessed}. It was a ${actual}. xG: ${reveal.shot.xg != null ? Number(reveal.shot.xg).toFixed(3) : '—'}`;
+
+      revealedShots.push({
+        shot: reveal.shot,
+        result: reveal.result,
+        correct: Boolean(reveal.correct),
+        guess: reveal.guess || '',
+        timed_out: Boolean(reveal.timed_out)
+      });
+      renderShotMap(null, null);
+      run = payload.run;
+      state = payload.shotDoctorState || state;
+      renderLeaderboard();
+
+      if (run.status === 'complete') {
+        const payout = Number(run.payout || 0);
+        const net = Number(run.net || 0);
+        const finalDetail = `${detail} · Final: ${run.correct}/${run.total_shots} · Payout: ${fmt(payout)} (${net > 0 ? '+' : ''}${fmt(net)})`;
+        setReveal(reveal.correct ? 'win' : 'loss', reveal.correct ? 'Correct' : (reveal.timed_out ? 'Time expired' : 'Wrong'), finalDetail);
+        revealMode = false;
+
+        const finalBalance = Number(payload.balanceSummary?.available_balance ?? state.balanceSummary?.available_balance ?? 0);
+        if (payout > 0) {
+          const balanceBeforePayout = parseBalance(balanceEl?.textContent);
+          balanceAnimating = true;
+          startBtn.textContent = 'DISPENSING MUSHYBUX...';
+          updateButtons();
+          await animateBalance(balanceBeforePayout, finalBalance);
+          balanceAnimating = false;
+          startBtn.textContent = startButtonLabel;
+        } else {
+          balanceEl.textContent = fmt(finalBalance);
+          setBalanceState();
+        }
+      } else {
+        setReveal(reveal.correct ? 'win' : 'loss', reveal.correct ? 'Correct' : (reveal.timed_out ? 'Time expired' : 'Wrong'), detail);
+      }
+      updatePayoutLadder();
+      updateButtons();
+    } catch (err) {
+      revealMode = false;
+      setReveal('loss', 'Guess failed', err.message || 'Something went wrong.');
+      updateButtons();
+      startTimer();
+    }
+  }
+
+  function nextShot() {
+    if (!state.isOpen) return;
+    revealMode = false;
+    setReveal('push', `Shot ${Number(run.current_index || 0) + 1}`, 'Goal or save?');
+    renderRun();
+  }
+
+  function renderShotMap(shot, revealedResult) {
+    if (!mapEl || typeof Plotly === 'undefined') return;
+
+    const RINK_X = 22.5;
+    const END_Z = 45.75;
+    const BLUE_Z = 13.3;
+    const GOAL_Z = 39.8;
+    const POST_X_L = -1.56;
+    const POST_X_R = 1.56;
+    const NET_DEPTH_VIS = 1.8;
+    const BOARD_CORNER_R = 2.5;
+    const CREASE_RADIUS = 3.2;
+
+    function creaseClosedPath(cx, cz, r, steps = 48) {
+      const pts = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = Math.PI - (Math.PI * i) / steps;
+        pts.push([cx + r * Math.cos(t), cz - r * Math.sin(t)]);
+      }
+      const [x0, z0] = pts[0];
+      let d = `M ${x0},${z0}`;
+      for (let i = 1; i < pts.length; i++) d += ` L ${pts[i][0]},${pts[i][1]}`;
+      const [xN] = pts[pts.length - 1];
+      d += ` L ${xN},${cz} L ${x0},${cz} Z`;
+      return d;
+    }
+
+    const currentPending = shot && !revealedResult ? shot : null;
+
+    const historyTrace = {
+      type: 'scatter',
+      mode: 'markers',
+      name: 'Previous shots',
+      x: revealedShots.map(item => Number(item.shot.x)),
+      y: revealedShots.map(item => Number(item.shot.z)),
+      hoverinfo: 'skip',
+      marker: {
+        size: 15,
+        color: revealedShots.map(item => item.correct ? '#16a34a' : '#dc2626'),
+        symbol: revealedShots.map(item => item.result === 'G' ? 'circle' : 'circle-open'),
+        opacity: 0.8,
+        line: {
+          width: revealedShots.map(item => item.result === 'G' ? 1.5 : 3),
+          color: revealedShots.map(item => item.correct ? '#16a34a' : '#dc2626')
+        }
+      }
+    };
+
+    const pendingTrace = {
+      type: 'scatter',
+      mode: 'markers',
+      name: 'Current shot',
+      x: currentPending ? [Number(currentPending.x)] : [],
+      y: currentPending ? [Number(currentPending.z)] : [],
+      hoverinfo: 'skip',
+      marker: {
+        size: 12,
+        color: '#111827',
+        symbol: 'circle',
+        line: { width: 2, color: '#ffffff' }
+      }
+    };
+
+    const data = [];
+    if (revealedShots.length) data.push(historyTrace);
+    if (currentPending) data.push(pendingTrace);
+
+    const layout = {
+      margin: { l: 4, r: 4, t: 4, b: 4 },
+      showlegend: false,
+      paper_bgcolor: '#ffffff',
+      plot_bgcolor: '#ffffff',
+      autosize: true,
+      xaxis: { range: [-23.5, 23.5], visible: false, fixedrange: true, domain: [0, 1] },
+      yaxis: { range: [13.1, END_Z + 0.1], visible: false, fixedrange: true, domain: [0, 1] },
+      shapes: [
+        {
+          type: 'path',
+          path: (() => {
+            const r = Math.min(BOARD_CORNER_R, RINK_X, END_Z);
+            return `M ${-RINK_X},0 L ${-RINK_X},${END_Z - r} Q ${-RINK_X},${END_Z} ${-RINK_X + r},${END_Z} L ${RINK_X - r},${END_Z} Q ${RINK_X},${END_Z} ${RINK_X},${END_Z - r} L ${RINK_X},0 Z`;
+          })(),
+          line: { width: 2, color: '#000' }
+        },
+        { type: 'line', x0: -RINK_X, x1: RINK_X, y0: BLUE_Z, y1: BLUE_Z, line: { width: 2, color: '#1e66ff' } },
+        { type: 'path', path: creaseClosedPath(0, GOAL_Z, CREASE_RADIUS, 64), line: { width: 2, color: 'rgba(70, 150, 255, 0.55)' }, fillcolor: 'rgba(70, 150, 255, 0.18)' },
+        { type: 'line', x0: -RINK_X, x1: RINK_X, y0: GOAL_Z, y1: GOAL_Z, line: { width: 2, color: '#d62728' } },
+        { type: 'circle', x0: POST_X_L - 0.15, x1: POST_X_L + 0.15, y0: GOAL_Z - 0.15, y1: GOAL_Z + 0.15, line: { width: 2, color: '#000' } },
+        { type: 'circle', x0: POST_X_R - 0.15, x1: POST_X_R + 0.15, y0: GOAL_Z - 0.15, y1: GOAL_Z + 0.15, line: { width: 2, color: '#000' } },
+        { type: 'path', path: `M ${POST_X_L},${GOAL_Z} L ${POST_X_L},${GOAL_Z + NET_DEPTH_VIS} L ${POST_X_R},${GOAL_Z + NET_DEPTH_VIS} L ${POST_X_R},${GOAL_Z}`, line: { width: 2.5, color: '#000' } }
+      ]
+    };
+
+    Plotly.react(mapEl, data, layout, { displayModeBar: false, responsive: true });
+  }
+
+  startBtn?.addEventListener('click', startRun);
+  guessBtns.forEach(btn => btn.addEventListener('click', () => submitGuess(btn.dataset.guess)));
+  nextBtn?.addEventListener('click', nextShot);
+  sortButtons.forEach(btn => btn.addEventListener('click', () => {
+    leaderboardSort = btn.dataset.shotSort || 'avg';
+    updateSortButtons();
+    renderLeaderboard();
+  }));
+
+  updateSortButtons();
+  renderLeaderboard();
+  updateRunsRemaining();
+  if (run) setReveal('push', `Shot ${Number(run.current_index || 0) + 1}`, 'Goal or save?');
+  renderRun();
+})();
+</script>
+</body>
+</html>

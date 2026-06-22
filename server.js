@@ -14,10 +14,10 @@ import {
   getTopWeeklyBets,
   getBalanceSummaryForUser,
   placeOrUpdateBet,
+  cancelOpenBet,
   getUserPropBetsByCategory,
   placeOrUpdatePropBet,
   getAdminSettings,
-  setBettingLocked,
   setWeekLocked,
   isWeekLocked,
   setWeeklyAllowance,
@@ -36,6 +36,7 @@ import {
   settleCompletedBets,
   voidBetById,
   voidBetsForSeries,
+  voidDeprecatedHatTrickBetsForWeek,
   getVoidRefundsForWeek,
   getOpenBetCountForWeek,
   getUserSettledBetHistory,
@@ -44,14 +45,27 @@ import {
   savePropDefaultOddsForWeek,
   savePropPlayerOverrideForWeek,
   clearPropPlayerOverrideForWeek,
+  saveSeriesPropForWeek,
+  saveSeriesPropsForWeek,
   createJsonBackup,
   getBackupInfo,
   getDatabasePath,
   getCasinoStateForUser,
-  spinCasinoSlots
+  getCasinoSummary,
+  setCasinoOpen,
+  setCasinoLinkVisible,
+  resetCasinoData,
+  spinCasinoSlots,
+  getShotDoctorStateForUser,
+  startShotDoctorRun,
+  submitShotDoctorGuess
 } from './db.js';
 import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries, getPlayers } from './services/wcplData.js';
+import { buildShotDoctorRunShots } from './services/shotDoctor.js';
 import { buildWeekSettlementResults, evaluateBetAgainstResults } from './services/settlement.js';
+import { buildSeriesOddsRecommendations } from './services/oddsRecommendations.js';
+import { buildWeeklyPropMarkets, propMarketsToBettingBoards } from './services/weeklyPropMarkets.js';
+import { buildLeaderPropRecommendations } from './services/leaderPropRecommendations.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +93,8 @@ app.use((req, res, next) => {
   res.locals.bettingLocked = adminSettings.currentWeekLocked;
   res.locals.weeklyAllowance = adminSettings.weeklyAllowance;
   res.locals.seasonId = adminSettings.seasonId;
+  res.locals.casinoOpen = adminSettings.casinoOpen;
+  res.locals.casinoLinkVisible = adminSettings.casinoLinkVisible;
   res.locals.maxBet = Number(process.env.MAX_BET || 250);
   res.locals.propMaxBet = Number(process.env.PROP_MAX_BET || 100);
   res.locals.goalTotalLine = Number(process.env.GOAL_TOTAL_LINE || 10.5);
@@ -94,20 +110,45 @@ function requireLogin(req, res, next) {
   next();
 }
 
-function getOpenBettingWeek(settings = getAdminSettings()) {
-  // "Next week" is always the main open betting week. Week 1 is special:
-  // both Week 1 and Week 2 can be open until the commissioner locks Week 1.
-  return Number(settings.currentWeek || 1) + 1;
-}
-
 function getBettingView(req) {
   const settings = getAdminSettings();
   const currentWeek = Number(settings.currentWeek || 1);
-  const requested = String(req.query.view || req.body.view || 'current').toLowerCase();
-  const view = requested === 'next' ? 'next' : 'current';
-  const week = view === 'next' ? currentWeek + 1 : currentWeek;
-  const locked = isWeekLocked(week);
-  return { view, week, locked, openWeek: currentWeek + 1 };
+  return { view: 'current', week: currentWeek, locked: isWeekLocked(currentWeek), openWeek: currentWeek };
+}
+
+async function filterLeaderPropPools(boards, { seasonId, week }) {
+  const reports = await Promise.all(boards.map(board =>
+    buildLeaderPropRecommendations({
+      seasonId,
+      divisionId: board.division_id,
+      targetWeek: week
+    })
+  ));
+  const byDivision = new Map(reports.map(report => [report.divisionId, report]));
+
+  return boards.map(board => {
+    const report = byDivision.get(board.division_id);
+    const scorerKeys = new Set((report?.topScorer || []).map(player => player.playerKey));
+    const goalieKeys = new Set((report?.topGoalie || []).map(player => player.playerKey));
+    return {
+      ...board,
+      categories: board.categories.map(category => {
+        if (category.category === 'top_scorer') {
+          return {
+            ...category,
+            players: category.players.filter(player => scorerKeys.has(player.player_key))
+          };
+        }
+        if (category.category === 'top_goalie') {
+          return {
+            ...category,
+            players: category.players.filter(player => goalieKeys.has(player.player_key))
+          };
+        }
+        return category;
+      })
+    };
+  });
 }
 
 function formatSigned(n) {
@@ -256,11 +297,13 @@ app.get('/', async (req, res, next) => {
   try {
     const settings = getAdminSettings();
     const currentWeek = Number(settings.currentWeek || 1);
-    const leaderboard = getLeaderboard(currentWeek).map(u => ({
+    const formatLeaderboard = rows => rows.map(u => ({
       ...u,
       last_week_display: formatSigned(u.last_week_change),
       current_week_display: formatSigned(u.current_week_change)
     }));
+    const leaderboard = formatLeaderboard(getLeaderboard(currentWeek, false));
+    const overallLeaderboard = formatLeaderboard(getLeaderboard(currentWeek, true));
     const series = await getUpcomingSeries(currentWeek, settings.seasonId);
     const teamTotals = applyTeamNamesToTotals(getWeeklyBetTotalByTeam(currentWeek), series);
     const teamTotalMap = getTeamTotalMap(teamTotals);
@@ -269,13 +312,13 @@ app.get('/', async (req, res, next) => {
 function formatTopBetLabel(label) {
   const raw = String(label || '');
 
-  const propMatch = raw.match(/^(Division \d+|League) (Top Scorer|Top Goalie|Hat Trick|Shutout): (.+)$/);
+  const propMatch = raw.match(/^(Division \d+|League) (Top Scorer|Top Goalie|Hat Trick|Player Goals|Goalie Shutouts|Shutout): (.+)$/);
   if (propMatch) {
     const division = propMatch[1];
     const prop = propMatch[2];
     const pick = propMatch[3].replace(' · ', ' - ');
 
-    if (prop === 'Hat Trick' || prop === 'Shutout') {
+    if (['Hat Trick', 'Player Goals', 'Goalie Shutouts', 'Shutout'].includes(prop)) {
       return `${pick} (${division})`;
     }
 
@@ -289,7 +332,15 @@ const topBets = getTopWeeklyBets(currentWeek, 8).map(b => ({
   label: formatTopBetLabel(b.label)
 }));
     const currentUserBalance = req.session.userId ? getBalanceSummaryForUser(req.session.userId) : null;
-    res.render('index', { leaderboard, series, teamTotals, topBets, matchupGroups, currentUserBalance });
+    res.render('index', {
+      leaderboard,
+      overallLeaderboard,
+      series,
+      teamTotals,
+      topBets,
+      matchupGroups,
+      currentUserBalance
+    });
   } catch (err) {
     next(err);
   }
@@ -351,6 +402,58 @@ app.post('/casino/slots/spin', requireLogin, (req, res) => {
   }
 });
 
+
+app.get('/casino/puckIQ', requireLogin, (req, res) => {
+  const shotDoctorState = getShotDoctorStateForUser(req.session.userId);
+  res.render('shot_doctor', { shotDoctorState });
+});
+
+app.post('/casino/puckIQ/start', requireLogin, async (req, res) => {
+  const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
+  try {
+    const shotDoctorState = getShotDoctorStateForUser(req.session.userId);
+    const shots = await buildShotDoctorRunShots();
+    const payload = startShotDoctorRun({
+      userId: req.session.userId,
+      wager: shotDoctorState.entryFee,
+      shots
+    });
+
+    if (wantsJson) {
+      return res.json({ ok: true, ...payload, shotDoctorState: getShotDoctorStateForUser(req.session.userId) });
+    }
+    return res.redirect('/casino/puckIQ');
+  } catch (err) {
+    if (wantsJson) return res.status(400).json({ ok: false, error: err.message });
+    req.session.flash = { type: 'error', message: err.message };
+    return res.redirect('/casino/puckIQ');
+  }
+});
+
+app.post('/casino/puckIQ/guess', requireLogin, (req, res) => {
+  const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
+  try {
+    const payload = submitShotDoctorGuess({
+      userId: req.session.userId,
+      runId: req.body.run_id,
+      guess: req.body.guess
+    });
+
+    if (wantsJson) {
+      return res.json({ ok: true, ...payload, shotDoctorState: getShotDoctorStateForUser(req.session.userId) });
+    }
+    return res.redirect('/casino/puckIQ');
+  } catch (err) {
+    if (wantsJson) return res.status(400).json({ ok: false, error: err.message });
+    req.session.flash = { type: 'error', message: err.message };
+    return res.redirect('/casino/puckIQ');
+  }
+});
+
+app.get('/casino/shot-doctor', requireLogin, (req, res) => res.redirect(301, '/casino/puckIQ'));
+app.post('/casino/shot-doctor/start', requireLogin, (req, res) => res.redirect(307, '/casino/puckIQ/start'));
+app.post('/casino/shot-doctor/guess', requireLogin, (req, res) => res.redirect(307, '/casino/puckIQ/guess'));
+
 app.get('/betting', requireLogin, async (req, res, next) => {
   try {
     const bettingView = getBettingView(req);
@@ -366,13 +469,28 @@ app.get('/betting', requireLogin, async (req, res, next) => {
     }));
 
     const propBetsByCategory = getUserPropBetsByCategory(req.session.userId, bettingView.week);
-    const propBoards = (await getPropBoards(bettingView.week, getAdminSettings().seasonId, activeOdds)).map(div => ({
+    const rawPropBoards = (await getPropBoards(bettingView.week, getAdminSettings().seasonId, activeOdds)).map(div => ({
       ...div,
       categories: div.categories.map(cat => ({
         ...cat,
         currentBet: propBetsByCategory[`${div.division_id}|${cat.category}`] || null
       }))
     }));
+    const basePropBoards = await filterLeaderPropPools(rawPropBoards, {
+      seasonId: getAdminSettings().seasonId,
+      week: bettingView.week
+    });
+    const seriesPropMarkets = await buildWeeklyPropMarkets({
+      seasonId: getAdminSettings().seasonId,
+      week: bettingView.week,
+      odds: activeOdds,
+      publishedOnly: true
+    });
+    const propBoards = propMarketsToBettingBoards(
+      seriesPropMarkets,
+      basePropBoards,
+      propBetsByCategory
+    );
 
     const balanceSummary = getBalanceSummaryForUser(req.session.userId);
     res.render('betting', { board, propBoards, bettingView, betType, balanceSummary });
@@ -439,16 +557,33 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
     if (!divisionId || !category) throw new Error('Prop not found.');
 
     const activeOdds = getOddsAdjustmentsForWeek(bettingView.week);
-    const propBoards = await getPropBoards(bettingView.week, getAdminSettings().seasonId, activeOdds);
+    const basePropBoards = await filterLeaderPropPools(
+      await getPropBoards(bettingView.week, getAdminSettings().seasonId, activeOdds),
+      {
+        seasonId: getAdminSettings().seasonId,
+        week: bettingView.week
+      }
+    );
+    const seriesPropMarkets = await buildWeeklyPropMarkets({
+      seasonId: getAdminSettings().seasonId,
+      week: bettingView.week,
+      odds: activeOdds,
+      publishedOnly: true
+    });
+    const propBoards = propMarketsToBettingBoards(seriesPropMarkets, basePropBoards);
     const division = propBoards.find(d => d.division_id === divisionId);
-    const prop = division?.categories.find(c => c.category === category);
+    const prop = division?.categories.find(c => c.prop_key === propKey);
     if (!division || !prop) throw new Error('Prop not found.');
 
-    const playerKey = String(req.body.player_key || '');
-    const player = prop.players.find(p => String(p.player_key) === playerKey || String(p.steam_id) === playerKey);
+    const selectionKey = String(req.body.player_key || '');
+    const player = prop.players.find(p =>
+      String(p.selection_key || p.player_key) === selectionKey ||
+      String(p.steam_id) === selectionKey
+    );
     if (!player) throw new Error('Player not found for this prop.');
 
     let quantity = null;
+    let propLine = null;
     let multiplier = Number(player.prop_multiplier || prop.multiplier || 0);
     let quantityLabel = '';
     if (prop.quantity_options?.length) {
@@ -456,7 +591,8 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
       const selectedQuantity = prop.quantity_options.find(q => Number(q.quantity) === quantity);
       if (!selectedQuantity) throw new Error('Select a valid prop result.');
       multiplier = Number(player.prop_quantity_multipliers?.[String(quantity)] ?? selectedQuantity.multiplier);
-      quantityLabel = selectedQuantity.label;
+      quantityLabel = player.prop_quantity_labels?.[String(quantity)] || selectedQuantity.label;
+      propLine = player.prop_quantity_lines?.[String(quantity)] ?? null;
     }
 
     const label = quantityLabel
@@ -469,9 +605,12 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
       divisionId,
       propKey,
       category,
+      marketKey: player.selection_key || propKey,
       playerKey: player.player_key,
-      playerName: player.display_name,
+      playerName: player.player_name || player.display_name,
       playerTeamId: player.team_id,
+      seriesKey: player.series_key || '',
+      propLine,
       label,
       stake: Number(req.body.stake),
       multiplier,
@@ -486,7 +625,31 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
-  res.redirect(`/betting?view=${bettingView.view}&type=props`);
+  res.redirect('/betting?type=props');
+});
+
+app.post('/bets/cancel', requireLogin, (req, res) => {
+  const bettingView = getBettingView(req);
+  const betType = String(req.body.type || 'series').toLowerCase() === 'props' ? 'props' : 'series';
+
+  try {
+    if (bettingView.locked) throw new Error('Betting is locked for this week.');
+
+    const result = cancelOpenBet({
+      userId: req.session.userId,
+      betId: req.body.bet_id,
+      locked: bettingView.locked
+    });
+
+    req.session.flash = {
+      type: 'success',
+      message: `Bet cancelled. ${result.refunded} Mushybux returned.`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+
+  res.redirect(`/betting?view=${bettingView.view}&type=${betType}`);
 });
 
 function requireAdmin(req, res, next) {
@@ -504,23 +667,19 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     const settings = getAdminSettings();
     const currentWeek = Number(settings.currentWeek || 1);
     const nextWeek = currentWeek + 1;
-    const followingWeek = nextWeek + 1;
     const currentWeekBets = getAdminBetsForWeek(currentWeek);
     const nextWeekBets = getAdminBetsForWeek(nextWeek);
     const users = getUserSummaries();
     const seasons = await getAvailableSeasons();
-    const followingWeekOdds = getOddsAdjustmentsForWeek(followingWeek);
+    const nextWeekOdds = getOddsAdjustmentsForWeek(nextWeek);
     const currentWeekSeries = await getUpcomingSeries(currentWeek, settings.seasonId);
     const voidRefunds = getVoidRefundsForWeek(currentWeek);
-    const followingWeekSeries = await getUpcomingSeries(followingWeek, settings.seasonId);
-    const followingWeekSeriesBoard = followingWeekSeries.map(s => ({
-      ...s,
-      markets: buildMarketsForSeries(s, followingWeekOdds),
-      goalTotal: getGoalTotalForSeries(s, followingWeekOdds)
-    }));
-    const followingWeekPropBoards = await getPropBoards(followingWeek, settings.seasonId, followingWeekOdds);
     const backupInfo = getBackupInfo();
+    const casinoSummary = getCasinoSummary();
     let settlementPreview = null;
+    let seriesOddsRecommendations = null;
+    let propOddsRecommendations = [];
+    let leaderPropRecommendations = [];
 
     try {
       const weekResults = await buildWeekSettlementResults({ seasonId: settings.seasonId, week: currentWeek });
@@ -533,12 +692,96 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       settlementPreview = { error: err.message };
     }
 
+    try {
+      const recommendationReport = await buildSeriesOddsRecommendations({
+        seasonId: settings.seasonId,
+        targetWeek: nextWeek
+      });
+      const nextWeekSeries = await getUpcomingSeries(nextWeek, settings.seasonId);
+      const seriesByKey = new Map(nextWeekSeries.map(series => [series.series_key, series]));
+
+      seriesOddsRecommendations = {
+        ...recommendationReport,
+        recommendations: recommendationReport.recommendations.map(recommendation => {
+          const series = seriesByKey.get(recommendation.seriesKey);
+          const currentMarkets = series ? buildMarketsForSeries(series, nextWeekOdds) : [];
+          const currentByKey = Object.fromEntries(
+            currentMarkets.map(market => [market.market_key, market.multiplier])
+          );
+          const marketKey = (type, teamId) =>
+            `${recommendation.seriesKey}|${type}|${teamId}`;
+
+          return {
+            ...recommendation,
+            hasSavedGoalLine: Boolean(nextWeekOdds.goalTotals[recommendation.seriesKey]),
+            currentGoalLine: series
+              ? getGoalTotalForSeries(series, nextWeekOdds).line
+              : Number(process.env.GOAL_TOTAL_LINE || 10.5),
+            awayCurrent: {
+              hasSeriesWin: nextWeekOdds.series[marketKey('series_win', recommendation.awayTeamId)] != null,
+              hasExact21: nextWeekOdds.series[marketKey('exact_2_1', recommendation.awayTeamId)] != null,
+              hasSweep: nextWeekOdds.series[marketKey('sweep_3_0', recommendation.awayTeamId)] != null,
+              seriesWinOdds: Number(currentByKey[marketKey('series_win', recommendation.awayTeamId)] || 2),
+              exact21Odds: Number(currentByKey[marketKey('exact_2_1', recommendation.awayTeamId)] || 3),
+              sweepOdds: Number(currentByKey[marketKey('sweep_3_0', recommendation.awayTeamId)] || 4)
+            },
+            homeCurrent: {
+              hasSeriesWin: nextWeekOdds.series[marketKey('series_win', recommendation.homeTeamId)] != null,
+              hasExact21: nextWeekOdds.series[marketKey('exact_2_1', recommendation.homeTeamId)] != null,
+              hasSweep: nextWeekOdds.series[marketKey('sweep_3_0', recommendation.homeTeamId)] != null,
+              seriesWinOdds: Number(currentByKey[marketKey('series_win', recommendation.homeTeamId)] || 2),
+              exact21Odds: Number(currentByKey[marketKey('exact_2_1', recommendation.homeTeamId)] || 3),
+              sweepOdds: Number(currentByKey[marketKey('sweep_3_0', recommendation.homeTeamId)] || 4)
+            }
+          };
+        })
+      };
+    } catch (err) {
+      seriesOddsRecommendations = { error: err.message, recommendations: [] };
+    }
+
+    try {
+      propOddsRecommendations = await buildWeeklyPropMarkets({
+        seasonId: settings.seasonId,
+        week: nextWeek,
+        odds: nextWeekOdds
+      });
+    } catch (err) {
+      propOddsRecommendations = [{ error: err.message }];
+    }
+
+    try {
+      const divisionIds = [...new Set(
+        (await getUpcomingSeries(nextWeek, settings.seasonId)).map(series => series.division_id)
+      )];
+      leaderPropRecommendations = await Promise.all(divisionIds.map(async divisionId => {
+        const report = await buildLeaderPropRecommendations({
+          seasonId: settings.seasonId,
+          divisionId,
+          targetWeek: nextWeek
+        });
+        for (const category of ['topScorer', 'topGoalie']) {
+          const storageCategory = category === 'topScorer' ? 'top_scorer' : 'top_goalie';
+          report[category] = report[category].map(player => ({
+            ...player,
+            currentOdds: Number(
+              nextWeekOdds.propPlayerOverrides[
+                `${divisionId}|${storageCategory}|${player.playerKey}`
+              ] ?? player.recommendedOdds
+            )
+          }));
+        }
+        return report;
+      }));
+    } catch (err) {
+      leaderPropRecommendations = [{ error: err.message }];
+    }
+
     res.render('admin', {
       settings,
       currentWeek,
       nextWeek,
-      openWeek: nextWeek,
-      followingWeek,
+      openWeek: currentWeek,
       currentWeekBets,
       currentWeekSeries,
       voidRefunds,
@@ -547,10 +790,11 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       users,
       seasons,
       settlementPreview,
-      followingWeekOdds,
-      followingWeekSeriesBoard,
-      followingWeekPropBoards,
-      backupInfo
+      seriesOddsRecommendations,
+      propOddsRecommendations,
+      leaderPropRecommendations,
+      backupInfo,
+      casinoSummary
     });
   } catch (err) {
     next(err);
@@ -578,6 +822,43 @@ app.get('/admin/backup/download', requireAdmin, (req, res) => {
   const settings = getAdminSettings();
   const filename = `wcpl-betting-week-${settings.currentWeek}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   res.download(filePath, filename);
+});
+
+app.post('/admin/casino/open', requireAdmin, (req, res) => {
+  const settings = setCasinoOpen(true);
+  req.session.flash = { type: 'success', message: 'Casino opened. Users can wager again.' };
+  res.redirect('/admin#casino-controls');
+});
+
+app.post('/admin/casino/close', requireAdmin, (req, res) => {
+  const settings = setCasinoOpen(false);
+  req.session.flash = { type: 'success', message: 'Casino closed. All casino wagering and gameplay is disabled.' };
+  res.redirect('/admin#casino-controls');
+});
+
+app.post('/admin/casino/show-link', requireAdmin, (req, res) => {
+  setCasinoLinkVisible(true);
+  req.session.flash = { type: 'success', message: 'Casino navigation link is now visible.' };
+  res.redirect('/admin#casino-controls');
+});
+
+app.post('/admin/casino/hide-link', requireAdmin, (req, res) => {
+  setCasinoLinkVisible(false);
+  req.session.flash = { type: 'success', message: 'Casino navigation link is now hidden.' };
+  res.redirect('/admin#casino-controls');
+});
+
+app.post('/admin/casino/reset', requireAdmin, (req, res) => {
+  try {
+    const result = resetCasinoData();
+    req.session.flash = {
+      type: 'success',
+      message: `Casino data reset. Restored ${result.usersRestored} user balance(s) and removed ${result.transactionsRemoved} casino ledger entries.`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#casino-controls');
 });
 
 app.post('/admin/season', requireAdmin, (req, res) => {
@@ -648,7 +929,7 @@ app.post('/admin/void-series', requireAdmin, async (req, res) => {
 app.post('/admin/lock', requireAdmin, (req, res) => {
   const settings = getAdminSettings();
   setWeekLocked(settings.currentWeek, true);
-  req.session.flash = { type: 'success', message: `Week ${settings.currentWeek} betting locked. Next week remains open.` };
+  req.session.flash = { type: 'success', message: `Week ${settings.currentWeek} betting locked.` };
   res.redirect('/admin');
 });
 
@@ -717,12 +998,39 @@ app.post('/admin/advance-week', requireAdmin, async (req, res) => {
     if (openCount > 0) {
       throw new Error(`Week ${before.currentWeek} still has ${openCount} unsettled open bet(s). Settle completed bets, wait for incomplete results, or refund/void them before advancing.`);
     }
+    const targetWeek = Number(before.currentWeek) + 1;
+    const targetSeries = await getUpcomingSeries(targetWeek, before.seasonId);
+    const targetOdds = getOddsAdjustmentsForWeek(targetWeek);
+    const incompleteSeries = targetSeries.filter(series => {
+      const expectedMarkets = buildMarketsForSeries(series, targetOdds);
+      return expectedMarkets.some(market =>
+        targetOdds.series[market.market_key] == null
+      ) || targetOdds.goalTotals[series.series_key] == null;
+    });
+    if (incompleteSeries.length) {
+      throw new Error(`Week ${targetWeek} lines are not ready. Apply or save odds for all ${incompleteSeries.length} remaining series before advancing.`);
+    }
+    if (!Object.keys(targetOdds.seriesProps || {}).length) {
+      throw new Error(`Week ${targetWeek} player props are not ready. Apply the prop recommendations before advancing.`);
+    }
+    const divisions = [...new Set(targetSeries.map(series => series.division_id))];
+    const missingLeaderMarkets = divisions.flatMap(divisionId =>
+      ['top_scorer', 'top_goalie'].filter(category =>
+        !Object.keys(targetOdds.propPlayerOverrides || {}).some(key =>
+          key.startsWith(`${divisionId}|${category}|`)
+        )
+      ).map(category => `${divisionId} ${category.replace('_', ' ')}`)
+    );
+    if (missingLeaderMarkets.length) {
+      throw new Error(`Week ${targetWeek} leader props are not ready: ${missingLeaderMarkets.join(', ')}.`);
+    }
 
+    const retiredProps = voidDeprecatedHatTrickBetsForWeek(targetWeek);
     const after = advanceWeek();
     const allowance = applyWeeklyAllowance(after.currentWeek);
     req.session.flash = {
       type: 'success',
-      message: `Advanced to Week ${after.currentWeek}. Week ${after.currentWeek} is locked, Week ${Number(after.currentWeek) + 1} is open, and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.`
+      message: `Advanced to Week ${after.currentWeek}. Betting is open and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.${retiredProps.count ? ` Voided ${retiredProps.count} retired hat-trick bet(s) and refunded ${retiredProps.refunded} Mushybux.` : ''}`
     };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -778,7 +1086,7 @@ app.post('/admin/update-user', requireAdmin, (req, res) => {
 app.post('/admin/odds/series', requireAdmin, (req, res) => {
   try {
     const settings = getAdminSettings();
-    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 2);
+    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
     saveSeriesOddsForWeek({
       week: targetWeek,
       seriesKey: req.body.series_key,
@@ -791,13 +1099,147 @@ app.post('/admin/odds/series', requireAdmin, (req, res) => {
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
-  res.redirect('/admin#following-week-odds');
+  res.redirect('/admin#series-odds-recommendations');
+});
+
+app.post('/admin/odds/apply-series-recommendations', requireAdmin, async (req, res) => {
+  try {
+    const settings = getAdminSettings();
+    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
+    const report = await buildSeriesOddsRecommendations({
+      seasonId: settings.seasonId,
+      targetWeek
+    });
+    for (const rec of report.recommendations) {
+      saveSeriesOddsForWeek({
+        week: targetWeek,
+        seriesKey: rec.seriesKey,
+        marketKeys: [
+          `${rec.seriesKey}|series_win|${rec.awayTeamId}`,
+          `${rec.seriesKey}|exact_2_1|${rec.awayTeamId}`,
+          `${rec.seriesKey}|sweep_3_0|${rec.awayTeamId}`,
+          `${rec.seriesKey}|series_win|${rec.homeTeamId}`,
+          `${rec.seriesKey}|exact_2_1|${rec.homeTeamId}`,
+          `${rec.seriesKey}|sweep_3_0|${rec.homeTeamId}`
+        ],
+        multipliers: [
+          rec.away.seriesWinOdds,
+          rec.away.exact21Odds,
+          rec.away.sweepOdds,
+          rec.home.seriesWinOdds,
+          rec.home.exact21Odds,
+          rec.home.sweepOdds
+        ],
+        goalTotalLine: rec.recommendedGoalLine,
+        goalTotalBoost: rec.goalTotalBoost
+      });
+    }
+    req.session.flash = { type: 'success', message: `Applied all Week ${targetWeek} series recommendations.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#series-odds-recommendations');
+});
+
+app.post('/admin/odds/series-prop', requireAdmin, (req, res) => {
+  try {
+    const targetWeek = Number(req.body.week);
+    saveSeriesPropForWeek({
+      week: targetWeek,
+      marketKey: req.body.market_key,
+      config: {
+        seriesKey: req.body.series_key,
+        divisionId: req.body.division_id,
+        category: req.body.category,
+        playerKey: req.body.player_key,
+        playerName: req.body.player_name,
+        playerTeamId: req.body.player_team_id,
+        opponentTeamId: req.body.opponent_team_id,
+        eligibility: req.body.eligibility,
+        enabled: String(req.body.enabled || '') === '1',
+        tiers: [1, 2, 3].map(quantity => ({
+          label: req.body[`label_${quantity}`],
+          line: req.body[`line_${quantity}`],
+          multiplier: req.body[`multiplier_${quantity}`]
+        }))
+      }
+    });
+    req.session.flash = { type: 'success', message: `Saved Week ${targetWeek} player prop.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(
+    ['top_scorer', 'top_goalie'].includes(String(req.body.category || ''))
+      ? '/admin#leader-prop-recommendations'
+      : '/admin#prop-odds-recommendations'
+  );
+});
+
+app.post('/admin/odds/apply-prop-recommendations', requireAdmin, async (req, res) => {
+  try {
+    const settings = getAdminSettings();
+    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
+    const markets = await buildWeeklyPropMarkets({
+      seasonId: settings.seasonId,
+      week: targetWeek,
+      odds: { seriesProps: {} }
+    });
+    saveSeriesPropsForWeek({
+      week: targetWeek,
+      markets: markets.map(market => ({
+        ...market,
+        enabled: market.eligibility === 'automatic'
+      }))
+    });
+    req.session.flash = {
+      type: 'success',
+      message: `Applied Week ${targetWeek} prop recommendations. Review-only players remain disabled until you approve them.`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#prop-odds-recommendations');
+});
+
+app.post('/admin/odds/apply-leader-prop-recommendations', requireAdmin, async (req, res) => {
+  try {
+    const settings = getAdminSettings();
+    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
+    const divisionIds = [...new Set(
+      (await getUpcomingSeries(targetWeek, settings.seasonId)).map(series => series.division_id)
+    )];
+    for (const divisionId of divisionIds) {
+      const report = await buildLeaderPropRecommendations({
+        seasonId: settings.seasonId,
+        divisionId,
+        targetWeek
+      });
+      for (const [category, players] of [
+        ['top_scorer', report.topScorer],
+        ['top_goalie', report.topGoalie]
+      ]) {
+        for (const player of players) {
+          savePropPlayerOverrideForWeek({
+            week: targetWeek,
+            divisionId,
+            category,
+            playerKey: player.playerKey,
+            multiplier: player.recommendedOdds
+          });
+        }
+      }
+    }
+    req.session.flash = { type: 'success', message: `Applied Week ${targetWeek} Top Scorer and Top Goalie recommendations.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#leader-prop-recommendations');
 });
 
 app.post('/admin/odds/prop-default', requireAdmin, (req, res) => {
   try {
     const settings = getAdminSettings();
-    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 2);
+    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
     savePropDefaultOddsForWeek({
       week: targetWeek,
       divisionId: req.body.division_id,
@@ -811,13 +1253,13 @@ app.post('/admin/odds/prop-default', requireAdmin, (req, res) => {
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
-  res.redirect('/admin#following-week-odds');
+  res.redirect('/admin#prop-odds-recommendations');
 });
 
 app.post('/admin/odds/player-override', requireAdmin, (req, res) => {
   try {
     const settings = getAdminSettings();
-    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 2);
+    const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
     if (String(req.body.clear || '') === '1') {
       clearPropPlayerOverrideForWeek({
         week: targetWeek,
@@ -856,7 +1298,11 @@ app.post('/admin/odds/player-override', requireAdmin, (req, res) => {
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
-  res.redirect('/admin#following-week-odds');
+  res.redirect(
+    ['top_scorer', 'top_goalie'].includes(String(req.body.category || ''))
+      ? '/admin#leader-prop-recommendations'
+      : '/admin#prop-odds-recommendations'
+  );
 });
 
 app.use((err, req, res, next) => {

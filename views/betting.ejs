@@ -12,22 +12,18 @@
     <section class="card page-title compact-title">
       <div>
         <p class="eyebrow">Week <%= bettingView.week %> · <strong class="<%= bettingView.locked ? 'negative' : 'positive' %>"><%= bettingView.locked ? 'Locked' : 'Open' %></strong></p>
-        <h1><%= bettingView.view === 'next' ? 'Next Week Betting Board' : 'Current Week Bets' %></h1>
+        <h1>Current Week Betting Board</h1>
         <p>Mushybux: <strong><%= balanceSummary.display %></strong> <span class="muted">total (wagered)</span> · Series max: <strong><%= maxBet %></strong> · Prop max: <strong><%= propMaxBet %></strong></p>
         <% if (bettingView.locked) { %>
           <p class="negative">These bets are locked in and cannot be changed.</p>
         <% } else { %>
-          <p class="muted">One bet per matchup, and one prop bet per category per division. Change picks until betting locks.</p>
+          <p class="muted">Change or cancel picks until weekly betting locks.</p>
         <% } %>
       </div>
       <div class="toggle-stack">
         <div class="toggle-row">
-          <a class="button-link <%= bettingView.view === 'current' ? 'ghost-active' : 'ghost' %>" href="/betting?view=current&type=<%= betType %>">Current Week</a>
-          <a class="button-link <%= bettingView.view === 'next' ? 'ghost-active' : 'ghost' %>" href="/betting?view=next&type=<%= betType %>">Next Week</a>
-        </div>
-        <div class="toggle-row">
-          <a class="button-link <%= betType === 'series' ? 'ghost-active' : 'ghost' %>" href="/betting?view=<%= bettingView.view %>&type=series">Series Bets</a>
-          <a class="button-link <%= betType === 'props' ? 'ghost-active' : 'ghost' %>" href="/betting?view=<%= bettingView.view %>&type=props">Prop Bets</a>
+          <a class="button-link <%= betType === 'series' ? 'ghost-active' : 'ghost' %>" href="/betting?type=series">Series Bets</a>
+          <a class="button-link <%= betType === 'props' ? 'ghost-active' : 'ghost' %>" href="/betting?type=props">Prop Bets</a>
         </div>
       </div>
     </section>
@@ -62,6 +58,14 @@
                     <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Payout <strong><%= Number(s.currentBet.payout || 0) %></strong></span>
                   <% } else { %>
                     <span><%= s.currentBet.stake %> Mushybux · <%= s.currentBet.multiplier %>x · Return <strong><%= Number(s.currentBet.stake) * Number(s.currentBet.multiplier) %></strong></span>
+                  <% } %>
+                  <% if (!betSettled && !bettingView.locked) { %>
+                    <form method="post" action="/bets/cancel" class="cancel-bet-form" onsubmit="return confirm('Cancel this bet and return <%= s.currentBet.stake %> Mushybux?');">
+                      <input type="hidden" name="view" value="<%= bettingView.view %>">
+                      <input type="hidden" name="type" value="series">
+                      <input type="hidden" name="bet_id" value="<%= s.currentBet.id %>">
+                      <button type="submit" class="cancel-bet-button">Cancel Bet</button>
+                    </form>
                   <% } %>
                 </div>
               <% } else { %>
@@ -169,6 +173,14 @@
                         <% } else { %>
                           <span><%= prop.currentBet.stake %> Mushybux · <%= prop.currentBet.multiplier %>x · Return <strong><%= Number(prop.currentBet.stake) * Number(prop.currentBet.multiplier) %></strong></span>
                         <% } %>
+                        <% if (!propBetSettled && !bettingView.locked) { %>
+                          <form method="post" action="/bets/cancel" class="cancel-bet-form" onsubmit="return confirm('Cancel this prop bet and return <%= prop.currentBet.stake %> Mushybux?');">
+                            <input type="hidden" name="view" value="<%= bettingView.view %>">
+                            <input type="hidden" name="type" value="props">
+                            <input type="hidden" name="bet_id" value="<%= prop.currentBet.id %>">
+                            <button type="submit" class="cancel-bet-button">Cancel Prop</button>
+                          </form>
+                        <% } %>
                       </div>
                     <% } else { %>
                       <p class="muted compact-no-bet">No bet placed.</p>
@@ -192,13 +204,16 @@
                             <option value="">Select player</option>
                             <% prop.players.forEach(player => { %>
                               <option
-                                value="<%= player.player_key %>"
+                                value="<%= player.selection_key || player.player_key %>"
                                 data-player-name="<%= player.display_name %>"
                                 data-player-multiplier="<%= player.prop_multiplier || prop.multiplier %>"
                                 data-player-q1="<%= player.prop_quantity_multipliers ? player.prop_quantity_multipliers[1] : '' %>"
                                 data-player-q2="<%= player.prop_quantity_multipliers ? player.prop_quantity_multipliers[2] : '' %>"
                                 data-player-q3="<%= player.prop_quantity_multipliers ? player.prop_quantity_multipliers[3] : '' %>"
-                                <%= prop.currentBet && prop.currentBet.player_key === player.player_key ? 'selected' : '' %>
+                                data-player-q1-label="<%= player.prop_quantity_labels ? player.prop_quantity_labels[1] : '' %>"
+                                data-player-q2-label="<%= player.prop_quantity_labels ? player.prop_quantity_labels[2] : '' %>"
+                                data-player-q3-label="<%= player.prop_quantity_labels ? player.prop_quantity_labels[3] : '' %>"
+                                <%= prop.currentBet && (prop.currentBet.market_key === player.selection_key || (!player.selection_key && prop.currentBet.player_key === player.player_key)) ? 'selected' : '' %>
                               ><%= player.display_name %><% if (!prop.quantity_options.length) { %> (<%= player.prop_multiplier || prop.multiplier %>x)<% } %></option>
                             <% }) %>
                           </select>
@@ -380,6 +395,7 @@
           const qMult = selectedOption.dataset[`playerQ${quantityInput.value}`];
           const selectedButton = quantityButtons.find(b => b.dataset.quantity === quantityInput.value);
           multiplier = Number(qMult || selectedButton?.dataset.multiplier || multiplier);
+          quantityLabel = selectedOption.dataset[`playerQ${quantityInput.value}Label`] || selectedButton?.dataset.label || '';
         }
         const stake = Number(stakeInput?.value || 0);
 
@@ -413,7 +429,16 @@
         });
       });
 
-      playerSelect?.addEventListener('change', updatePropSummary);
+      playerSelect?.addEventListener('change', () => {
+        const selectedOption = playerSelect.selectedOptions?.[0];
+        quantityButtons.forEach(button => {
+          const quantity = button.dataset.quantity;
+          const label = selectedOption?.dataset?.[`playerQ${quantity}Label`] || button.dataset.label || '';
+          const odds = selectedOption?.dataset?.[`playerQ${quantity}`] || button.dataset.multiplier || '';
+          button.innerHTML = `${label || `Tier ${quantity}`} <span>${odds}x</span>`;
+        });
+        updatePropSummary();
+      });
       stakeInput?.addEventListener('input', updatePropSummary);
 
       const selectedQuantity = quantityButtons.find(b => b.classList.contains('selected'));
@@ -421,6 +446,7 @@
         multiplier = Number(selectedQuantity.dataset.multiplier || 0);
         quantityLabel = selectedQuantity.dataset.label || '';
       }
+      playerSelect?.dispatchEvent(new Event('change'));
       updatePropSummary();
     });
   </script>

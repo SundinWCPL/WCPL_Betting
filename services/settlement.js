@@ -130,6 +130,7 @@ async function buildPropResults({ seasonId, week, seriesResults }) {
 
     const scorerMap = new Map();
     const goalieMap = new Map();
+    const goalsBySeries = new Map();
     const hatTrickBySeries = new Map();
     const shutoutBySeries = new Map();
 
@@ -155,6 +156,9 @@ async function buildPropResults({ seasonId, week, seriesResults }) {
         current.scheduled_series = scheduledCount;
         current.adjusted_pts = current.pts / scheduledCount;
         scorerMap.set(key, current);
+        if (!goalsBySeries.has(key)) goalsBySeries.set(key, new Map());
+        const playerSeriesGoals = goalsBySeries.get(key);
+        playerSeriesGoals.set(seriesId, (playerSeriesGoals.get(seriesId) || 0) + n(r.g));
 
         if (n(r.g) >= 3) {
           if (!hatTrickBySeries.has(key)) hatTrickBySeries.set(key, new Map());
@@ -170,7 +174,7 @@ async function buildPropResults({ seasonId, week, seriesResults }) {
         current.sv_pct = current.sa > 0 ? (current.sa - current.ga) / current.sa : 0;
         goalieMap.set(key, current);
 
-        if (n(r.so) >= 1) {
+        if (n(r.so) >= 1 || (n(r.sa) > 0 && n(r.ga) === 0)) {
           if (!shutoutBySeries.has(key)) shutoutBySeries.set(key, new Map());
           const bySeries = shutoutBySeries.get(key);
           bySeries.set(seriesId, (bySeries.get(seriesId) || 0) + 1);
@@ -203,6 +207,7 @@ async function buildPropResults({ seasonId, week, seriesResults }) {
 
     const hatTricks = bestSeriesCounts(hatTrickBySeries);
     const shutouts = bestSeriesCounts(shutoutBySeries);
+    const seriesGoals = bestSeriesCounts(goalsBySeries);
 
     results[divisionId] = {
       division_id: divisionId,
@@ -229,6 +234,11 @@ async function buildPropResults({ seasonId, week, seriesResults }) {
         best_series_counts: hatTricks.out,
         series_counts: hatTricks.details,
         leaders: hatTricks.leaders
+      },
+      player_goals: {
+        best_series_counts: seriesGoals.out,
+        series_counts: seriesGoals.details,
+        leaders: seriesGoals.leaders
       },
       shutout: {
         best_series_counts: shutouts.out,
@@ -286,7 +296,7 @@ function playerTeamComplete(div, playerKey) {
   return scheduled > 0 && completed >= scheduled;
 }
 
-function evaluatePropBet(bet, propResults) {
+function evaluatePropBet(bet, propResults, seriesResults = {}) {
   const div = propResults[bet.division_id];
   if (!div) return { ready: false, won: false, reason: 'Division prop results missing.' };
 
@@ -341,11 +351,33 @@ function evaluatePropBet(bet, propResults) {
     };
   }
 
+  if (bet.prop_category === 'player_goals') {
+    const seriesId = String(bet.series_key || '').replace(`${bet.division_id}-`, '');
+    const detail = (div.player_goals.series_counts?.[bet.player_key] || [])
+      .find(item => item.series_id === seriesId);
+    const result = seriesResults[bet.series_key];
+    const goals = Number(detail?.count || 0);
+    const line = Number(bet.prop_line ?? 0.5);
+    const won = goals > line;
+    const ready = won || Boolean(result?.complete);
+    return {
+      ready,
+      won,
+      reason: won ? 'Player goals prop hit.' : ready ? 'Player goals prop missed.' : 'Series incomplete.',
+      result_summary: `${bet.player_name || bet.player_key}: ${goals} goal(s) in series, line ${line}`
+    };
+  }
+
   if (bet.prop_category === 'shutout') {
-    const count = Number(div.shutout.best_series_counts?.[bet.player_key] || 0);
+    const seriesId = String(bet.series_key || '').replace(`${bet.division_id}-`, '');
+    const detail = bet.series_key
+      ? (div.shutout.series_counts?.[bet.player_key] || []).find(item => item.series_id === seriesId)
+      : null;
+    const count = Number(detail?.count ?? div.shutout.best_series_counts?.[bet.player_key] ?? 0);
     const needed = Number(bet.quantity || 1);
     const won = count >= needed;
-    const teamDone = playerTeamComplete(div, bet.player_key);
+    const seriesResult = seriesResults[bet.series_key];
+    const teamDone = bet.series_key ? Boolean(seriesResult?.complete) : playerTeamComplete(div, bet.player_key);
     const seriesText = (div.shutout.series_counts?.[bet.player_key] || [])
       .map(s => `${s.series_id}: ${s.count}`)
       .join(', ');

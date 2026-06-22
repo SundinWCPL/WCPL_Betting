@@ -51,12 +51,32 @@
 
     <section class="grid two">
       <div class="card">
-        <h2>Leaderboard</h2>
+        <div class="admin-section-head">
+          <div>
+            <h2>Leaderboard</h2>
+            <p class="muted" data-leaderboard-description>League betting balances only.</p>
+          </div>
+          <div class="toggle-row">
+            <button class="button-link ghost-active" type="button" data-leaderboard-mode="betting">Betting</button>
+            <button class="button-link ghost" type="button" data-leaderboard-mode="overall">Overall</button>
+          </div>
+        </div>
 		<div class="leaderboard-scroll">
 		<table>
           <thead><tr><th>#</th><th>User</th><th>Mushybux</th><th>Current Week</th><th>Last Week</th></tr></thead>
-          <tbody>
+          <tbody data-leaderboard-table="betting">
             <% leaderboard.forEach((u, i) => { %>
+              <tr class="<%= currentUser && Number(currentUser.id) === Number(u.id) ? 'self-row' : '' %>">
+                <td><%= i + 1 %></td>
+                <td><%= u.display_name %></td>
+                <td><%= u.balance_display %></td>
+                <td class="<%= Number(u.current_week_change) > 0 ? 'positive' : (Number(u.current_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.current_week_display %></td>
+                <td class="<%= Number(u.last_week_change) > 0 ? 'positive' : (Number(u.last_week_change) < 0 ? 'negative' : 'muted') %>"><%= u.last_week_display %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+          <tbody data-leaderboard-table="overall" hidden>
+            <% overallLeaderboard.forEach((u, i) => { %>
               <tr class="<%= currentUser && Number(currentUser.id) === Number(u.id) ? 'self-row' : '' %>">
                 <td><%= i + 1 %></td>
                 <td><%= u.display_name %></td>
@@ -68,7 +88,7 @@
           </tbody>
         </table>
 		</div>
-        <p class="small-note">Mushybux shown as total balance (currently wagered).</p>
+        <p class="small-note">Betting excludes casino wins and losses. Overall shows each user’s actual combined balance. Open sports wagers remain included in both.</p>
       </div>
 
       <div class="card">
@@ -145,5 +165,29 @@ const scheduledTime =
       </div>
     </section>
   </main>
+  <script>
+    (() => {
+      const buttons = [...document.querySelectorAll('[data-leaderboard-mode]')];
+      const tables = [...document.querySelectorAll('[data-leaderboard-table]')];
+      const description = document.querySelector('[data-leaderboard-description]');
+
+      buttons.forEach(button => button.addEventListener('click', () => {
+        const mode = button.dataset.leaderboardMode || 'betting';
+        buttons.forEach(candidate => {
+          const active = candidate.dataset.leaderboardMode === mode;
+          candidate.classList.toggle('ghost-active', active);
+          candidate.classList.toggle('ghost', !active);
+        });
+        tables.forEach(table => {
+          table.hidden = table.dataset.leaderboardTable !== mode;
+        });
+        if (description) {
+          description.textContent = mode === 'overall'
+            ? 'Sports betting and casino results combined.'
+            : 'League betting balances only.';
+        }
+      }));
+    })();
+  </script>
 </body>
 </html>

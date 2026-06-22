@@ -65,6 +65,13 @@ async function readCsvSource(parts) {
   return readCsvFile(filePath);
 }
 
+export async function getSeasonCsv(seasonId, fileName, divisionId = 'ALL') {
+  const parts = divisionId && divisionId !== 'ALL'
+    ? [seasonId, divisionId, fileName]
+    : [seasonId, fileName];
+  return readCsvSource(parts);
+}
+
 export function clearWcplDataCache() {
   csvTextCache.clear();
 }

@@ -12,14 +12,20 @@
   <section class="casino-topbar">
     <div class="toggle-row casino-tabs">
       <a class="button-link ghost-active" href="/casino">Slots</a>
-      <span class="button-link ghost casino-tab-disabled">Blackjack · Coming Soon</span>
-      <span class="button-link ghost casino-tab-disabled">50/50 · Coming Soon</span>
+      <a class="button-link ghost" href="/casino/puckIQ">Puck IQ</a>
     </div>
     <div class="casino-balance card">
       <span class="muted">Available Balance</span>
       <strong data-balance-display><%= casinoState.balanceSummary.available_balance.toLocaleString() %></strong>
     </div>
   </section>
+
+  <% if (!casinoState.isOpen) { %>
+    <section class="casino-closed-notice card">
+      <strong>Casino Closed</strong>
+      <span>Games and wagering are currently disabled.</span>
+    </section>
+  <% } %>
 
   <section class="card jackpot-card">
     <p class="eyebrow">Mushy Jackpot</p>
@@ -29,9 +35,9 @@
   <section class="card slot-card">
     <div class="slot-reels" aria-label="Slot machine reels" data-slot-reels>
       <% const reels = lastSpin && lastSpin.reels ? lastSpin.reels : [
-        { label: 'Mushy', image: '/images/casino/mushy.png' },
-        { label: 'WCPL', image: '/images/casino/wcpl.png' },
-        { label: 'D3 Logo', image: '/images/casino/D3/CGY.png', tier: 'd3' }
+        { label: 'Mushy', image: '/images/casino/mushy.png', tier: 'mushy' },
+        { label: 'Mushy', image: '/images/casino/mushy.png', tier: 'mushy' },
+        { label: 'Mushy', image: '/images/casino/mushy.png', tier: 'mushy' }
       ]; %>
       <% reels.forEach((symbol, i) => { %>
         <div class="slot-reel" data-reel-index="<%= i %>">
@@ -61,14 +67,14 @@
     <form method="post" action="/casino/slots/spin" class="slot-form" data-slot-form>
       <input type="hidden" name="wager" value="<%= lastWager %>" data-wager-input>
       <div class="slot-wager-row">
-        <button type="button" class="slot-step-btn" data-wager-minus>-</button>
+        <button type="button" class="slot-step-btn" data-wager-minus <%= casinoState.isOpen ? '' : 'disabled' %>>-</button>
         <div class="slot-wager-display">
           <span class="muted">Spin Amount</span>
           <strong><span data-wager-display><%= lastWager %></span> Mushybux</strong>
         </div>
-        <button type="button" class="slot-step-btn" data-wager-plus>+</button>
+        <button type="button" class="slot-step-btn" data-wager-plus <%= casinoState.isOpen ? '' : 'disabled' %>>+</button>
       </div>
-      <button class="slot-spin-button" type="submit" data-spin-button>SPIN</button>
+      <button class="slot-spin-button" type="submit" data-spin-button <%= casinoState.isOpen ? '' : 'disabled' %>><%= casinoState.isOpen ? 'SPIN' : 'CASINO CLOSED' %></button>
     </form>
   </section>
 
@@ -114,7 +120,7 @@
             <td>
               <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d3" data-payout-count="3" aria-label="Any D3 Logo x3"></span>
             </td>
-            <td>2x</td>
+            <td>2.5x</td>
           </tr>
           <tr>
             <td>
@@ -132,19 +138,19 @@
                 <img src="/images/casino/wcpl.png" alt="WCPL">
               </span>
             </td>
-            <td>2.5x</td>
+            <td>3x</td>
           </tr>
           <tr>
             <td>
               <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d1" data-payout-count="2" aria-label="Any D1 Logo x2"></span>
             </td>
-            <td>1.5x</td>
+            <td>2x</td>
           </tr>
           <tr>
             <td>
               <span class="payout-symbols payout-logo-cycle" data-payout-cycle="d2" data-payout-count="2" aria-label="Any D2 Logo x2"></span>
             </td>
-            <td>1.1x</td>
+            <td>1.5x</td>
           </tr>
           <tr>
             <td>
@@ -157,24 +163,32 @@
     </div>
 
     <div class="card">
-      <h2>Slot Degeneracy Leaderboard</h2>
-      <p class="muted">Ranked by total Mushybux wagered on slots.</p>
-      <% if (!casinoState.slotLeaderboard.length) { %>
-        <p>No spins yet.</p>
-      <% } else { %>
-        <table>
-          <thead><tr><th>#</th><th>User</th><th>Wagered</th></tr></thead>
-          <tbody data-slot-leaderboard>
+      <div class="admin-section-head">
+        <div>
+          <h2>Most Degenerate Gamblers</h2>
+        </div>
+        <div class="toggle-row">
+          <button class="button-link ghost-active" type="button" data-slot-sort="wagered">Wagered</button>
+          <button class="button-link ghost" type="button" data-slot-sort="spins">Spins</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>User</th><th>Wagered</th><th>Spins</th></tr></thead>
+        <tbody data-slot-leaderboard>
+          <% if (!casinoState.slotLeaderboard.length) { %>
+            <tr data-empty-leaderboard><td colspan="4">No spins yet.</td></tr>
+          <% } else { %>
             <% casinoState.slotLeaderboard.forEach((row, i) => { %>
               <tr>
                 <td><%= i + 1 %></td>
                 <td><%= row.user_display_name %></td>
                 <td><%= Number(row.total_wagered || 0).toLocaleString() %></td>
+                <td><%= Number(row.spins || 0).toLocaleString() %></td>
               </tr>
             <% }) %>
-          </tbody>
-        </table>
-      <% } %>
+          <% } %>
+        </tbody>
+      </table>
     </div>
   </section>
 </main>
@@ -183,6 +197,9 @@
 (() => {
   const allowed = <%- JSON.stringify(casinoState.allowedWagers) %>;
   const symbols = <%- JSON.stringify(casinoState.allSymbols) %>;
+  const casinoOpen = <%- JSON.stringify(casinoState.isOpen) %>;
+  let leaderboardRows = <%- JSON.stringify(casinoState.slotLeaderboard) %>;
+  let leaderboardSort = 'wagered';
   let index = Math.max(0, allowed.indexOf(Number(<%- JSON.stringify(lastWager) %>)));
 
   const form = document.querySelector('[data-slot-form]');
@@ -197,6 +214,7 @@
   const balanceDisplay = document.querySelector('[data-balance-display]');
   const jackpotDisplay = document.querySelector('[data-jackpot-display]');
   const leaderboardBody = document.querySelector('[data-slot-leaderboard]');
+  const leaderboardSortButtons = [...document.querySelectorAll('[data-slot-sort]')];
   const reels = [...document.querySelectorAll('[data-reel-index]')].map(reel => ({
     el: reel,
     window: reel.querySelector('.slot-reel-window'),
@@ -205,8 +223,47 @@
   }));
 
   const fmt = (n) => Number(n || 0).toLocaleString();
+  const parseFmt = (value) => Number(String(value || '').replace(/,/g, ''));
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const randomSymbol = () => symbols[Math.floor(Math.random() * symbols.length)] || symbols[0];
+
+  function setBalanceState(direction = '') {
+    if (!balanceDisplay) return;
+    balanceDisplay.classList.toggle('balance-increasing', direction === 'increase');
+    balanceDisplay.classList.toggle('balance-decreasing', direction === 'decrease');
+  }
+
+  function animateBalance(from, to) {
+    if (!balanceDisplay) return Promise.resolve();
+
+    const start = Number(from || 0);
+    const target = Number(to || 0);
+    const difference = target - start;
+    if (!Number.isFinite(start) || !Number.isFinite(target) || difference === 0) {
+      balanceDisplay.textContent = fmt(target);
+      setBalanceState();
+      return Promise.resolve();
+    }
+
+    const duration = Math.min(5000, Math.max(120, Math.abs(difference) * 10));
+    setBalanceState(difference > 0 ? 'increase' : 'decrease');
+
+    return new Promise(resolve => {
+      const startedAt = performance.now();
+      const tick = (now) => {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        balanceDisplay.textContent = fmt(Math.round(start + difference * progress));
+        if (progress < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          balanceDisplay.textContent = fmt(target);
+          setBalanceState();
+          resolve();
+        }
+      };
+      requestAnimationFrame(tick);
+    });
+  }
 
   const payoutLogoPools = {
     d1: [
@@ -283,8 +340,8 @@ function initPayoutLogoCycles() {
     const value = allowed[index] || allowed[0];
     input.value = value;
     display.textContent = value;
-    minus.disabled = index <= 0;
-    plus.disabled = index >= allowed.length - 1;
+    minus.disabled = !casinoOpen || index <= 0;
+    plus.disabled = !casinoOpen || index >= allowed.length - 1;
   }
 
   function clearResultClasses() {
@@ -310,15 +367,33 @@ function initPayoutLogoCycles() {
     resultDetail.textContent = `Wagered ${spin.wager}, won ${spin.payout} (${spin.net > 0 ? '+' : ''}${spin.net})`;
   }
 
-  function renderLeaderboard(rows) {
+  function renderLeaderboard(rows = leaderboardRows) {
     if (!leaderboardBody || !Array.isArray(rows)) return;
-    leaderboardBody.innerHTML = rows.map((row, i) => `
+    leaderboardRows = [...rows];
+    const sorted = [...leaderboardRows].sort((a, b) => {
+      if (leaderboardSort === 'spins') {
+        return Number(b.spins || 0) - Number(a.spins || 0) ||
+          Number(b.total_wagered || 0) - Number(a.total_wagered || 0);
+      }
+      return Number(b.total_wagered || 0) - Number(a.total_wagered || 0) ||
+        Number(b.spins || 0) - Number(a.spins || 0);
+    });
+    leaderboardBody.innerHTML = sorted.slice(0, 10).map((row, i) => `
       <tr>
         <td>${i + 1}</td>
         <td>${escapeHtml(row.user_display_name || 'Unknown')}</td>
         <td>${fmt(row.total_wagered)}</td>
+        <td>${fmt(row.spins)}</td>
       </tr>
-    `).join('');
+    `).join('') || '<tr><td colspan="4">No spins yet.</td></tr>';
+  }
+
+  function updateLeaderboardSortButtons() {
+    leaderboardSortButtons.forEach(button => {
+      const active = button.dataset.slotSort === leaderboardSort;
+      button.classList.toggle('ghost-active', active);
+      button.classList.toggle('ghost', !active);
+    });
   }
 
   function escapeHtml(value) {
@@ -483,21 +558,34 @@ function initPayoutLogoCycles() {
 
   minus?.addEventListener('click', () => { index = Math.max(0, index - 1); updateWager(); });
   plus?.addEventListener('click', () => { index = Math.min(allowed.length - 1, index + 1); updateWager(); });
+  leaderboardSortButtons.forEach(button => button.addEventListener('click', () => {
+    leaderboardSort = button.dataset.slotSort || 'wagered';
+    updateLeaderboardSortButtons();
+    renderLeaderboard();
+  }));
   initPayoutLogoCycles();
+  updateLeaderboardSortButtons();
+  renderLeaderboard();
   updateWager();
 
   form?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (spinButton.disabled) return;
+    if (!casinoOpen || spinButton.disabled) return;
 
     spinButton.disabled = true;
     minus.disabled = true;
     plus.disabled = true;
     spinButton.textContent = 'SPINNING...';
 
+    const wagerValue = Number(input?.value || 0);
+    const balanceBeforeSpin = parseFmt(balanceDisplay?.textContent);
+    const balanceAfterWager = balanceBeforeSpin - wagerValue;
+    let balanceDebit = Promise.resolve();
+
     try {
       const body = new URLSearchParams(new FormData(form));
-      const response = await fetch(form.action, {
+      balanceDebit = animateBalance(balanceBeforeSpin, balanceAfterWager);
+      const responsePromise = fetch(form.action, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
@@ -507,24 +595,41 @@ function initPayoutLogoCycles() {
         body
       });
 
+      const response = await responsePromise;
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.error || 'Spin failed.');
 
+      renderLeaderboard(payload.casinoState.slotLeaderboard);
       await animateSpin(payload.spin.reels);
       setResult(payload.spin);
       applyWinHighlights(payload.spin);
-      balanceDisplay.textContent = fmt(payload.spin.balanceSummary.available_balance);
       jackpotDisplay.textContent = fmt(payload.spin.jackpotAmount);
-      renderLeaderboard(payload.casinoState.slotLeaderboard);
+
+      // Let the reels spin while the wager counts down, but finish the debit
+      // before starting a payout animation so the two do not compete.
+      await balanceDebit;
+      const finalBalance = Number(payload.spin.balanceSummary.available_balance || 0);
+      if (Number(payload.spin.payout || 0) > 0) {
+        spinButton.textContent = 'DISPENSING MUSHYBUX...';
+        await animateBalance(balanceAfterWager, finalBalance);
+      } else {
+        balanceDisplay.textContent = fmt(finalBalance);
+        setBalanceState();
+      }
     } catch (err) {
+      await balanceDebit;
+      if (balanceDisplay && Number.isFinite(balanceBeforeSpin)) {
+        balanceDisplay.textContent = fmt(balanceBeforeSpin);
+        setBalanceState();
+      }
       clearWinHighlights();
       clearResultClasses();
       resultBox.classList.add('slot-loss');
       resultLabel.textContent = 'Spin failed';
       resultDetail.textContent = err.message || 'Something went wrong.';
     } finally {
-      spinButton.disabled = false;
-      spinButton.textContent = 'SPIN';
+      spinButton.disabled = !casinoOpen;
+      spinButton.textContent = casinoOpen ? 'SPIN' : 'CASINO CLOSED';
       updateWager();
     }
   });

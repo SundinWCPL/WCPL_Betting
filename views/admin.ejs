@@ -17,17 +17,17 @@
         <p>
           Season: <strong><%= settings.seasonId %></strong> ·
           Current Week: <strong><%= currentWeek %></strong> ·
-          Next Week Betting: <strong><%= nextWeek %></strong> ·
-          Following Week Odds Prep: <strong><%= followingWeek %></strong>
+          Next Week Review: <strong><%= nextWeek %></strong> ·
+          Preparing Week: <strong><%= nextWeek %></strong>
         </p>
         <p class="muted">
           Week <%= currentWeek %> status:
           <strong class="<%= settings.currentWeekLocked ? 'negative' : 'positive' %>">
             <%= settings.currentWeekLocked ? 'Locked' : 'Open' %>
           </strong>
-          · Week <%= nextWeek %> status:
-          <strong class="<%= settings.nextWeekLocked ? 'negative' : 'positive' %>">
-            <%= settings.nextWeekLocked ? 'Locked' : 'Open' %>
+          · Week <%= nextWeek %> lines:
+          <strong>
+            Not published
           </strong>
         </p>
       </div>
@@ -62,7 +62,7 @@
         </div>
 
         <p class="muted small-note">
-          Lock/unlock only affects Week <%= currentWeek %>. Week <%= nextWeek %> stays open for betting unless you advance the week.
+          Betting is available only for the current week. Lock it shortly before the first series begins.
         </p>
 
         <form method="post" action="/admin/allowance" class="admin-inline-form">
@@ -76,7 +76,7 @@
         <form method="post" action="/admin/advance-week" class="admin-danger-zone" onsubmit="return confirm('Advance to Week <%= currentWeek + 1 %>? This will be blocked if any Week <%= currentWeek %> bets are still unsettled.');">
           <div>
             <strong>Advance Week</strong>
-            <p class="muted">Advances to Week <%= currentWeek + 1 %>, locks it, opens Week <%= currentWeek + 2 %>, and applies allowance. This is blocked until all Week <%= currentWeek %> bets have been settled or voided.</p>
+            <p class="muted">Publishes the reviewed Week <%= currentWeek + 1 %> lines, opens betting, applies allowance, and refunds any open bets from the retired hat-trick market. Existing series bets inherit the published line and payout.</p>
           </div>
           <button type="submit">Advance Week</button>
         </form>
@@ -94,15 +94,6 @@
           <button type="submit">Void Week <%= currentWeek %> Bets</button>
         </form>
 
-        <form method="post" action="/admin/reset-week-bets" class="admin-danger-zone" onsubmit="return confirm('Void all Week <%= nextWeek %> bets and refund stakes?');">
-          <input type="hidden" name="week" value="<%= nextWeek %>">
-          <div>
-            <strong>Reset Next Week Bets</strong>
-            <p class="muted">Voids all open bets for Week <%= nextWeek %> and refunds stakes.</p>
-          </div>
-          <button type="submit">Void Week <%= nextWeek %> Bets</button>
-        </form>
-
         <form method="post" action="/admin/reset-all-data" class="admin-danger-zone hard-reset" onsubmit="return confirm('Reset ALL test data? This clears bets, transactions, balances, and restores seeded users.');">
           <div>
             <strong>Reset All Test Data</strong>
@@ -111,6 +102,70 @@
           <button type="submit">Reset All Data</button>
         </form>
       </article>
+    </section>
+
+    <section class="card admin-card" id="casino-controls">
+      <div class="admin-section-head">
+        <div>
+          <p class="eyebrow">Casino Operations</p>
+          <h2>Casino Controls</h2>
+        </div>
+        <span class="pill <%= settings.casinoOpen ? 'positive' : 'negative' %>">
+          <%= settings.casinoOpen ? 'Open' : 'Closed' %>
+        </span>
+      </div>
+
+      <div class="casino-admin-metrics">
+        <div>
+          <span class="muted">Amount Wagered</span>
+          <strong><%= Number(casinoSummary.totalWagered || 0).toLocaleString() %></strong>
+        </div>
+        <div>
+          <span class="muted">Amount Won</span>
+          <strong><%= Number(casinoSummary.totalPaid || 0).toLocaleString() %></strong>
+        </div>
+        <div>
+          <span class="muted">Net Profit</span>
+          <strong class="<%= Number(casinoSummary.netProfit || 0) >= 0 ? 'positive' : 'negative' %>">
+            <%= Number(casinoSummary.netProfit || 0).toLocaleString() %>
+          </strong>
+        </div>
+      </div>
+
+      <div class="admin-action-row">
+        <% if (settings.casinoOpen) { %>
+          <form method="post" action="/admin/casino/close">
+            <button type="submit">Close Casino</button>
+          </form>
+        <% } else { %>
+          <form method="post" action="/admin/casino/open">
+            <button type="submit">Open Casino</button>
+          </form>
+        <% } %>
+
+        <% if (settings.casinoLinkVisible) { %>
+          <form method="post" action="/admin/casino/hide-link">
+            <button type="submit">Hide Casino Link</button>
+          </form>
+        <% } else { %>
+          <form method="post" action="/admin/casino/show-link">
+            <button type="submit">Show Casino Link</button>
+          </form>
+        <% } %>
+      </div>
+
+      <p class="muted small-note">
+        Navigation link: <strong><%= settings.casinoLinkVisible ? 'Visible' : 'Hidden' %></strong>.
+        Closing the casino disables slots and Puck IQ even when someone enters the URL manually.
+      </p>
+
+      <form method="post" action="/admin/casino/reset" class="admin-danger-zone hard-reset" onsubmit="return confirm('Reset ALL casino data? This removes every slot spin and Puck IQ run, deletes casino ledger entries, and restores user balances as though the casino activity never happened.');">
+        <div>
+          <strong>Reset Casino Data</strong>
+          <p class="muted">Wipes all casino history and reverses every user’s casino winnings or losses.</p>
+        </div>
+        <button type="submit">Reset Casino Data</button>
+      </form>
     </section>
 
 
@@ -166,7 +221,11 @@
 
 
     <section class="card admin-card">
-      <h2>Void / Refund Tools · Week <%= currentWeek %></h2>
+      <div class="admin-section-head">
+        <h2>Void / Refund Tools · Week <%= currentWeek %></h2>
+        <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminVoidRefundBody">Show</button>
+      </div>
+      <div id="adminVoidRefundBody" class="admin-collapsible-body" hidden>
       <p class="muted">Use this before moving a postponed series out of the week in the main WCPL schedule. It refunds matching open series bets plus prop bets on players from either team.</p>
 
       <form method="post" action="/admin/void-series" class="admin-inline-form" onsubmit="return confirm('Void/refund all open bets tied to this series, including props for players on both teams?');">
@@ -210,10 +269,15 @@
       <% } else { %>
         <p class="muted">No Week <%= currentWeek %> void/refund actions yet.</p>
       <% } %>
+      </div>
     </section>
 
     <section class="card admin-card">
-      <h2>Settlement Preview · Week <%= currentWeek %></h2>
+      <div class="admin-section-head">
+        <h2>Settlement Preview · Week <%= currentWeek %></h2>
+        <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminSettlementPreviewBody">Show</button>
+      </div>
+      <div id="adminSettlementPreviewBody" class="admin-collapsible-body" hidden>
       <% if (settlementPreview && settlementPreview.error) { %>
         <p class="negative">Unable to build settlement preview: <%= settlementPreview.error %></p>
       <% } else if (settlementPreview) { %>
@@ -322,16 +386,15 @@
           <p class="muted">No open Week <%= currentWeek %> bets to settle.</p>
         <% } %>
       <% } %>
+      </div>
     </section>
 
     <section class="card admin-card">
-      <h2>Next Week Bets · Week <%= nextWeek %></h2>
-      <p class="muted">This is the week users are normally betting on.</p>
-      <%- include('partials_bet_table', { bets: nextWeekBets }) %>
-    </section>
-
-    <section class="card admin-card">
-      <h2>User Balances & Details</h2>
+      <div class="admin-section-head">
+        <h2>User Balances & Details</h2>
+        <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminUserBalancesBody">Show</button>
+      </div>
+      <div id="adminUserBalancesBody" class="admin-collapsible-body" hidden>
       <div class="table-wrap">
         <table>
           <thead>
@@ -373,10 +436,144 @@
           </tbody>
         </table>
       </div>
+      </div>
     </section>
 
+    <section class="card admin-card" id="series-odds-recommendations">
+      <div class="admin-section-head">
+        <h2>Next Week Series Odds Recommendations · Week <%= nextWeek %></h2>
+        <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminSeriesRecommendationsBody">Show</button>
+      </div>
+      <div id="adminSeriesRecommendationsBody" class="admin-collapsible-body" hidden>
+        <p class="muted">
+          Model preview using S1/S2 player history and completed S3 games before Week <%= nextWeek %>.
+          Apply all recommendations, then use each editable card for manual overrides.
+        </p>
+        <form method="post" action="/admin/odds/apply-series-recommendations" class="admin-action-row" onsubmit="return confirm('Apply every recommended Week <%= nextWeek %> series line?');">
+          <input type="hidden" name="week" value="<%= nextWeek %>">
+          <button type="submit">Apply All Series Recommendations</button>
+        </form>
+
+        <% if (seriesOddsRecommendations && seriesOddsRecommendations.error) { %>
+          <p class="negative">Unable to build recommendations: <%= seriesOddsRecommendations.error %></p>
+        <% } else if (!seriesOddsRecommendations || !seriesOddsRecommendations.recommendations.length) { %>
+          <p class="muted">No Week <%= nextWeek %> series found.</p>
+        <% } else { %>
+          <div class="odds-model-summary">
+            <span><strong><%= Math.round(seriesOddsRecommendations.xgWeight * 100) %>%</strong> xG</span>
+            <span><strong><%= seriesOddsRecommendations.teamPriorGames %></strong>-game prior</span>
+            <span><strong><%= Math.round(seriesOddsRecommendations.probabilityShrinkage * 100) %>%</strong> probability shrink</span>
+            <span><strong>+<%= seriesOddsRecommendations.goalCalibration.toFixed(2) %></strong> goal calibration</span>
+            <span><strong><%= seriesOddsRecommendations.sweepCorrectionFactor.toFixed(1) %>x</strong> sweep correction</span>
+          </div>
+
+          <div class="odds-recommendation-grid">
+            <% seriesOddsRecommendations.recommendations.forEach(rec => { %>
+              <article class="odds-recommendation-card">
+                <form method="post" action="/admin/odds/series">
+                  <input type="hidden" name="week" value="<%= nextWeek %>">
+                  <input type="hidden" name="series_key" value="<%= rec.seriesKey %>">
+                <div class="odds-recommendation-head">
+                  <div>
+                    <span class="pill"><%= rec.divisionId %></span>
+                    <h3><%= rec.awayTeamName %> at <%= rec.homeTeamName %></h3>
+                  </div>
+                  <span class="odds-confidence odds-confidence-<%= rec.confidence.toLowerCase() %>"><%= rec.confidence %> confidence</span>
+                </div>
+
+                <div class="odds-projection-strip">
+                  <div>
+                    <span><%= rec.awayTeamName %></span>
+                    <strong><%= (rec.away.seriesWinProbability * 100).toFixed(1) %>%</strong>
+                    <small><%= rec.awayExpectedGoalsPerGame.toFixed(2) %> goals/game</small>
+                  </div>
+                  <div class="odds-projection-vs">VS</div>
+                  <div>
+                    <span><%= rec.homeTeamName %></span>
+                    <strong><%= (rec.home.seriesWinProbability * 100).toFixed(1) %>%</strong>
+                    <small><%= rec.homeExpectedGoalsPerGame.toFixed(2) %> goals/game</small>
+                  </div>
+                </div>
+
+                <div class="table-wrap">
+                  <table class="odds-recommendation-table">
+                    <thead>
+                      <tr>
+                        <th>Market</th>
+                        <th>Probability</th>
+                        <th>Current</th>
+                        <th>Suggested</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><%= rec.awayTeamId %> wins series</td>
+                        <td><%= (rec.away.seriesWinProbability * 100).toFixed(1) %>%</td>
+                        <td><%= rec.awayCurrent.seriesWinOdds.toFixed(1) %>x</td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|series_win|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.away.seriesWinOdds.toFixed(1) %>"></td>
+                      </tr>
+                      <tr>
+                        <td><%= rec.awayTeamId %> wins 2–1</td>
+                        <td><%= (rec.away.exact21Probability * 100).toFixed(1) %>%</td>
+                        <td><%= rec.awayCurrent.exact21Odds.toFixed(1) %>x</td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|exact_2_1|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.away.exact21Odds.toFixed(1) %>"></td>
+                      </tr>
+                      <tr>
+                        <td><%= rec.awayTeamId %> sweeps 3–0</td>
+                        <td><%= (rec.away.sweepProbability * 100).toFixed(1) %>%</td>
+                        <td><%= rec.awayCurrent.sweepOdds.toFixed(1) %>x</td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|sweep_3_0|<%= rec.awayTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.away.sweepOdds.toFixed(1) %>"></td>
+                      </tr>
+                      <tr>
+                        <td><%= rec.homeTeamId %> wins series</td>
+                        <td><%= (rec.home.seriesWinProbability * 100).toFixed(1) %>%</td>
+                        <td><%= rec.homeCurrent.seriesWinOdds.toFixed(1) %>x</td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|series_win|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.home.seriesWinOdds.toFixed(1) %>"></td>
+                      </tr>
+                      <tr>
+                        <td><%= rec.homeTeamId %> wins 2–1</td>
+                        <td><%= (rec.home.exact21Probability * 100).toFixed(1) %>%</td>
+                        <td><%= rec.homeCurrent.exact21Odds.toFixed(1) %>x</td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|exact_2_1|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.home.exact21Odds.toFixed(1) %>"></td>
+                      </tr>
+                      <tr>
+                        <td><%= rec.homeTeamId %> sweeps 3–0</td>
+                        <td><%= (rec.home.sweepProbability * 100).toFixed(1) %>%</td>
+                        <td><%= rec.homeCurrent.sweepOdds.toFixed(1) %>x</td>
+                        <td><input type="hidden" name="market_key" value="<%= rec.seriesKey %>|sweep_3_0|<%= rec.homeTeamId %>"><input type="number" name="multiplier" min="0.1" step="0.1" value="<%= rec.home.sweepOdds.toFixed(1) %>"></td>
+                      </tr>
+                      <tr class="odds-total-row">
+                        <td>Series goal total</td>
+                        <td>Projected <%= rec.projectedSeriesGoals.toFixed(1) %></td>
+                        <td><%= Number(rec.currentGoalLine).toFixed(1) %></td>
+                        <td><input type="number" name="goal_total_line" min="0.5" step="0.5" value="<%= rec.recommendedGoalLine.toFixed(1) %>"><input type="hidden" name="goal_total_boost" value="<%= rec.goalTotalBoost %>"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <p class="muted odds-evidence">
+                  Historical roster coverage:
+                  <strong><%= rec.awayTeamId %> <%= (rec.evidence.awayHistoryCoverage * 100).toFixed(0) %>%</strong>,
+                  <strong><%= rec.homeTeamId %> <%= (rec.evidence.homeHistoryCoverage * 100).toFixed(0) %>%</strong>
+                  · S3 games included: <%= rec.evidence.awayCurrentGames %>/<%= rec.evidence.homeCurrentGames %>
+                </p>
+                <button type="submit">Save This Series</button>
+                </form>
+              </article>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+    </section>
+
+    <% if (false) { %>
     <section class="card admin-card" id="following-week-odds">
-      <h2>Following Week Odds Prep · Week <%= followingWeek %></h2>
+      <div class="admin-section-head">
+        <h2>Following Week Odds Prep · Week <%= followingWeek %></h2>
+        <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminFollowingWeekOddsBody">Show</button>
+      </div>
+      <div id="adminFollowingWeekOddsBody" class="admin-collapsible-body" hidden>
       <p class="muted">
         These settings apply to Week <%= followingWeek %> only. Users are currently betting on Week <%= nextWeek %>, so these edits stay hidden until that week becomes the open betting week.
       </p>
@@ -492,8 +689,178 @@
           </div>
         </article>
       <% }) %>
+      </div>
+    </section>
+    <% } %>
+
+    <section class="card admin-card" id="leader-prop-recommendations">
+      <div class="admin-section-head">
+        <h2>Top Scorer / Top Goalie Recommendations · Week <%= nextWeek %></h2>
+        <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminLeaderPropBody">Show</button>
+      </div>
+      <div id="adminLeaderPropBody" class="admin-collapsible-body" hidden>
+        <p class="muted">Player-specific odds based on historical performance and completed S3 games. D2 uses the faster two-game prior.</p>
+        <form method="post" action="/admin/odds/apply-leader-prop-recommendations" class="admin-action-row">
+          <input type="hidden" name="week" value="<%= nextWeek %>">
+          <button type="submit">Apply Top Scorer / Goalie Recommendations</button>
+        </form>
+        <% if (leaderPropRecommendations.length && leaderPropRecommendations[0].error) { %>
+          <p class="negative"><%= leaderPropRecommendations[0].error %></p>
+        <% } else { %>
+          <% leaderPropRecommendations.forEach(report => { %>
+            <h3><%= report.divisionId %></h3>
+            <div class="admin-odds-grid leader-prop-grid">
+              <% [['top_scorer', 'Top Scorer', report.topScorer], ['top_goalie', 'Top Goalie', report.topGoalie]].forEach(([category, title, players]) => { %>
+                <article class="admin-odds-card">
+                  <h3><%= title %></h3>
+                  <div class="table-wrap">
+                    <table>
+                      <thead><tr><th>Player</th><th>Model</th><th>Probability</th><th>Odds</th><th></th></tr></thead>
+                      <tbody>
+                        <% players.forEach(player => { %>
+                          <tr>
+                            <td><%= player.playerName %> <small class="muted"><%= player.teamId %></small></td>
+                            <td><%= category === 'top_scorer' ? `${player.projectedPpg.toFixed(2)} PPG` : `${(player.projectedSavePct * 100).toFixed(1)} SV%` %></td>
+                            <td><%= (player.probability * 100).toFixed(1) %>%</td>
+                            <td>
+                              <form id="leader-<%= report.divisionId %>-<%= category %>-<%= player.playerKey.replace(/[^a-zA-Z0-9]/g, '-') %>" method="post" action="/admin/odds/player-override">
+                                <input type="hidden" name="week" value="<%= nextWeek %>">
+                                <input type="hidden" name="division_id" value="<%= report.divisionId %>">
+                                <input type="hidden" name="category" value="<%= category %>">
+                                <input type="hidden" name="player_key" value="<%= player.playerKey %>">
+                                <input type="number" name="multiplier" min="1.1" step="0.1" value="<%= player.currentOdds %>">
+                              </form>
+                            </td>
+                            <td><button type="submit" form="leader-<%= report.divisionId %>-<%= category %>-<%= player.playerKey.replace(/[^a-zA-Z0-9]/g, '-') %>" class="small-button">Save</button></td>
+                          </tr>
+                        <% }) %>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              <% }) %>
+            </div>
+          <% }) %>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="card admin-card" id="prop-odds-recommendations">
+      <div class="admin-section-head">
+        <h2>Next Week Player Prop Recommendations · Week <%= nextWeek %></h2>
+        <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminPropRecommendationsBody">Show</button>
+      </div>
+      <div id="adminPropRecommendationsBody" class="admin-collapsible-body" hidden>
+        <p class="muted">Apply all automatic recommendations, then inspect review-only players and manually adjust any line or payout that looks wrong.</p>
+        <form method="post" action="/admin/odds/apply-prop-recommendations" class="admin-action-row" onsubmit="return confirm('Apply all automatic Week <%= nextWeek %> player prop recommendations? Review-only players will stay disabled.');">
+          <input type="hidden" name="week" value="<%= nextWeek %>">
+          <button type="submit">Apply Automatic Prop Recommendations</button>
+        </form>
+        <label class="admin-prop-search">
+          Filter props
+          <input type="search" id="adminPropSearch" placeholder="Player, team, matchup, D1/D2, review...">
+        </label>
+
+        <% if (propOddsRecommendations.length && propOddsRecommendations[0].error) { %>
+          <p class="negative"><%= propOddsRecommendations[0].error %></p>
+        <% } else if (!propOddsRecommendations.length) { %>
+          <p class="muted">No player prop recommendations found for Week <%= nextWeek %>.</p>
+        <% } else { %>
+          <div class="admin-odds-grid">
+            <% propOddsRecommendations.forEach(market => { %>
+              <form method="post" action="/admin/odds/series-prop" class="admin-odds-card" data-prop-search="<%= `${market.playerName} ${market.playerTeamId} ${market.opponentTeamId} ${market.matchupLabel} ${market.divisionId} ${market.category} ${market.eligibility}`.toLowerCase() %>">
+                <input type="hidden" name="week" value="<%= nextWeek %>">
+                <input type="hidden" name="market_key" value="<%= market.marketKey %>">
+                <input type="hidden" name="series_key" value="<%= market.seriesKey %>">
+                <input type="hidden" name="division_id" value="<%= market.divisionId %>">
+                <input type="hidden" name="category" value="<%= market.category %>">
+                <input type="hidden" name="player_key" value="<%= market.playerKey %>">
+                <input type="hidden" name="player_name" value="<%= market.playerName %>">
+                <input type="hidden" name="player_team_id" value="<%= market.playerTeamId %>">
+                <input type="hidden" name="opponent_team_id" value="<%= market.opponentTeamId %>">
+                <input type="hidden" name="eligibility" value="<%= market.eligibility %>">
+                <div class="series-head compact-series-head">
+                  <div>
+                    <span class="pill"><%= market.divisionId %> · <%= market.category === 'player_goals' ? 'Skater' : 'Goalie' %></span>
+                    <h3><%= market.playerName %> · <%= market.matchupLabel %></h3>
+                  </div>
+                  <span class="odds-confidence <%= market.eligibility === 'automatic' ? 'odds-confidence-high' : 'odds-confidence-low' %>"><%= market.eligibility === 'automatic' ? 'Automatic' : 'Review' %></span>
+                </div>
+                <label class="settlement-preview-checkbox">
+                  <input type="checkbox" name="enabled" value="1" <%= market.enabled ? 'checked' : '' %>>
+                  Publish this prop
+                </label>
+                <div class="odds-model-summary prop-rate-summary">
+                  <span>
+                    Career <%= market.rateLabel %>:
+                    <strong><%= Number(market.careerRate || 0).toFixed(2) %></strong>
+                    <small>(<%= Number(market.careerSample || 0) %> games)</small>
+                  </span>
+                  <span>
+                    S3 <%= market.rateLabel %>:
+                    <strong><%= market.currentRate == null ? 'No games' : Number(market.currentRate).toFixed(2) %></strong>
+                    <% if (market.currentRate != null) { %>
+                      <small>(<%= market.currentSample %> games)</small>
+                    <% } %>
+                  </span>
+                </div>
+                <div class="admin-prop-quantity-grid">
+                  <% market.tiers.forEach(tier => { %>
+                    <div class="admin-prop-tier-column">
+                      <input type="hidden" name="label_<%= tier.quantity %>" value="<%= tier.label %>">
+                      <label>
+                        <%= tier.label %> line
+                        <input type="number" name="line_<%= tier.quantity %>" min="0.5" step="0.5" value="<%= tier.line %>">
+                      </label>
+                      <label>
+                        <%= tier.label %> payout
+                        <input type="number" name="multiplier_<%= tier.quantity %>" min="1.1" step="0.1" value="<%= tier.multiplier %>">
+                      </label>
+                    </div>
+                  <% }) %>
+                </div>
+                <button type="submit">Save / Override Prop</button>
+              </form>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
     </section>
   </main>
+
+  <script>
+    (() => {
+      const propSearch = document.getElementById('adminPropSearch');
+      if (propSearch) {
+        const cards = [...document.querySelectorAll('#prop-odds-recommendations [data-prop-search]')];
+        propSearch.addEventListener('input', () => {
+          const query = propSearch.value.trim().toLowerCase();
+          cards.forEach(card => {
+            card.hidden = Boolean(query) && !card.dataset.propSearch.includes(query);
+          });
+        });
+      }
+
+      document.querySelectorAll('.admin-collapse-toggle').forEach((btn) => {
+        const targetId = btn.dataset.target;
+        const body = targetId ? document.getElementById(targetId) : null;
+        if (!body) return;
+
+        const syncLabel = () => {
+          btn.textContent = body.hidden ? 'Show' : 'Hide';
+          btn.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
+        };
+
+        btn.setAttribute('aria-controls', targetId);
+        syncLabel();
+
+        btn.addEventListener('click', () => {
+          body.hidden = !body.hidden;
+          syncLabel();
+        });
+      });
+    })();
+  </script>
 
   <script>
     (() => {

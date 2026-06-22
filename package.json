@@ -5,7 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "odds:lab": "node scripts/odds-lab.js",
+    "odds:backtest": "node scripts/odds-backtest.js",
+    "odds:calibrate": "node scripts/odds-calibrate.js",
+    "odds:scorelines": "node scripts/odds-scoreline-backtest.js",
+    "odds:event-props": "node scripts/odds-event-props-backtest.js",
+    "odds:event-lab": "node scripts/odds-event-props-lab.js",
+    "odds:player-goals-calibrate": "node scripts/odds-player-goals-calibrate.js",
+    "odds:player-goals-lab": "node scripts/odds-player-goals-lab.js",
+    "odds:goalie-shutouts-lab": "node scripts/odds-goalie-shutouts-lab.js",
+    "odds:goalie-shutouts-backtest": "node scripts/odds-goalie-shutouts-backtest.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
