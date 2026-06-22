@@ -91,16 +91,22 @@
         <button class="button-link ghost" type="button" data-shot-sort="wagered">Wagered</button>
       </div>
     </div>
-    <table class="shot-leaderboard-table">
-      <thead>
-        <tr>
-          <th>User</th>
-          <th>Average Score</th>
-          <th>Wagered</th>
-        </tr>
-      </thead>
-      <tbody data-shot-leaderboard></tbody>
-    </table>
+    <div class="casino-leaderboard-scroll">
+      <table class="shot-leaderboard-table">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Average Score</th>
+            <th>Wagered</th>
+          </tr>
+        </thead>
+        <tbody data-shot-leaderboard></tbody>
+      </table>
+    </div>
+    <div class="casino-leaderboard-summary">
+      <span>Average score (all users) <strong data-shot-average-score><%= Number(shotDoctorState.leaderboardSummary.average_score || 0).toFixed(2) %>/10</strong></span>
+      <span>Total wagered <strong data-shot-total-wagered><%= Number(shotDoctorState.leaderboardSummary.total_wagered || 0).toLocaleString() %></strong></span>
+    </div>
   </section>
 </main>
 
@@ -128,6 +134,8 @@
   const resultTitle = document.querySelector('[data-shot-result-title]');
   const resultDetail = document.querySelector('[data-shot-result-detail]');
   const leaderboardBody = document.querySelector('[data-shot-leaderboard]');
+  const averageScoreDisplay = document.querySelector('[data-shot-average-score]');
+  const totalWageredDisplay = document.querySelector('[data-shot-total-wagered]');
   const sortButtons = [...document.querySelectorAll('[data-shot-sort]')];
   let leaderboardSort = 'avg';
   const startButtonLabel = state.isOpen ? (startBtn?.textContent || 'Start Run') : 'CASINO CLOSED';
@@ -247,6 +255,13 @@
         <td>${fmt(row.total_wagered || 0)}</td>
       </tr>
     `).join('');
+    const summary = state.leaderboardSummary || {};
+    if (averageScoreDisplay) {
+      averageScoreDisplay.textContent = `${Number(summary.average_score || 0).toFixed(2)}/10`;
+    }
+    if (totalWageredDisplay) {
+      totalWageredDisplay.textContent = fmt(summary.total_wagered || 0);
+    }
   }
 
   function updateSortButtons() {

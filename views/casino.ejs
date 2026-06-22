@@ -172,23 +172,16 @@
           <button class="button-link ghost" type="button" data-slot-sort="spins">Spins</button>
         </div>
       </div>
-      <table>
-        <thead><tr><th>#</th><th>User</th><th>Wagered</th><th>Spins</th></tr></thead>
-        <tbody data-slot-leaderboard>
-          <% if (!casinoState.slotLeaderboard.length) { %>
-            <tr data-empty-leaderboard><td colspan="4">No spins yet.</td></tr>
-          <% } else { %>
-            <% casinoState.slotLeaderboard.forEach((row, i) => { %>
-              <tr>
-                <td><%= i + 1 %></td>
-                <td><%= row.user_display_name %></td>
-                <td><%= Number(row.total_wagered || 0).toLocaleString() %></td>
-                <td><%= Number(row.spins || 0).toLocaleString() %></td>
-              </tr>
-            <% }) %>
-          <% } %>
-        </tbody>
-      </table>
+      <div class="casino-leaderboard-scroll">
+        <table>
+          <thead><tr><th>#</th><th>User</th><th>Wagered</th><th>Spins</th></tr></thead>
+          <tbody data-slot-leaderboard></tbody>
+        </table>
+      </div>
+      <div class="casino-leaderboard-summary">
+        <span>Total wagered <strong data-slot-total-wagered><%= Number(casinoState.slotSummary.total_wagered || 0).toLocaleString() %></strong></span>
+        <span>Total spins <strong data-slot-total-spins><%= Number(casinoState.slotSummary.total_spins || 0).toLocaleString() %></strong></span>
+      </div>
     </div>
   </section>
 </main>
@@ -214,6 +207,8 @@
   const balanceDisplay = document.querySelector('[data-balance-display]');
   const jackpotDisplay = document.querySelector('[data-jackpot-display]');
   const leaderboardBody = document.querySelector('[data-slot-leaderboard]');
+  const totalWageredDisplay = document.querySelector('[data-slot-total-wagered]');
+  const totalSpinsDisplay = document.querySelector('[data-slot-total-spins]');
   const leaderboardSortButtons = [...document.querySelectorAll('[data-slot-sort]')];
   const reels = [...document.querySelectorAll('[data-reel-index]')].map(reel => ({
     el: reel,
@@ -378,7 +373,7 @@ function initPayoutLogoCycles() {
       return Number(b.total_wagered || 0) - Number(a.total_wagered || 0) ||
         Number(b.spins || 0) - Number(a.spins || 0);
     });
-    leaderboardBody.innerHTML = sorted.slice(0, 10).map((row, i) => `
+    leaderboardBody.innerHTML = sorted.map((row, i) => `
       <tr>
         <td>${i + 1}</td>
         <td>${escapeHtml(row.user_display_name || 'Unknown')}</td>
@@ -386,6 +381,16 @@ function initPayoutLogoCycles() {
         <td>${fmt(row.spins)}</td>
       </tr>
     `).join('') || '<tr><td colspan="4">No spins yet.</td></tr>';
+    if (totalWageredDisplay) {
+      totalWageredDisplay.textContent = fmt(
+        leaderboardRows.reduce((sum, row) => sum + Number(row.total_wagered || 0), 0)
+      );
+    }
+    if (totalSpinsDisplay) {
+      totalSpinsDisplay.textContent = fmt(
+        leaderboardRows.reduce((sum, row) => sum + Number(row.spins || 0), 0)
+      );
+    }
   }
 
   function updateLeaderboardSortButtons() {

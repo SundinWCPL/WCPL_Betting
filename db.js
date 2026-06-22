@@ -1663,6 +1663,16 @@ export function getCasinoStateForUser(userId = null) {
       };
     })
     .sort((a, b) => Number(b.total_wagered || 0) - Number(a.total_wagered || 0));
+  const slotSummary = {
+    total_wagered: slotLeaderboard.reduce(
+      (sum, row) => sum + Number(row.total_wagered || 0),
+      0
+    ),
+    total_spins: slotLeaderboard.reduce(
+      (sum, row) => sum + Number(row.spins || 0),
+      0
+    )
+  };
 
   return {
     isOpen: getAdminSettings().casinoOpen,
@@ -1671,6 +1681,7 @@ export function getCasinoStateForUser(userId = null) {
     contributionRate: CASINO_JACKPOT_CONTRIBUTION_RATE,
     allowedWagers: [...CASINO_SLOT_WAGERS],
     slotLeaderboard,
+    slotSummary,
     allSymbols: CASINO_ALL_SYMBOLS,
     balanceSummary: userId ? getBalanceSummaryForUser(userId) : null
   };
@@ -1880,6 +1891,24 @@ function getShotDoctorLeaderboard() {
     );
 }
 
+function getShotDoctorLeaderboardSummary() {
+  ensureCasinoState();
+  const completedRuns = state.casino.shotDoctorRuns.filter(
+    run => run.status === 'complete'
+  );
+  const totalCorrect = completedRuns.reduce(
+    (sum, run) => sum + Number(run.correct || 0),
+    0
+  );
+  return {
+    average_score: completedRuns.length ? totalCorrect / completedRuns.length : 0,
+    total_wagered: state.casino.shotDoctorRuns.reduce(
+      (sum, run) => sum + Number(run.wager || 0),
+      0
+    )
+  };
+}
+
 
 function getShotDoctorRunsUsedThisWeek(userId) {
   ensureCasinoState();
@@ -1913,6 +1942,7 @@ export function getShotDoctorStateForUser(userId) {
     payouts: SHOT_DOCTOR_PAYOUTS,
     activeRun: publicShotDoctorRun(activeRun),
     leaderboard: getShotDoctorLeaderboard(),
+    leaderboardSummary: getShotDoctorLeaderboardSummary(),
     balanceSummary: userId ? getBalanceSummaryForUser(userId) : null
   };
 }

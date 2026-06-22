@@ -1182,6 +1182,34 @@ a.matchup-result-badge:hover {
 .casino-info-grid .admin-section-head .toggle-row {
   flex-wrap: nowrap;
 }
+.casino-leaderboard-scroll {
+  max-height: 462px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.casino-leaderboard-scroll tr { height: 42px; }
+.casino-leaderboard-scroll table { margin: 0; }
+.casino-leaderboard-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
+}
+.casino-leaderboard-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 8px 0;
+  color: var(--muted);
+}
+.casino-leaderboard-summary strong {
+  margin-left: 5px;
+  color: var(--text);
+}
+@media (max-width: 600px) {
+  .casino-leaderboard-summary { flex-direction: column; }
+}
 @media (max-width: 800px) {
   .casino-topbar { align-items: stretch; flex-direction: column; }
   .casino-balance { text-align: left; width: 100%; }
