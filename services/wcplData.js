@@ -349,7 +349,7 @@ export function buildPropCategories({ divisionId, divisionName, week, skaters, g
       prop_key: `${divisionId}|top_scorer`,
       category: 'top_scorer',
       title: 'Top Scorer',
-      description: 'Most points in the division this week.',
+      description: 'Most points in the division this week. (avg. per series)',
       player_pool: 'skaters',
       players: topScorerPlayers,
       quantity_options: [],

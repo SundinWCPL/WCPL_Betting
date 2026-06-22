@@ -6,6 +6,18 @@ function marketKey(seriesKey, category, playerKey) {
   return `${seriesKey}|${category}|${playerKey}`;
 }
 
+function tierFavoriteScore(tiers, category) {
+  const baselines = category === 'shutout' ? [4, 10, 25] : [3, 8, 15];
+  const values = (tiers || [])
+    .map((tier, index) => Number(tier.multiplier || 0) / baselines[index])
+    .filter(value => value > 0);
+  return values.length
+    ? baselines[0] * (
+      values.reduce((product, value) => product * value, 1) ** (1 / values.length)
+    )
+    : Number.POSITIVE_INFINITY;
+}
+
 export async function buildWeeklyPropMarkets({
   seasonId = 'S3',
   week,
@@ -144,11 +156,14 @@ export function propMarketsToBettingBoards(markets, divisionBoards, currentBets 
         currentBet: currentBets[key] || null
       });
     }
+    const favoriteScore = tierFavoriteScore(market.tiers, market.category);
     grouped.get(key).players.push({
       selection_key: market.marketKey,
       series_key: market.seriesKey,
       player_key: market.playerKey,
-      display_name: `${market.playerName} (vs ${market.opponentTeamId})`,
+      display_name: market.playerName,
+      option_label: `${market.playerName} - ${favoriteScore.toFixed(1)}x (vs ${market.opponentTeamId})`,
+      favorite_score: favoriteScore,
       player_name: market.playerName,
       team_id: market.playerTeamId,
       prop_quantity_multipliers: Object.fromEntries(
@@ -169,6 +184,10 @@ export function propMarketsToBettingBoards(markets, divisionBoards, currentBets 
   }
 
   for (const category of grouped.values()) {
+    category.players.sort((a, b) =>
+      Number(a.favorite_score) - Number(b.favorite_score) ||
+      String(a.display_name).localeCompare(String(b.display_name))
+    );
     const board = boardByDivision.get(category.prop_key.split('|')[0]);
     if (board) board.categories.push(category);
   }

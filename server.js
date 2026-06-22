@@ -117,32 +117,66 @@ function getBettingView(req) {
 }
 
 async function filterLeaderPropPools(boards, { seasonId, week }) {
-  const reports = await Promise.all(boards.map(board =>
-    buildLeaderPropRecommendations({
-      seasonId,
-      divisionId: board.division_id,
-      targetWeek: week
-    })
-  ));
+  const [reports, weekSeries] = await Promise.all([
+    Promise.all(boards.map(board =>
+      buildLeaderPropRecommendations({
+        seasonId,
+        divisionId: board.division_id,
+        targetWeek: week
+      })
+    )),
+    getUpcomingSeries(week, seasonId)
+  ]);
   const byDivision = new Map(reports.map(report => [report.divisionId, report]));
+  const opponentsByTeam = new Map();
+  for (const series of weekSeries) {
+    const awayKey = `${series.division_id}|${series.away_team_id}`;
+    const homeKey = `${series.division_id}|${series.home_team_id}`;
+    if (!opponentsByTeam.has(awayKey)) opponentsByTeam.set(awayKey, new Set());
+    if (!opponentsByTeam.has(homeKey)) opponentsByTeam.set(homeKey, new Set());
+    opponentsByTeam.get(awayKey).add(series.home_team_id);
+    opponentsByTeam.get(homeKey).add(series.away_team_id);
+  }
 
   return boards.map(board => {
     const report = byDivision.get(board.division_id);
-    const scorerKeys = new Set((report?.topScorer || []).map(player => player.playerKey));
-    const goalieKeys = new Set((report?.topGoalie || []).map(player => player.playerKey));
+    const scorerByKey = new Map((report?.topScorer || []).map(player => [player.playerKey, player]));
+    const goalieByKey = new Map((report?.topGoalie || []).map(player => [player.playerKey, player]));
+    const decoratePlayers = (players, recommendations) => players
+      .filter(player => recommendations.has(player.player_key))
+      .map(player => {
+        const recommendation = recommendations.get(player.player_key);
+        const opponents = [...(opponentsByTeam.get(
+          `${board.division_id}|${player.team_id}`
+        ) || [])];
+        const opponentLabel = opponents.length > 1
+          ? opponents.join(' and ')
+          : (opponents[0] || 'TBD');
+        const multiplier = Number(player.prop_multiplier || recommendation.recommendedOdds || 0);
+        return {
+          ...player,
+          prop_multiplier: multiplier,
+          option_label: `${player.display_name} - ${multiplier}x (vs ${opponentLabel})`,
+          favorite_score: multiplier
+        };
+      })
+      .sort((a, b) =>
+        Number(a.favorite_score) - Number(b.favorite_score) ||
+        String(a.display_name).localeCompare(String(b.display_name))
+      );
     return {
       ...board,
       categories: board.categories.map(category => {
         if (category.category === 'top_scorer') {
           return {
             ...category,
-            players: category.players.filter(player => scorerKeys.has(player.player_key))
+            players: decoratePlayers(category.players, scorerByKey)
           };
         }
         if (category.category === 'top_goalie') {
           return {
             ...category,
-            players: category.players.filter(player => goalieKeys.has(player.player_key))
+            players: decoratePlayers(category.players, goalieByKey)
           };
         }
         return category;

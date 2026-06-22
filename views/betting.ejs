@@ -214,7 +214,7 @@
                                 data-player-q2-label="<%= player.prop_quantity_labels ? player.prop_quantity_labels[2] : '' %>"
                                 data-player-q3-label="<%= player.prop_quantity_labels ? player.prop_quantity_labels[3] : '' %>"
                                 <%= prop.currentBet && (prop.currentBet.market_key === player.selection_key || (!player.selection_key && prop.currentBet.player_key === player.player_key)) ? 'selected' : '' %>
-                              ><%= player.display_name %><% if (!prop.quantity_options.length) { %> (<%= player.prop_multiplier || prop.multiplier %>x)<% } %></option>
+                              ><%= player.option_label || `${player.display_name} - ${player.prop_multiplier || prop.multiplier}x` %></option>
                             <% }) %>
                           </select>
                         </label>
