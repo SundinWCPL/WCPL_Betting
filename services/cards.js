@@ -43,6 +43,8 @@ export const DEFAULT_SAVE_PCT_BONUSES = [
 export const DEFAULT_CHEMISTRY_BONUSES = { 2: 10, 3: 15, 4: 25, 5: 50 };
 export const PLAYER_CARD_SEASONS = ['S1', 'S2', 'S3'];
 export const HISTORICAL_SAMPLE_SIZE = 3;
+const PACK_EXCLUDED_PLAYER_NAMES = new Set(['bleh', 'jurkey']);
+const PACK_EXCLUDED_STEAM_IDS = new Set(['76561198300298208', '76561199027789459']);
 
 export const DEFAULT_CARDS_CONFIG = {
   playerPackPrices: { standard: 75, premium: 150, prestige: 350 },
@@ -827,6 +829,10 @@ function rarityRollsForPack(packType, oddsByPack) {
 
 export function isPlayerPackEligible(player) {
   if (!player?.position) return false;
+  if (
+    PACK_EXCLUDED_PLAYER_NAMES.has(norm(player.baseName)) ||
+    PACK_EXCLUDED_STEAM_IDS.has(clean(player.sourceSteamId || player.steamId))
+  ) return false;
   if (player.cardType === 'mythic' || player.card_type === 'mythic' || player.edition === 'MYTHIC' || player.tier === 'mythic') {
     return true;
   }
