@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WCPL Card Shop</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const cardRarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
+    const starsForPlayer = player => '&#9733;'.repeat(Number(player?.stars || cardRarityRank[player?.tier] || 1));
+    const titleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+    const cleanPlayerName = player => {
+      const edition = String(player?.edition || '').trim();
+      const name = String(player?.name || '').trim();
+      return edition && name.toUpperCase().startsWith(`${edition.toUpperCase()} `)
+        ? name.slice(edition.length).trim()
+        : name;
+    };
+  %>
+  <main class="container cards-page">
+    <section class="card page-title cards-title">
+      <div><p class="eyebrow">WCPL Cards</p><h1>Card Shop</h1><p>Every pack contains three unique pulls.</p></div>
+      <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(balance) %> Mushybux</span><a class="button-link ghost" href="/cards">Back to Hub</a></div>
+    </section>
+
+    <% if (pendingPack) { %>
+      <section class="card pack-reveal">
+        <p class="eyebrow"><%= pendingPack.pack_type %> <%= pendingPack.pack_kind %> pack</p>
+        <h2>Your Pack</h2>
+        <div class="pack-reveal-grid">
+          <% pendingPack.items.forEach((item, index) => { %>
+            <button type="button" class="pack-card is-hidden tier-<%= item.itemType === 'player' ? item.player?.tier : item.rarity %>" data-reveal-card aria-label="Reveal card <%= index + 1 %>">
+              <span class="pack-card-cover" aria-hidden="true">
+                <strong>?</strong>
+              </span>
+              <span class="pack-card-content <%= item.itemType === 'player' ? 'wut-card-face wut-card-front' : '' %>">
+                <% if (item.itemType === 'player') { %>
+                  <span class="wut-front-badge <%= item.player?.cardType === 'mythic' ? 'is-position-only' : '' %>">
+                    <% if (item.player?.cardType !== 'mythic') { %><span><%= item.player?.edition %></span><% } %>
+                    <strong><%= item.player?.position %></strong>
+                  </span>
+                  <span class="wut-front-copy">
+                    <strong class="player-card-name"><%= item.player ? cleanPlayerName(item.player) : item.playerKey %></strong>
+                    <span class="wut-front-stat pack-player-details">
+                      <strong><%= titleCase(item.player?.tier) %> <%- starsForPlayer(item.player) %></strong>
+                    </span>
+                  </span>
+                  <% if (item.player?.teamLogo) { %><img class="wut-front-logo" src="<%= item.player.teamLogo %>" alt="" style="--team-bg:<%= item.player.teamBgColor %>"><% } %>
+                <% } else { %>
+                  <%- include('partials_boost_content', { boost: item }) %>
+                <% } %>
+              </span>
+            </button>
+          <% }) %>
+        </div>
+        <form method="post" action="/cards/store/claim">
+          <input type="hidden" name="purchase_id" value="<%= pendingPack.id %>">
+          <button id="claimPack" disabled>Add to Collection</button>
+        </form>
+      </section>
+    <% } else { %>
+      <section class="pack-shop-grid">
+        <% ['player', 'boost'].forEach(kind => { const prices = kind === 'player' ? config.playerPackPrices : config.boostPackPrices; %>
+          <article class="card pack-shop-column">
+            <div class="pack-art <%= kind %>-pack"><span><%= kind === 'player' ? 'PLAYER' : 'BOOST' %></span><strong>PACK</strong></div>
+            <h2><%= kind === 'player' ? 'Player Packs' : 'Boost Packs' %></h2>
+            <% ['standard', 'premium', 'prestige'].forEach(type => { %>
+              <form method="post" action="/cards/store/buy">
+                <input type="hidden" name="pack_kind" value="<%= kind %>">
+                <input type="hidden" name="pack_type" value="<%= type %>">
+                <button class="pack-buy-button" <%= balance < prices[type] ? 'disabled' : '' %>>
+                  <span><%= type %></span><strong><%= prices[type] %> Mushybux</strong>
+                </button>
+              </form>
+            <% }) %>
+          </article>
+        <% }) %>
+      </section>
+    <% } %>
+  </main>
+  <script>
+    const fitCardNames = () => {
+      document.querySelectorAll('.player-card-name').forEach(name => {
+        if (!name.clientWidth) return;
+        name.style.fontSize = '';
+        let size = Number.parseFloat(getComputedStyle(name).fontSize) || 16;
+        while (name.scrollWidth > name.clientWidth && size > 8) {
+          size -= 0.5;
+          name.style.fontSize = `${size}px`;
+        }
+      });
+    };
+    const revealCards = [...document.querySelectorAll('[data-reveal-card]')];
+    revealCards.forEach(card => card.addEventListener('click', () => {
+      card.classList.remove('is-hidden');
+      card.classList.remove('is-revealed-pop');
+      void card.offsetWidth;
+      card.classList.add('is-revealed-pop');
+      card.disabled = true;
+      fitCardNames();
+      card.addEventListener('animationend', () => card.classList.remove('is-revealed-pop'), { once: true });
+      if (revealCards.every(item => !item.classList.contains('is-hidden'))) document.getElementById('claimPack').disabled = false;
+    }));
+    window.addEventListener('resize', fitCardNames);
+  </script>
+</body>
+</html>

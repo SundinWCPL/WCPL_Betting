@@ -12,6 +12,13 @@
           <span class="nav-link-disabled" title="The casino is currently closed." aria-disabled="true">Casino</span>
         <% } %>
       <% } %>
+      <% if (cardsLinkVisible) { %>
+        <% if (cardsOpen) { %>
+          <a href="/cards">WUT</a>
+        <% } else { %>
+          <span class="nav-link-disabled" title="WUT is currently closed." aria-disabled="true">WUT</span>
+        <% } %>
+      <% } %>
       <% if (currentUser.role === 'admin') { %><a href="/admin">Admin</a><% } %>
       <form method="post" action="/logout" class="inline-form"><button>Logout</button></form>
     <% } else { %>

@@ -5,15 +5,10 @@ const DIVISION_PRIOR_GAMES = {
   D1: 6,
   D2: 2
 };
-const DISPERSION = 1;
 const TIER_TARGETS = [0.4, 0.15, 0.07];
-const TIER_CALIBRATION = [0.88, 0.75, 0.56];
-const TIER_BASE_ODDS = [3, 8, 15];
-const TIER_REFERENCE_PROBABILITIES = TIER_TARGETS.map(
-  (target, index) => target * TIER_CALIBRATION[index]
-);
+const HOUSE_RETURN = 0.9;
 const ODDS_RANGES = [[2, 5], [4, 12], [8, 20]];
-const MAX_LINE_ABOVE_EXPECTED = [1.5, 4.5, 7.5];
+const MAX_LINE_ABOVE_EXPECTED = [1.5, 3, 4];
 
 function n(value) {
   const parsed = Number(value);
@@ -105,25 +100,51 @@ function aggregateCurrentSkaters(boxscores) {
   }));
 }
 
-function negativeBinomialAtLeast(mean, dispersion, goals) {
-  const successProbability = dispersion / (dispersion + mean);
-  const failureProbability = mean / (dispersion + mean);
-  let probability = successProbability ** dispersion;
-  let below = goals > 0 ? probability : 0;
-  for (let k = 1; k < goals; k += 1) {
-    probability *= ((k - 1 + dispersion) / k) * failureProbability;
-    below += probability;
+function factorial(value) {
+  let out = 1;
+  for (let i = 2; i <= value; i += 1) out *= i;
+  return out;
+}
+
+function poissonAtLeast(mean, goals) {
+  let below = 0;
+  for (let count = 0; count < goals; count += 1) {
+    below += Math.exp(-mean) * (mean ** count) / factorial(count);
   }
   return clamp(1 - below, 0, 1);
 }
 
-function chooseLines(lambda) {
+function binomialProbability(trials, probability, successes) {
+  return (
+    factorial(trials) /
+    (factorial(successes) * factorial(trials - successes))
+  ) * (probability ** successes) * ((1 - probability) ** (trials - successes));
+}
+
+// A player can miss any game in a three-game series. Model appearances first,
+// then goals within those appearances. The former geometric tail treated a
+// high scorer's 13-goal series as surprisingly plausible.
+function seriesGoalsAtLeast(perAppearanceGoals, appearanceRate, requiredGoals) {
+  let probability = 0;
+  for (let appearances = 1; appearances <= 3; appearances += 1) {
+    probability += binomialProbability(3, appearanceRate, appearances) *
+      poissonAtLeast(appearances * perAppearanceGoals, requiredGoals);
+  }
+  return clamp(probability, 0, 1);
+}
+
+function chooseLines(perAppearanceGoals, appearanceRate) {
+  const expectedGoals = 3 * perAppearanceGoals * appearanceRate;
   const candidates = [];
   for (let requiredGoals = 2; requiredGoals <= 20; requiredGoals += 1) {
     candidates.push({
       requiredGoals,
       line: requiredGoals - 0.5,
-      rawProbability: negativeBinomialAtLeast(lambda, DISPERSION, requiredGoals)
+      rawProbability: seriesGoalsAtLeast(
+        perAppearanceGoals,
+        appearanceRate,
+        requiredGoals
+      )
     });
   }
 
@@ -132,7 +153,7 @@ function chooseLines(lambda) {
   TIER_TARGETS.forEach((target, index) => {
     const maximumLine = Math.max(
       index === 0 ? 1.5 : out[index - 1].line + 1,
-      Math.floor((lambda + MAX_LINE_ABOVE_EXPECTED[index]) * 2) / 2
+      Math.floor((expectedGoals + MAX_LINE_ABOVE_EXPECTED[index]) * 2) / 2
     );
     const eligible = candidates.filter(candidate =>
       candidate.requiredGoals >= minimumGoals &&
@@ -146,11 +167,7 @@ function chooseLines(lambda) {
         Math.abs(a.rawProbability - target) - Math.abs(b.rawProbability - target) ||
         a.requiredGoals - b.requiredGoals
       )[0];
-    const probability = clamp(
-      choice.rawProbability * TIER_CALIBRATION[index],
-      0.001,
-      0.95
-    );
+    const probability = clamp(choice.rawProbability, 0.001, 0.95);
     out.push({
       tier: index + 1,
       label: 'Over',
@@ -159,10 +176,7 @@ function chooseLines(lambda) {
       rawProbability: choice.rawProbability,
       probability,
       odds: clamp(
-        Math.round((
-          TIER_BASE_ODDS[index] *
-          Math.sqrt(TIER_REFERENCE_PROBABILITIES[index] / probability)
-        ) * 10) / 10,
+        Math.round((HOUSE_RETURN / probability) * 10) / 10,
         ODDS_RANGES[index][0],
         ODDS_RANGES[index][1]
       )
@@ -338,6 +352,7 @@ export async function buildPlayerGoalsRecommendations({
         0.03,
         3 * goalRate * appearanceRate * teamEnvironment
       );
+      const matchupGoalsPerAppearance = goalRate * teamEnvironment;
 
       recommendations.push({
         seriesKey: matchup.seriesKey,
@@ -362,7 +377,7 @@ export async function buildPlayerGoalsRecommendations({
           : null,
         expectedAppearances: 3 * appearanceRate,
         expectedGoals,
-        tiers: chooseLines(expectedGoals)
+        tiers: chooseLines(matchupGoalsPerAppearance, appearanceRate)
       });
     }
   }
@@ -371,15 +386,14 @@ export async function buildPlayerGoalsRecommendations({
     seasonId,
     divisionId,
     targetWeek: n(targetWeek),
-    modelVersion: 'player-goals-v3',
+    modelVersion: 'player-goals-v4',
     settings: {
       goalRatePriorGames: priorGames,
       appearancePriorGames: priorGames,
       divisionPriorGames: { ...DIVISION_PRIOR_GAMES },
-      dispersion: DISPERSION,
+      distribution: 'binomial appearances + Poisson goals per appearance',
       tierTargets: [...TIER_TARGETS],
-      tierCalibration: [...TIER_CALIBRATION],
-      tierBaseOdds: [...TIER_BASE_ODDS],
+      houseReturn: HOUSE_RETURN,
       oddsRanges: ODDS_RANGES.map(range => [...range])
     },
     recommendations,

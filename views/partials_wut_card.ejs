@@ -1,0 +1,64 @@
+<%
+  const visualFantasy = card?.fantasyAppearances || { gamesPlayed: 0, fp: 0, stats: {} };
+  const visualStats = visualFantasy.stats || {};
+  const visualPlayer = card?.player || {};
+  const visualEditionStats = visualPlayer.editionStats || visualPlayer.seasonStats?.[visualPlayer.edition] || {};
+  const visualRarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
+  const visualTitleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+  const visualName = (() => {
+    const edition = String(visualPlayer.edition || '').trim();
+    const name = String(visualPlayer.name || '').trim();
+    return edition && name.toUpperCase().startsWith(`${edition.toUpperCase()} `) ? name.slice(edition.length).trim() : name;
+  })();
+  const visualTeamName = visualPlayer.teamDisplayName || visualPlayer.teamName || visualPlayer.teamId || 'Team';
+  const visualSeason = visualPlayer.cardType === 'mythic'
+    ? `${visualPlayer.sourceSeason || ''}${String(visualPlayer.sourceStage || '').toLowerCase() === 'playoffs' ? ' PO' : ''}`
+    : visualPlayer.edition;
+  const visualStatus = statusText || 'Available for WUT';
+%>
+<div class="arena-wut-card-inner">
+  <div class="arena-wut-card-face wut-card-face wut-card-front">
+    <div class="wut-front-badge <%= visualPlayer.cardType === 'mythic' ? 'is-position-only' : '' %>">
+      <% if (visualPlayer.cardType !== 'mythic') { %><span><%= visualPlayer.edition %></span><% } %>
+      <strong><%= visualPlayer.position %></strong>
+    </div>
+    <div class="wut-front-copy">
+      <strong class="player-card-name"><%= visualName %></strong>
+      <span class="wut-front-stat">GP: <%= visualFantasy.gamesPlayed || 0 %> - FP: <%= visualFantasy.fp || 0 %></span>
+    </div>
+    <% if (visualPlayer.teamLogo) { %><img class="wut-front-logo" src="<%= visualPlayer.teamLogo %>" alt="" style="--team-bg:<%= visualPlayer.teamBgColor %>"><% } %>
+  </div>
+  <div class="arena-wut-card-face arena-wut-card-back wut-card-face wut-card-back">
+    <div class="wut-back-header">
+      <strong><%= visualName %></strong>
+      <span><%= visualTitleCase(visualPlayer.tier) %> <small><%= '★'.repeat(Number(visualPlayer.stars || visualRarityRank[visualPlayer.tier] || 1)) %></small></span>
+    </div>
+    <div class="wut-stat-panel <%= visualPlayer.cardType === 'mythic' ? 'is-mythic' : '' %>">
+      <% if (visualPlayer.cardType !== 'mythic') { %>
+        <table class="card-history-table">
+          <% if (visualPlayer.position === 'G') { %>
+            <thead><tr><th>Season</th><th>GP</th><th>SV%</th><th>SO</th></tr></thead>
+            <tbody><tr><td><%= visualSeason %></td><td><%= visualEditionStats.games || 0 %></td><td><%= visualEditionStats.savePct ? (visualEditionStats.savePct * 100).toFixed(1) : 'N/A' %></td><td><%= visualEditionStats.shutouts || 0 %></td></tr></tbody>
+          <% } else { %>
+            <thead><tr><th>Season</th><th>GP</th><th>G</th><th>A</th><th>SH</th><th>HIT</th><th>BLK</th></tr></thead>
+            <tbody><tr><td><%= visualSeason %></td><td><%= visualEditionStats.games || 0 %></td><td><%= visualEditionStats.goals || 0 %></td><td><%= visualEditionStats.assists || 0 %></td><td><%= visualEditionStats.shots || 0 %></td><td><%= visualEditionStats.hits == null ? 'N/A' : visualEditionStats.hits %></td><td><%= visualEditionStats.blocks == null ? 'N/A' : visualEditionStats.blocks %></td></tr></tbody>
+          <% } %>
+        </table>
+      <% } %>
+      <div class="fantasy-appearances">
+        <strong>WUT Stats</strong>
+        <% if (visualPlayer.position === 'G') { %>
+          <table class="card-history-table"><thead><tr><th>GP</th><th>SV</th><th>SV%</th><th>SO</th><th>FP</th></tr></thead><tbody><tr><td><%= visualFantasy.gamesPlayed || 0 %></td><td><%= visualStats.saves || 0 %></td><td><%= ((visualStats.savePct || 0) * 100).toFixed(1) %></td><td><%= visualStats.shutouts || 0 %></td><td><%= visualFantasy.fp || 0 %></td></tr></tbody></table>
+        <% } else { %>
+          <table class="card-history-table"><thead><tr><th>GP</th><th>G</th><th>A</th><th>SH</th><th>HIT</th><th>BLK</th><th>FP</th></tr></thead><tbody><tr><td><%= visualFantasy.gamesPlayed || 0 %></td><td><%= visualStats.goals || 0 %></td><td><%= visualStats.assists || 0 %></td><td><%= visualStats.shots || 0 %></td><td><%= visualStats.hits || 0 %></td><td><%= visualStats.blocks || 0 %></td><td><%= visualFantasy.fp || 0 %></td></tr></tbody></table>
+        <% } %>
+      </div>
+      <% if (visualPlayer.cardType === 'mythic') { %><small class="wut-mythic-status"><%= visualStatus %></small><% } %>
+    </div>
+    <% if (visualPlayer.cardType === 'mythic') { %>
+      <div class="wut-back-flavor"><span><%= visualPlayer.flavorText || visualStatus %></span></div>
+    <% } else { %>
+      <div class="wut-back-player"><strong><%= visualTeamName %></strong><small><%= visualStatus %></small><% if (visualPlayer.teamLogo) { %><img src="<%= visualPlayer.teamLogo %>" alt="" style="--team-bg:<%= visualPlayer.teamBgColor %>"><% } %></div>
+    <% } %>
+  </div>
+</div>

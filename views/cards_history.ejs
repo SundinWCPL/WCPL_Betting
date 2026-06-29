@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WUT Match History</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const slots = ['F1','F2','D1','D2','G'];
+    const titleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+    const cleanName = player => {
+      const edition = String(player?.edition || '').trim();
+      const name = String(player?.name || '').trim();
+      return edition && name.toUpperCase().startsWith(`${edition.toUpperCase()} `) ? name.slice(edition.length).trim() : name;
+    };
+    const playerName = (match, id) => match.players.find(player => Number(player.id) === Number(id))?.displayName || 'Player';
+    const placementFor = (match, userId, slot) => match.placements.find(row => Number(row.user_id) === Number(userId) && row.slot === slot);
+    const focusedMatch = arena.history.find(match => Number(match.id) === Number(replayMatchId)) || null;
+    const leftUserId = focusedMatch ? Number(currentUser.id) : null;
+    const rightUserId = focusedMatch ? Number(focusedMatch.opponent.id) : null;
+  %>
+  <main class="container cards-page arena-page">
+    <section class="card page-title cards-title">
+      <div><a class="button-link ghost" href="/cards">← WUT</a><p class="eyebrow arena-history-eyebrow">Permanent record</p><h1>Match History</h1><p>Review final scores and replay every reveal.</p></div>
+      <span class="pill"><%= arena.history.length %> completed</span>
+    </section>
+
+    <% if (focusedMatch) { %>
+      <section class="card arena-results arena-card-results" id="arena-results" data-reveal-board>
+        <div class="arena-results-title"><p class="eyebrow">Match #<%= focusedMatch.id %> result</p><h2><%= playerName(focusedMatch, leftUserId) %> vs <%= playerName(focusedMatch, rightUserId) %></h2></div>
+
+        <div class="arena-duel-scoreboard">
+          <div class="arena-duel-total is-left"><span><%= playerName(focusedMatch, leftUserId) %></span></div>
+          <div class="arena-duel-score-center"><span>Running Score</span><strong><b data-total-for="<%= leftUserId %>" data-final-total="<%= focusedMatch.scores[String(leftUserId)] %>">0</b>–<b data-total-for="<%= rightUserId %>" data-final-total="<%= focusedMatch.scores[String(rightUserId)] %>">0</b></strong></div>
+          <div class="arena-duel-total is-right"><span><%= playerName(focusedMatch, rightUserId) %></span></div>
+        </div>
+
+        <div class="arena-duel-reveal">
+          <% slots.forEach(slot => { %>
+            <div class="arena-duel-row">
+              <% [leftUserId, rightUserId].forEach(userId => { const row = placementFor(focusedMatch, userId, slot); const isLeft = Number(userId) === leftUserId; %>
+                <article class="arena-duel-entry <%= isLeft ? 'is-left' : 'is-right' %> tier-<%= row?.card?.player?.tier || 'common' %>" data-reveal-entry data-user="<%= userId %>">
+                  <% if (isLeft && row?.card) { %><div class="arena-duel-card arena-wut-card tier-<%= row.card.player.tier %>"><%- include('partials_wut_card', { card: row.card, statusText: `${row.fp || 0} FP in Match #${focusedMatch.id}` }) %></div><% } %>
+                  <div class="arena-duel-scoring">
+                    <div class="arena-duel-scoring-head"><span><%= isLeft ? `${slot} · Scoring` : `Scoring · ${slot}` %></span><strong><%= row?.card ? cleanName(row.card.player) : 'Empty' %></strong></div>
+                    <div class="arena-stat-reveal">
+                      <% (row?.score_breakdown || []).forEach(item => { const basePoints = Number(item.basePoints ?? (item.points - (item.boostBonus || 0))); const signedPoints = `${basePoints >= 0 ? '+' : ''}${Math.round(basePoints)} FP`; %>
+                        <div class="arena-reveal-step" data-user="<%= userId %>" data-points="<%= basePoints %>"><span><%= item.label %><%= item.count == null ? '' : ` - ${item.count}` %><%= item.type === 'save_pct' ? ` (x${Number(item.multiplier || 1).toFixed(2)})` : '' %></span><strong><%= ['save','save_pct','chemistry_bonus'].includes(item.type) ? signedPoints : `${Math.round(basePoints)} FP` %></strong></div>
+                        <% if (item.boostBonus) { %><div class="arena-reveal-step is-boost tier-text-<%= row.boost?.rarity %>" data-user="<%= userId %>" data-points="<%= item.boostBonus %>"><span><%= titleCase(row.boost?.rarity) %> <%= titleCase(row.boost?.boost_type) %> boost</span><strong>+<%= item.boostBonus %> FP</strong></div><% } %>
+                      <% }) %>
+                    </div>
+                    <strong class="arena-player-fp"><%= row?.fp || 0 %> FP</strong>
+                  </div>
+                  <% if (!isLeft && row?.card) { %><div class="arena-duel-card arena-wut-card tier-<%= row.card.player.tier %>"><%- include('partials_wut_card', { card: row.card, statusText: `${row.fp || 0} FP in Match #${focusedMatch.id}` }) %></div><% } %>
+                </article>
+              <% }) %>
+            </div>
+          <% }) %>
+        </div>
+
+        <div class="arena-outcome" data-arena-outcome>
+          <% if (focusedMatch.winner_user_id == null) { %><h2>Draw</h2>
+          <% } else if (Number(focusedMatch.winner_user_id) === Number(currentUser.id)) { %>
+            <h2>You Won!</h2>
+            <% if (!focusedMatch.winnings_claimed_at) { %><form method="post" action="/cards/arena/matches/<%= focusedMatch.id %>/claim"><button>Collect <%= focusedMatch.prize_amount || arena.config.winnerPrize %> Mushybux</button></form><% } else { %><span class="pill">Winnings collected</span><% } %>
+          <% } else { %><h2>You lost. Better luck next time.</h2><% } %>
+        </div>
+      </section>
+    <% } %>
+
+    <section class="card arena-history">
+      <div class="cards-section-head"><div><p class="eyebrow">All completed matches</p><h2>Results</h2></div></div>
+      <% if (!arena.history.length) { %><p class="muted">Completed matches will appear here.</p><% } %>
+      <% arena.history.forEach(match => { %>
+        <div class="arena-history-row"><span><strong>#<%= match.id %> vs <%= match.opponent.displayName %></strong><small><%= match.scores[String(currentUser.id)] %>–<%= match.scores[String(match.opponent.id)] %> · <%= Number(match.winner_user_id) === Number(currentUser.id) ? 'Win' : match.winner_user_id == null ? 'Draw' : 'Loss' %></small></span><a class="button-link ghost" href="/cards/arena/history?replay=<%= match.id %>#arena-results">Replay Reveal</a></div>
+      <% }) %>
+    </section>
+  </main>
+  <script>
+    const board = document.querySelector('[data-reveal-board]');
+    if (board) {
+      const entries = [...board.querySelectorAll('[data-reveal-entry]')];
+      const outcome = board.querySelector('[data-arena-outcome]');
+      const running = {};
+      const updateScore = () => {
+        board.querySelectorAll('[data-total-for]').forEach(total => { total.textContent = Math.round(running[total.dataset.totalFor] || 0); });
+      };
+      const runReveal = async () => {
+        entries.forEach(entry => {
+          entry.classList.remove('is-revealed');
+          entry.querySelectorAll('.arena-reveal-step').forEach(step => step.hidden = true);
+          const playerTotal = entry.querySelector('.arena-player-fp');
+          if (playerTotal) playerTotal.hidden = true;
+        });
+        outcome.hidden = true;
+        updateScore();
+        for (const entry of entries) {
+          entry.classList.add('is-revealed');
+          for (const step of entry.querySelectorAll('.arena-reveal-step')) {
+            step.hidden = false;
+            const user = step.dataset.user;
+            running[user] = (running[user] || 0) + Number(step.dataset.points || 0);
+            updateScore();
+            await new Promise(resolve => setTimeout(resolve, step.classList.contains('is-boost') ? 650 : 350));
+          }
+          const playerTotal = entry.querySelector('.arena-player-fp');
+          if (playerTotal) playerTotal.hidden = false;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        board.querySelectorAll('[data-final-total]').forEach(total => { total.textContent = total.dataset.finalTotal; });
+        outcome.hidden = false;
+      };
+      runReveal();
+    }
+  </script>
+</body>
+</html>

@@ -128,6 +128,648 @@ ul { color: var(--muted); line-height: 1.7; }
   .compact-no-bet { text-align: left; }
 }
 
+/* WCPL Cards */
+.cards-page {
+  --wut-card-width: 210px;
+  --wut-card-ratio: 804 / 1128;
+  display: grid;
+  gap: 20px;
+  max-width: 1740px;
+}
+.cards-title-actions, .cards-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cards-balance { padding: 11px 15px; border: 1px solid var(--border); border-radius: 999px; font-weight: 900; }
+.cards-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
+.cards-layout > div, .cards-leaderboards { min-width: 0; display: grid; gap: 20px; align-content: start; }
+.cards-layout > div > .card { min-width: 0; }
+.cards-lineup { width: 100%; min-width: 0; max-width: 100%; display: grid; grid-template-columns: repeat(5, calc(var(--wut-card-width) + 24px)); gap: 12px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+.lineup-slot { position: relative; display: grid; align-content: start; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: #111520; transition: box-shadow .2s, border-color .2s; }
+.lineup-slot.is-locked { border-color: #596174; }
+.mini-player-card, .lineup-player-card, .collection-player, .collection-boost, .pack-card { --rarity: #f5f5f5; }
+.mini-player-card { overflow: hidden; min-height: 235px; border-radius: 13px; background: linear-gradient(145deg, color-mix(in srgb, var(--rarity) 24%, #1a1f2b), #111520 70%); }
+.mini-card-head { display: grid; gap: 4px; padding: 9px; }
+.mini-card-foot { display: flex; justify-content: space-between; gap: 8px; padding: 9px; }
+.mini-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.mini-card-meta small { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.mini-card-meta span, .collection-player .mini-card-meta span, .pack-card-meta span { color: var(--rarity); letter-spacing: 1px; text-shadow: 0 0 8px color-mix(in srgb, var(--rarity) 65%, transparent); }
+.player-card-name { display: block; min-width: 0; line-height: 1.08; overflow-wrap: anywhere; }
+.mini-player-card img { display: block; width: 100%; height: 145px; object-fit: contain; padding: 12px; background: color-mix(in srgb, var(--rarity) 12%, #0e1118); }
+.mini-card-foot { align-items: end; font-size: 12px; color: var(--muted); }
+.mini-card-foot strong { color: var(--text); }
+.empty-card-slot { display: grid; place-items: center; align-content: center; gap: 6px; width: 100%; min-height: 0; aspect-ratio: var(--wut-card-ratio); padding: 14px; border: 2px dashed #394154; border-radius: 13px; color: var(--muted); text-align: center; background: #121722; }
+.empty-card-slot strong { color: var(--text); }
+.empty-card-slot[hidden] { display: none !important; }
+.empty-card-slot:hover, .assignment-zone.is-selected { border-color: var(--accent); box-shadow: 0 0 18px rgba(102,217,163,.22); }
+.lineup-hidden-form { display: none; }
+.lineup-player-card { position: relative; width: 100%; aspect-ratio: var(--wut-card-ratio); border-radius: 6px; perspective: 900px; cursor: pointer; }
+.lineup-card-inner { position: absolute; inset: 0; transition: transform .5s; transform-style: preserve-3d; }
+.lineup-player-card.is-flipped .lineup-card-inner { transform: rotateY(180deg); }
+.lineup-card-face { position: absolute; inset: 0; overflow: hidden; backface-visibility: hidden; }
+.lineup-card-back { transform: rotateY(180deg); }
+.lineup-zone-actions { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+.lineup-zone-actions button, .lineup-remove { min-height: 32px; padding: 6px 8px; font-size: 11px; }
+.lineup-remove { width: 100%; color: var(--danger); border: 1px solid rgba(255,107,107,.35); background: transparent; }
+.boost-slot { width: 100%; min-height: 72px; display: grid; place-items: center; gap: 3px; padding: 9px; border-radius: 10px; text-align: center; }
+.boost-slot:disabled { opacity: 1; cursor: default; }
+.assigned-boost { border: 1px solid var(--rarity); color: var(--rarity); text-transform: capitalize; background: color-mix(in srgb, var(--rarity) 10%, #10141d); }
+.assigned-boost span { letter-spacing: 1px; }
+.assigned-boost small { color: var(--muted); }
+.empty-boost-slot { border: 2px dashed #394154; color: var(--muted); background: #121722; }
+.empty-boost-slot strong { color: var(--text); }
+.cards-warning { margin: 0; padding: 8px; border-radius: 8px; color: #ffd28a; background: rgba(255,184,76,.1); font-size: 12px; }
+.fp-breakdown { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: #0d1119; }
+.fp-breakdown > div { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.fp-breakdown-total { margin-top: 3px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 14px !important; }
+.boosted-stat { text-shadow: 0 0 10px currentColor; }
+.cards-selection-status { position: sticky; top: 82px; z-index: 3; padding: 11px 15px; border: 1px solid var(--accent); border-radius: 12px; color: var(--text); background: rgba(25,65,51,.96); text-align: center; font-weight: 800; }
+.cards-selection-status.is-error { border-color: var(--danger); background: rgba(80,28,33,.96); }
+.collection-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+.collection-tab { color: var(--muted); border: 1px solid var(--border); background: transparent; }
+.collection-tab.is-active { color: #07120d; border-color: var(--accent); background: var(--accent); }
+.collection-progress { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.collection-progress span { padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); font-size: 12px; }
+.collection-progress strong { color: var(--text); }
+.collection-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.collection-filters[hidden] { display: none !important; }
+.collection-filters label { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); font-size: 12px; text-transform: capitalize; }
+.collection-filters input { margin: 0; accent-color: var(--accent); }
+.collection-grid { display: grid; grid-template-columns: repeat(auto-fill, var(--wut-card-width)); gap: 12px; }
+.collection-grid[hidden] { display: none !important; }
+.collection-player, .collection-boost { border: 2px solid var(--rarity); border-radius: 14px; background: #111520; }
+.collection-player { position: relative; width: var(--wut-card-width); aspect-ratio: var(--wut-card-ratio); min-height: 0; padding: 0; border: 0; perspective: 900px; background: transparent; }
+.selectable-item { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+.selectable-item:hover { transform: translateY(-2px); }
+.selectable-item.is-selected { box-shadow: 0 0 0 3px var(--accent), 0 0 24px rgba(102,217,163,.45); }
+.collection-card-inner { position: absolute; inset: 0; transition: transform .55s; transform-style: preserve-3d; }
+.collection-player:hover .collection-card-inner, .collection-player:focus .collection-card-inner { transform: rotateY(180deg); }
+.collection-card-face { position: absolute; inset: 0; overflow: hidden; backface-visibility: hidden; }
+.collection-card-back { transform: rotateY(180deg); }
+.collection-player p, .collection-player strong { margin: 0; display: block; }
+.collection-player small { display: block; margin-top: 8px; color: var(--muted); }
+.collection-player.is-retired { opacity: .55; filter: grayscale(.7); }
+
+/* WUT card tuning guide:
+   - Overall card size: .cards-page --wut-card-width
+   - Front name/stats vertical fit: --wut-front-name-top and --wut-front-stat-top
+   - Top-left season/position badge: --wut-front-badge-top and --wut-front-badge-left
+   - Front logo size/spot: --wut-front-logo-width, --wut-front-logo-height, --wut-front-logo-right, --wut-front-logo-bottom
+   - Back tables: --wut-back-stats-top and --wut-back-stats-height
+   - Back team/status/logo block: --wut-back-player-top
+*/
+.wut-card-face {
+  --wut-front-name-top: 51%;
+  --wut-front-stat-top: 64.5%;
+  --wut-front-badge-top: 3.0%;
+  --wut-front-badge-left: 2.8%;
+  --wut-front-logo-width: 28%;
+  --wut-front-logo-height: 17%;
+  --wut-front-logo-right: 8.5%;
+  --wut-front-logo-bottom: 3.8%;
+  --wut-back-stats-top: 22.5%;
+  --wut-back-stats-height: 35%;
+  --wut-back-player-top: 59%;
+  position: absolute;
+  inset: 0;
+  color: #030303;
+  background:
+    radial-gradient(circle at 28% 18%, color-mix(in srgb, var(--rarity) 78%, #ffffff) 0 16%, transparent 35%),
+    linear-gradient(150deg, color-mix(in srgb, var(--rarity) 82%, #ffffff), color-mix(in srgb, var(--rarity) 64%, #1b2028));
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--rarity) 72%, #151922),
+    0 14px 28px rgba(0,0,0,.34),
+    inset 0 0 22px color-mix(in srgb, var(--rarity) 30%, transparent);
+  isolation: isolate;
+}
+.wut-card-face::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+  pointer-events: none;
+}
+.wut-card-front::before { background-image: url("/images/casino/WUT/CardFront.png"); }
+.wut-card-back::before { background-image: url("/images/casino/WUT/CardBack.png"); }
+.wut-front-copy {
+  position: absolute;
+  left: 13.5%;
+  right: 5%;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  font-weight: 900;
+  font-style: italic;
+  text-shadow: 0 1px 0 rgba(255,255,255,.24);
+}
+.wut-front-copy .player-card-name {
+  position: absolute;
+  top: var(--wut-front-name-top);
+  left: 0;
+  width: 82%;
+  max-width: none;
+  font-size: 19px;
+  font-style: normal;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  overflow-wrap: normal;
+}
+.wut-front-badge {
+  position: absolute;
+  top: var(--wut-front-badge-top);
+  left: var(--wut-front-badge-left);
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-width: 18%;
+  color: #030303;
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  text-shadow: 0 1px 0 rgba(255,255,255,.28);
+}
+.wut-front-badge span { font-size: 23px; }
+.wut-front-badge strong { font-size: 28px; }
+.wut-front-badge.is-position-only {
+  top: 10.5%;
+}
+.pack-card-content .wut-front-badge { position: absolute; }
+.wut-front-rule {
+  display: none;
+}
+.wut-front-stat {
+  position: absolute;
+  top: var(--wut-front-stat-top);
+  left: 0;
+  right: 0;
+  padding-left: 1%;
+  padding-right: 10%;
+  font-size: 15px;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+.wut-front-logo {
+  position: absolute;
+  right: var(--wut-front-logo-right);
+  bottom: var(--wut-front-logo-bottom);
+  z-index: 2;
+  display: block;
+  width: var(--wut-front-logo-width);
+  height: var(--wut-front-logo-height);
+  object-fit: contain;
+  padding: 0;
+  background: transparent;
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,.3));
+}
+.wut-back-header {
+  position: absolute;
+  top: 6.5%;
+  left: 7.5%;
+  right: 7.5%;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+  color: #030303;
+  font-weight: 900;
+  font-style: italic;
+}
+.wut-back-header strong {
+  width: 100%;
+  max-width: 100%;
+  font-size: 18px;
+  line-height: .98;
+  white-space: nowrap;
+  overflow: hidden;
+  overflow-wrap: normal;
+}
+.wut-back-header span {
+  color: var(--rarity);
+  font-size: 15px;
+  line-height: 1;
+  text-shadow:
+    0 1px 1px rgba(0,0,0,.72),
+    1px 0 1px rgba(0,0,0,.55),
+    0 0 6px color-mix(in srgb, var(--rarity) 45%, transparent);
+}
+.wut-back-header small {
+  display: inline;
+  margin: 0 0 0 4px;
+  color: var(--rarity);
+  font-style: normal;
+  letter-spacing: 1px;
+}
+.wut-stat-panel {
+  position: absolute;
+  top: var(--wut-back-stats-top);
+  left: 7.5%;
+  right: 7.5%;
+  height: var(--wut-back-stats-height);
+  z-index: 2;
+  display: grid;
+  gap: 5px;
+  padding: 0 2px;
+  color: #030303;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+.card-history-table th, .card-history-table td { padding: 4px 3px; text-align: center; font-size: 10px; }
+.wut-stat-panel .card-history-table th,
+.wut-stat-panel .card-history-table td {
+  padding: 3px 2px;
+  color: #030303;
+  border-bottom: 1px solid rgba(0,0,0,.32);
+  font-size: 9px;
+  font-weight: 900;
+}
+.wut-stat-panel .card-history-table th { color: #030303; }
+.fantasy-appearances { display: grid; gap: 4px; margin-top: 0; padding: 5px 0 0; border-top: 1px solid rgba(0,0,0,.34); color: #030303; font-size: 10px; }
+.fantasy-appearances strong { color: var(--text); }
+.wut-stat-panel .fantasy-appearances strong { color: #030303; font-size: 10px; text-align: center; }
+.wut-stat-panel.is-mythic {
+  height: auto;
+  overflow: visible;
+}
+.wut-stat-panel.is-mythic .fantasy-appearances {
+  padding-top: 0;
+  border-top: 0;
+}
+.wut-stat-panel .wut-mythic-status {
+  display: block;
+  margin-top: 5px;
+  color: #000;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  text-align: center;
+}
+.wut-back-flavor {
+  position: absolute;
+  top: 43%;
+  left: 10%;
+  right: 10%;
+  bottom: 7%;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+  color: #101010;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  line-height: 1.25;
+}
+.wut-back-flavor span { display: block; }
+.wut-back-flavor .flavor-align-left { text-align: left; }
+.wut-back-flavor .flavor-align-center { text-align: center; }
+.wut-back-flavor .flavor-align-right { text-align: right; }
+.wut-back-player {
+  position: absolute;
+  top: var(--wut-back-player-top);
+  left: 9%;
+  right: 9%;
+  bottom: 5.8%;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  justify-items: center;
+  gap: 5px;
+  text-align: center;
+  color: #030303;
+  font-weight: 900;
+  font-style: italic;
+}
+.wut-back-player strong {
+  max-width: 100%;
+  font-size: 18px;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+.wut-back-player small {
+  margin: 0;
+  color: #101010;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+.wut-back-player img {
+  display: block;
+  width: 96%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,.24));
+}
+.collection-boost { min-height: 155px; display: grid; place-items: center; align-content: center; text-align: center; text-transform: capitalize; color: var(--text); background: linear-gradient(145deg, color-mix(in srgb, var(--rarity) 18%, #171b24), #10131a); }
+.collection-boost[hidden], .arena-collection-card[hidden] { display: none !important; }
+.collection-boost > span { color: var(--rarity); }
+.collection-boost h3 { margin: 9px 0 5px; }
+.collection-boost strong { color: var(--rarity); font-size: 20px; }
+.boost-card-stars { color: var(--rarity); letter-spacing: 1px; }
+.boost-card-title { margin: 5px 0 2px; color: var(--text); font-size: 16px; text-transform: capitalize; }
+.boost-card-effect { color: var(--rarity); font-size: 15px; text-transform: none; }
+.assigned-boost .boost-card-title { margin: 0; font-size: 13px; }
+.assigned-boost .boost-card-effect { font-size: 12px; }
+.pack-card-content .boost-card-title { margin: 8px 0 3px; font-size: 18px; }
+.pack-card-content .boost-card-effect { color: var(--rarity); font-size: 20px; }
+.cards-review { border-color: var(--accent); }
+.cards-review-grid { display: flex; gap: 10px; flex-wrap: wrap; margin: 15px 0; }
+.cards-review-grid div { display: grid; gap: 3px; min-width: 110px; padding: 10px; border-radius: 10px; background: var(--card2); }
+.pack-shop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.pack-shop-column { display: grid; grid-template-columns: minmax(190px, .8fr) 1.2fr; gap: 12px 20px; align-items: center; }
+.pack-shop-column h2 { grid-column: 2; }
+.pack-art { grid-row: 1 / span 5; display: grid; place-items: center; align-content: center; min-height: 350px; border: 2px solid var(--border); border-radius: 18px; font-size: 22px; letter-spacing: .12em; background: linear-gradient(145deg, #253047, #111520); }
+.pack-art strong { font-size: 42px; }
+.boost-pack { background: linear-gradient(145deg, #66531c, #211a0a); }
+.pack-buy-button { width: 100%; display: flex; justify-content: space-between; text-transform: capitalize; }
+.pack-reveal { text-align: center; }
+.pack-reveal-grid { display: grid; grid-template-columns: repeat(3, minmax(190px, 260px)); justify-content: center; gap: 28px; margin: 25px 0; }
+.pack-card { position: relative; aspect-ratio: 804 / 1128; min-height: 340px; padding: 0; border: 0; border-radius: 6px; color: var(--text); background: transparent; }
+.pack-card-cover {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  border: 2px solid #3b4558;
+  border-radius: 6px;
+  color: var(--text);
+  background: #171d29;
+  box-shadow: 0 14px 28px rgba(0,0,0,.3), inset 0 0 0 1px rgba(255,255,255,.025);
+  transition: border-color .18s, background .18s, transform .18s;
+}
+.pack-card-cover strong {
+  font-size: 92px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+}
+.pack-card-content { position: absolute; inset: 0; height: 100%; display: grid; place-items: center; align-content: center; gap: 16px; text-transform: capitalize; }
+.pack-card-content:not(.wut-card-face) {
+  padding: 14px;
+  border: 2px solid var(--rarity);
+  border-radius: 16px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--rarity) 20%, #1c2230), #111520);
+}
+.pack-card-meta { width: 100%; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.pack-card-meta small { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.pack-card-content img { width: 150px; height: 150px; object-fit: contain; padding: 8px; border-radius: 10px; background: var(--team-bg, #0e1118); }
+.pack-card-content .wut-front-logo { width: 27%; height: 16%; padding: 0; border-radius: 0; background: transparent; }
+.pack-card-content .pack-player-details {
+  display: grid;
+  gap: 3px;
+  color: #030303;
+  text-transform: none;
+}
+.pack-card-content .pack-player-details strong,
+.pack-card-content .pack-player-details span {
+  color: #030303;
+  font-size: inherit;
+  line-height: 1.05;
+}
+.pack-card-content b { color: var(--rarity); font-size: 22px; }
+.pack-card.is-hidden { background: transparent; }
+.pack-card.is-hidden .pack-card-cover { display: grid; z-index: 3; }
+.pack-card.is-hidden:hover .pack-card-cover,
+.pack-card.is-hidden:focus-visible .pack-card-cover {
+  border-color: var(--accent);
+  background: #1b2331;
+  transform: translateY(-2px);
+}
+.pack-card.is-hidden .pack-card-content { display: none; }
+.pack-card:disabled {
+  cursor: default;
+  opacity: 1;
+  filter: none;
+}
+.pack-card.is-revealed-pop { animation: packRevealPop .72s ease-out; }
+
+@keyframes packRevealPop {
+  0% {
+    transform: scale(.97);
+    box-shadow: 0 0 0 rgba(0,0,0,0);
+  }
+  38% {
+    transform: scale(1.045);
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--rarity) 75%, transparent),
+      0 0 34px color-mix(in srgb, var(--rarity) 58%, transparent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(0,0,0,0);
+  }
+}
+
+.tier-common { --rarity: #9e9e9e; }
+.tier-uncommon { --rarity: #55dc7b; }
+.tier-rare { --rarity: #4b9cff; }
+.tier-epic { --rarity: #b768ff; }
+.tier-legendary { --rarity: #ffb52e; }
+.tier-mythic { --rarity: #ff3f46; }
+.boost-glow-common { box-shadow: 0 0 20px rgba(245,245,245,.28); }
+.boost-glow-uncommon { box-shadow: 0 0 22px rgba(85,220,123,.42); border-color: #55dc7b !important; }
+.boost-glow-rare { box-shadow: 0 0 22px rgba(75,156,255,.45); border-color: #4b9cff !important; }
+.boost-glow-epic { box-shadow: 0 0 24px rgba(183,104,255,.48); border-color: #b768ff !important; }
+.boost-glow-legendary { box-shadow: 0 0 26px rgba(255,181,46,.52); border-color: #ffb52e !important; }
+.boost-glow-mythic { box-shadow: 0 0 28px rgba(255,63,70,.58); border-color: #ff3f46 !important; }
+.tier-text-common { color: #f5f5f5; }
+.tier-text-uncommon { color: #55dc7b; }
+.tier-text-rare { color: #4b9cff; }
+.tier-text-epic { color: #b768ff; }
+.tier-text-legendary { color: #ffb52e; }
+.tier-text-mythic { color: #ff3f46; }
+.cards-admin-config { display: grid; grid-template-columns: repeat(2, minmax(190px, 1fr)); gap: 12px; margin: 18px 0; }
+.cards-admin-config fieldset { min-width: 0; display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 12px; }
+.cards-admin-config legend { color: var(--text); font-weight: 800; }
+.cards-rarity-fieldset { grid-column: 1 / -1; }
+.cards-odds-table { display: grid; grid-template-columns: 90px repeat(6, minmax(70px, 1fr)); gap: 7px; align-items: center; }
+.cards-odds-table strong, .cards-odds-table b { text-transform: capitalize; }
+.cards-odds-table input { min-width: 0; }
+.cards-admin-config > button { grid-column: 1 / -1; justify-self: start; }
+.cards-boost-config-grid { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 10px; }
+.cards-boost-config-grid label { display: grid; gap: 5px; }
+.cards-boost-config-grid .admin-action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.cards-boost-config-grid input { min-width: 0; }
+.cards-series-dialog { width: min(460px, calc(100% - 30px)); border: 1px solid var(--border); border-radius: 16px; color: var(--text); background: var(--card); }
+.cards-series-dialog::backdrop { background: rgba(0,0,0,.72); }
+.series-dialog-options { display: grid; gap: 9px; margin: 18px 0; }
+
+@media (max-width: 1200px) {
+  .cards-layout { grid-template-columns: 1fr; }
+  .cards-leaderboards { grid-template-columns: 1fr 1fr; }
+  .cards-admin-config { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 760px) {
+  .cards-title-actions, .cards-section-head { align-items: flex-start; flex-direction: column; }
+  .pack-shop-grid, .pack-reveal-grid, .cards-leaderboards { grid-template-columns: 1fr; }
+  .pack-shop-column { grid-template-columns: 1fr; }
+  .pack-shop-column h2, .pack-art { grid-column: auto; grid-row: auto; }
+  .cards-admin-config { grid-template-columns: 1fr; }
+  .cards-odds-table { grid-template-columns: 74px repeat(6, minmax(52px, 1fr)); font-size: 11px; }
+}
+
+/* WCPL Arena */
+.arena-page { display: grid; gap: 18px; }
+.arena-admin { padding: 0; border-style: dashed; }
+.arena-admin summary { cursor: pointer; padding: 18px 22px; list-style: none; }
+.arena-admin summary::-webkit-details-marker { display: none; }
+.arena-admin summary span { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.arena-admin summary small { color: var(--muted); font-weight: 500; }
+.arena-admin-body { padding: 0 22px 20px; }
+.arena-queue-card, .arena-ready-match, .arena-history-row, .arena-match-head, .arena-running-totals { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.arena-queue-card h2, .arena-match h2 { margin: 4px 0; }
+.arena-ready-list { border-color: var(--accent); }
+.arena-ready-match { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--card2); }
+.arena-match-list { display: grid; gap: 18px; }
+.arena-turn-status { display: grid; gap: 3px; min-width: 180px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 11px; text-align: right; }
+.arena-turn-status.is-yours { border-color: var(--accent); box-shadow: 0 0 18px rgba(102,217,163,.16); }
+.arena-turn-status span { color: var(--muted); font-size: 12px; }
+.arena-board { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
+.arena-lineup-column { display: grid; gap: 7px; }
+.arena-lineup-column h3 { margin-bottom: 3px; }
+.arena-placement { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 60px; padding: 9px 12px; border: 1px dashed var(--border); border-radius: 10px; }
+.arena-placement.is-committed { border-style: solid; background: var(--card2); }
+.arena-placement span { display: grid; gap: 2px; }
+.arena-placement small { color: var(--muted); }
+.arena-placement em { font-size: 12px; font-style: normal; font-weight: 800; }
+.arena-slot-label { color: var(--accent); font-weight: 900; }
+.arena-turn-form { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--accent); border-radius: 13px; background: rgba(102,217,163,.04); }
+.arena-turn-form fieldset { display: grid; grid-template-columns: .6fr 1.5fr 1fr; gap: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.arena-turn-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.arena-turn-form button { justify-self: start; }
+.arena-running-totals { position: sticky; top: 76px; z-index: 3; margin: 15px 0; padding: 12px 16px; border-radius: 10px; background: #17251f; box-shadow: 0 8px 20px rgba(0,0,0,.24); }
+.arena-reveal-grid { display: grid; gap: 13px; }
+.arena-reveal-slot { display: grid; grid-template-columns: 54px 1fr 1fr; gap: 12px; align-items: start; }
+.arena-reveal-slot > h3 { color: var(--accent); }
+.arena-reveal-player { padding: 13px; border: 1px solid var(--rarity); border-radius: 11px; background: var(--card2); }
+.arena-reveal-player h4 { margin: 0 0 10px; }
+.arena-reveal-player h4 small { color: var(--muted); font-weight: 500; }
+.arena-stat-reveal { display: grid; gap: 4px; }
+.arena-reveal-step { display: flex; justify-content: space-between; gap: 8px; padding: 5px 7px; border-radius: 6px; background: rgba(255,255,255,.035); animation: arenaStatIn .3s ease-out; }
+.arena-reveal-step[hidden], .arena-outcome[hidden] { display: none; }
+.arena-reveal-step.is-boost { font-weight: 900; box-shadow: inset 0 0 14px currentColor; }
+.arena-player-fp { display: block; margin-top: 9px; text-align: right; }
+.arena-player-fp[hidden] { display: none; }
+.arena-reveal-player details { margin-top: 10px; color: var(--muted); font-size: 12px; }
+.arena-reveal-player pre { max-height: 220px; overflow: auto; white-space: pre-wrap; font-size: 10px; }
+.arena-outcome { margin-top: 18px; padding: 20px; border: 1px solid var(--accent); border-radius: 12px; text-align: center; }
+.arena-history-row { padding: 11px 0; border-top: 1px solid var(--border); }
+.arena-history-row > span { display: grid; gap: 3px; }
+.arena-history-row small { color: var(--muted); }
+.arena-card-back-copy { position: absolute; z-index: 2; inset: 28% 10% 10%; display: grid; align-content: center; gap: 9px; color: #050505; text-align: center; font-weight: 900; }
+.arena-active-title { display: flex; align-items: center; gap: 14px; }
+.arena-active-actions { display: flex; align-items: center; gap: 10px; }
+.arena-match-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 13px; margin-top: 16px; }
+.arena-match-link { display: grid; gap: 10px; padding: 17px; border: 1px solid var(--border); border-radius: 13px; color: var(--text); text-decoration: none; background: var(--card2); transition: transform .16s, border-color .16s, box-shadow .16s; }
+.arena-match-link:hover { transform: translateY(-2px); border-color: var(--accent); }
+.arena-match-link.is-your-turn { border-color: var(--accent); box-shadow: 0 0 20px rgba(102,217,163,.16); }
+.arena-match-link.is-ready { border-color: #ffb52e; box-shadow: 0 0 20px rgba(255,181,46,.15); }
+.arena-match-link h3 { margin: 0; font-size: 22px; }
+.arena-match-number, .arena-match-link small { color: var(--muted); font-size: 12px; }
+.arena-match-progress { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); }
+.arena-match-progress strong { color: var(--text); }
+.arena-match-callout { color: var(--accent); }
+.arena-match-link.is-ready .arena-match-callout { color: #ffcf79; }
+.arena-page-nav { display: flex; gap: 8px; margin-bottom: 16px; }
+.arena-lineup-slot-name { display: block; color: var(--accent); font-size: 13px; font-weight: 900; text-align: center; }
+.arena-wut-card { position: relative; width: 100%; aspect-ratio: var(--wut-card-ratio); border-radius: 6px; perspective: 900px; }
+.arena-wut-card-inner { position: absolute; inset: 0; transition: transform .52s; transform-style: preserve-3d; }
+.arena-wut-card-face { position: absolute; inset: 0; overflow: hidden; backface-visibility: hidden; }
+.arena-wut-card-back { transform: rotateY(180deg); }
+.arena-wut-card.is-flipped .arena-wut-card-inner { transform: rotateY(180deg); }
+.arena-collection-card:hover .arena-wut-card-inner, .arena-collection-card:focus .arena-wut-card-inner { transform: rotateY(180deg); }
+.arena-staged-card .arena-wut-card:hover .arena-wut-card-inner { transform: rotateY(180deg); }
+.arena-collection-card.is-selected { box-shadow: 0 0 0 3px var(--accent), 0 0 24px rgba(102,217,163,.42); }
+.arena-collection-card.is-staged, .arena-boost-collection .is-staged { opacity: .42; pointer-events: none; }
+.arena-staged-card { width: 100%; }
+.arena-staged-card[hidden], .arena-match-collection [hidden] { display: none !important; }
+.arena-visual-lock-form { position: sticky; bottom: 12px; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 16px; padding: 13px 16px; border: 1px solid var(--accent); border-radius: 12px; background: rgba(18,29,25,.96); box-shadow: 0 10px 28px rgba(0,0,0,.34); }
+.arena-visual-lock-form p { margin: 3px 0 0; }
+.arena-match-collection { order: 1; }
+.arena-match-collection[hidden] { display: none !important; }
+.arena-opponent-board { order: 2; opacity: .94; }
+.arena-empty-opponent-slot, .arena-empty-opponent-boost { cursor: default; }
+.arena-boost-collection { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.arena-boost-collection .collection-boost { width: 100%; }
+.arena-boost-collection .is-unavailable { opacity: .45; filter: grayscale(.7); }
+.arena-history-eyebrow { margin-top: 18px; }
+.full-collection-filters { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(140px, .7fr)); gap: 12px; align-items: end; margin: 14px 0; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card2); }
+.full-collection-filters[hidden] { display: none; }
+.full-collection-filters fieldset { display: flex; flex-wrap: wrap; gap: 7px; min-width: 0; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; }
+.full-collection-filters legend { color: var(--muted); font-size: 12px; }
+.full-collection-filters fieldset label { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.full-collection-filters input[type="checkbox"] { width: auto; margin: 0; }
+.collection-result-count { margin: 8px 0 12px; }
+.collection-boost em { color: var(--muted); font-size: 11px; font-style: normal; }
+.arena-card-results { overflow: visible; }
+.arena-results-title { margin-bottom: 14px; text-align: center; }
+.arena-duel-scoreboard { position: sticky; top: 74px; z-index: 6; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 18px; margin: 0 -8px 18px; padding: 13px 20px; border: 1px solid var(--accent); border-radius: 13px; background: rgba(18,31,26,.97); box-shadow: 0 12px 28px rgba(0,0,0,.38); backdrop-filter: blur(8px); }
+.arena-duel-total { display: flex; align-items: center; min-width: 0; }
+.arena-duel-total.is-right { justify-content: end; text-align: right; }
+.arena-duel-total span { overflow: hidden; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.arena-duel-score-center { display: grid; justify-items: center; gap: 2px; min-width: 115px; }
+.arena-duel-score-center span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+.arena-duel-score-center strong { font-size: 23px; }
+.arena-duel-score-center b { color: var(--accent); }
+.arena-duel-reveal { display: grid; gap: 15px; }
+.arena-duel-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+.arena-duel-entry { --arena-reveal-card-width: 180px; display: grid; grid-template-columns: var(--arena-reveal-card-width) minmax(0, 1fr); gap: 13px; align-items: center; min-width: 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--rarity) 50%, var(--border)); border-radius: 13px; background: var(--card2); opacity: .62; transition: opacity .25s, box-shadow .25s, border-color .25s; }
+.arena-duel-entry.is-right { grid-template-columns: minmax(0, 1fr) var(--arena-reveal-card-width); }
+.arena-duel-entry.is-revealed { opacity: 1; border-color: var(--rarity); box-shadow: 0 0 22px color-mix(in srgb, var(--rarity) 18%, transparent); }
+.arena-duel-card { width: var(--arena-reveal-card-width); }
+.arena-duel-scoring { min-width: 0; }
+.arena-duel-scoring-head { display: grid; gap: 3px; margin-bottom: 9px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.arena-duel-scoring-head span { color: var(--accent); font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
+.arena-duel-entry.is-right .arena-duel-scoring-head { text-align: right; }
+.arena-duel-scoring .arena-reveal-step { padding: 5px 7px; font-size: 12px; }
+.arena-duel-scoring .arena-player-fp { color: var(--rarity); font-size: 17px; }
+.arena-duel-entry.is-left .arena-player-fp { text-align: right; }
+.arena-duel-entry.is-right .arena-player-fp { text-align: left; }
+.arena-duel-scoring details { margin-top: 9px; color: var(--muted); font-size: 11px; }
+.arena-duel-scoring pre { max-height: 180px; overflow: auto; white-space: pre-wrap; font-size: 9px; }
+.admin-bulk-save-bar { position: sticky; bottom: 0; display: flex; justify-content: flex-end; padding: 14px 0 2px; background: linear-gradient(transparent, var(--card) 22%); }
+.cards-scoring-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.cards-scoring-config-grid label { display: grid; gap: 6px; }
+.cards-save-pct-config { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr); gap: 8px 12px; align-items: center; }
+.cards-save-pct-config strong { color: var(--muted); font-size: 12px; }
+.admin-number-suffix { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 7px; }
+.horse-admin-config-form { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)) auto; align-items: end; gap: 12px; margin: 16px 0; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card2); }
+.horse-admin-config-form label { display: grid; gap: 6px; }
+@keyframes arenaStatIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 980px) {
+  .cards-boost-config-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+  .arena-turn-form fieldset { grid-template-columns: 1fr; }
+  .full-collection-filters { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+  .arena-duel-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .arena-queue-card, .arena-ready-match, .arena-match-head, .arena-admin summary span { align-items: flex-start; flex-direction: column; }
+  .arena-turn-status { width: 100%; text-align: left; }
+  .arena-board { grid-template-columns: 1fr; }
+  .arena-reveal-slot { grid-template-columns: 1fr; }
+  .arena-reveal-slot > h3 { margin-bottom: 0; }
+  .arena-history-row { align-items: flex-start; }
+  .arena-active-head, .arena-active-title, .arena-active-actions, .arena-visual-lock-form { align-items: flex-start; flex-direction: column; }
+  .full-collection-filters { grid-template-columns: 1fr; }
+  .horse-admin-config-form { grid-template-columns: 1fr; }
+  .arena-duel-scoreboard { top: 116px; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
+  .arena-duel-score-center { grid-column: 1 / -1; grid-row: 1; }
+  .arena-duel-total { grid-row: 2; }
+  .arena-duel-entry, .arena-duel-entry.is-right { --arena-reveal-card-width: 140px; grid-template-columns: var(--arena-reveal-card-width) minmax(0, 1fr); }
+  .arena-duel-entry.is-right .arena-duel-card { grid-column: 1; grid-row: 1; }
+  .arena-duel-entry.is-right .arena-duel-scoring { grid-column: 2; grid-row: 1; }
+}
+
 
 /* Extra-compact betting card layout */
 .compact-series {
@@ -446,6 +1088,80 @@ select {
 
 .admin-collapsible-body[hidden] {
   display: none !important;
+}
+.series-review-selector {
+  display: grid;
+  gap: 7px;
+  max-width: 620px;
+  margin: 16px 0;
+}
+.series-review-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.series-review-overview > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card2);
+}
+.series-review-overview strong {
+  font-size: 20px;
+}
+.series-review-list {
+  display: grid;
+  gap: 10px;
+}
+.series-review-market {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card2);
+}
+.series-review-market summary {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 15px;
+  cursor: pointer;
+}
+.series-review-market[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+.series-review-market-title,
+.series-review-market-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.series-review-market-totals {
+  justify-content: flex-end;
+  font-size: 13px;
+}
+.series-review-bets table {
+  margin: 0;
+}
+.series-review-empty {
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+@media (max-width: 800px) {
+  .series-review-overview {
+    grid-template-columns: 1fr 1fr;
+  }
+  .series-review-market summary {
+    grid-template-columns: 1fr;
+  }
+  .series-review-market-totals {
+    justify-content: flex-start;
+  }
 }
 .admin-action-row {
   display: flex;
@@ -1482,4 +2198,310 @@ a.matchup-result-badge:hover {
 
 .shot-doctor-status-row.is-timing {
   justify-content: center;
+}
+
+/* Nightly horse racing */
+.horse-racing-page {
+  --track-gold: #f4c96b;
+  --track-green: #224f3c;
+  --track-dirt: #8a5b3d;
+  display: grid;
+  gap: 18px;
+  max-width: 1450px;
+}
+.horse-race-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 160px;
+  border-color: rgba(244,201,107,.35);
+  background:
+    radial-gradient(circle at 82% 18%, rgba(244,201,107,.16), transparent 26%),
+    linear-gradient(135deg, #18271f, #171b24 62%);
+}
+.horse-race-hero::after {
+  content: "";
+  position: absolute;
+  right: -55px;
+  bottom: -85px;
+  width: 280px;
+  height: 210px;
+  opacity: .08;
+  background: url('/images/casino/Horses/horse.png') center / contain no-repeat;
+  transform: rotate(-5deg);
+  pointer-events: none;
+}
+.horse-race-hero > * { position: relative; z-index: 1; }
+.horse-race-hero h1 { max-width: 690px; margin-bottom: 8px; font-size: clamp(26px, 4vw, 42px); line-height: 1.03; }
+.horse-race-schedule { margin: 0; }
+.horse-race-clock-wrap { display: grid; justify-items: end; min-width: 210px; }
+.horse-race-status {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(10,12,16,.5);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.horse-race-status[data-status="betting"] { color: var(--accent); border-color: rgba(102,217,163,.45); }
+.horse-race-status[data-status="countdown"] { color: var(--track-gold); border-color: rgba(244,201,107,.45); }
+.horse-race-status[data-status="racing"] { color: #fff; border-color: #ff765f; background: rgba(255,91,67,.2); animation: horse-status-pulse 1s infinite alternate; }
+.horse-race-status[data-status="complete"] { color: var(--track-gold); border-color: rgba(244,201,107,.45); }
+.horse-race-clock { margin: 5px 0 0; color: #fff; font-size: clamp(36px, 6vw, 60px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; text-shadow: 0 0 24px rgba(244,201,107,.2); }
+.horse-race-clock-wrap small { color: var(--muted); }
+@keyframes horse-status-pulse { to { box-shadow: 0 0 15px rgba(255,91,67,.4); } }
+
+.horse-admin-controls { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px 20px; border-style: dashed; }
+.horse-admin-controls p { margin-bottom: 3px; }
+.horse-admin-controls > div:first-child { display: grid; gap: 3px; }
+.horse-admin-close { color: #211708; background: var(--track-gold); }
+.horse-admin-start { color: white; background: #e75d49; }
+.horse-admin-reset { color: #ffd0d0; border: 1px solid rgba(255,107,107,.45); background: transparent; }
+.horse-admin-controls .horse-inline-message { grid-column: 1 / -1; }
+
+.horse-race-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 18px; align-items: start; }
+.horse-race-main { min-width: 0; display: grid; gap: 18px; }
+.horse-track-card { overflow: hidden; padding: 0; }
+.horse-track-head, .horse-section-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.horse-track-head { padding: 20px 22px 15px; }
+.horse-track-head p, .horse-section-head p { margin-bottom: 5px; }
+.horse-track-head h2, .horse-section-head h2 { margin: 0; }
+.horse-track {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: auto;
+  scrollbar-color: rgba(244,201,107,.5) rgba(10,12,16,.35);
+  scrollbar-width: none;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255,255,255,.12);
+  border-bottom: 1px solid rgba(255,255,255,.12);
+  background:
+    linear-gradient(90deg, transparent 0 8%, rgba(255,255,255,.035) 8% 8.3%, transparent 8.3% 100%),
+    #734a32;
+  box-shadow: inset 0 12px 20px rgba(0,0,0,.2), inset 0 -12px 20px rgba(0,0,0,.18);
+}
+.horse-track::-webkit-scrollbar { display: none; }
+.horse-track-sky, .horse-lane { width: max(100%, 3000px); }
+.horse-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: .16;
+  background-image: repeating-linear-gradient(105deg, transparent 0 28px, rgba(255,255,255,.15) 29px 30px);
+  pointer-events: none;
+}
+.horse-track-sky { position: absolute; inset: 0 0 auto; height: 20px; background: linear-gradient(#376e54, #28553f); }
+.horse-track-sky span { position: absolute; bottom: 0; width: 52px; height: 14px; border-radius: 100% 100% 0 0; background: #173d2c; }
+.horse-track-sky span:nth-child(1) { left: 18%; }
+.horse-track-sky span:nth-child(2) { left: 48%; width: 80px; }
+.horse-track-sky span:nth-child(3) { right: 8%; width: 65px; }
+.horse-lane { position: relative; height: 88px; border-bottom: 1px dashed rgba(255,255,255,.26); }
+.horse-lane:last-child { border-bottom: 0; }
+.horse-lane-number {
+  position: absolute;
+  z-index: 2;
+  left: 8px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  margin-top: -14px;
+  border: 2px solid rgba(255,255,255,.7);
+  border-radius: 50%;
+  color: white;
+  background: #1b2a23;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 3px 10px rgba(0,0,0,.35);
+}
+.horse-runner { position: absolute; z-index: 3; left: 40px; top: 6px; width: 112px; will-change: transform; }
+.horse-runner img { display: block; width: 112px; height: 64px; object-fit: contain; filter: drop-shadow(0 5px 3px rgba(0,0,0,.45)); transform-origin: 50% 70%; }
+.horse-race-status[data-status="racing"] ~ * .horse-runner img,
+.horse-runner img { animation: horse-gallop .36s ease-in-out infinite alternate; animation-play-state: paused; }
+.horse-racing-page.is-racing .horse-runner img { animation-play-state: running; }
+.horse-runner-name {
+  position: absolute;
+  left: 7px;
+  bottom: -7px;
+  max-width: 104px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: #fff;
+  background: rgba(17,20,24,.78);
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.horse-career-tooltip {
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 12px;
+  width: 165px;
+  padding: 9px 11px;
+  border: 1px solid rgba(244,201,107,.45);
+  border-radius: 10px;
+  color: var(--text);
+  text-align: left;
+  background: rgba(13,17,22,.96);
+  box-shadow: 0 9px 24px rgba(0,0,0,.42);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 5px);
+  transition: opacity .16s, transform .16s;
+}
+.horse-career-tooltip > strong, .horse-career-tooltip > b { grid-column: 1 / -1; color: var(--track-gold); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+.horse-career-tooltip span { position: static; display: contents; padding: 0; color: var(--muted); background: none; font-size: 10px; }
+.horse-career-tooltip span b { color: var(--text); font-size: 11px; }
+.horse-runner .horse-career-tooltip { left: 108px; top: 0; bottom: auto; transform: translateX(5px); }
+.horse-runner:hover .horse-career-tooltip, .horse-pick:hover .horse-career-tooltip, .horse-pick:focus-within .horse-career-tooltip { opacity: 1; transform: translate(-50%, 0); }
+.horse-runner:hover .horse-career-tooltip { transform: translateX(0); }
+@keyframes horse-gallop { from { transform: translateY(1px) rotate(-1deg); } to { transform: translateY(-2px) rotate(1deg); } }
+.horse-finish-line {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 160px;
+  width: 14px;
+  height: 100%;
+  border-inline: 1px solid rgba(255,255,255,.75);
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #111 25%, transparent 25%, transparent 75%, #111 75%),
+    linear-gradient(45deg, #111 25%, transparent 25%, transparent 75%, #111 75%);
+  background-position: 0 0, 7px 7px;
+  background-size: 14px 14px;
+}
+.horse-place-badge {
+  position: absolute;
+  z-index: 5;
+  right: 6px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: 50%;
+  color: white;
+  font-size: 12px;
+  font-weight: 900;
+  opacity: 0;
+  transform: translateX(8px) scale(.75);
+}
+.horse-place-badge.is-visible { opacity: 1; transform: translateX(0) scale(1); animation: horse-place-pop .35s cubic-bezier(.2,1.6,.5,1); }
+.horse-place-badge.place-1 { color: #241b09; background: #f7d36e; box-shadow: 0 0 15px rgba(247,211,110,.6); }
+.horse-place-badge.place-2 { color: #17191d; background: #cdd3de; }
+.horse-place-badge.place-3, .horse-place-badge.place-4, .horse-place-badge.place-5 { background: rgba(19,24,31,.8); }
+@keyframes horse-place-pop { from { opacity: 0; transform: translateX(8px) scale(.6); } to { opacity: 1; transform: translateX(0) scale(1); } }
+.horse-track-message { padding: 12px 20px; color: var(--muted); text-align: center; font-size: 13px; font-style: italic; background: #11151c; }
+
+.horse-betting-card { display: grid; gap: 16px; }
+.horse-betting-card form { display: grid; gap: 15px; }
+.horse-pick-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
+.horse-pick { position: relative; display: grid; justify-items: center; gap: 5px; min-width: 0; padding: 10px 7px; border: 1px solid var(--border); border-radius: 13px; color: var(--text); text-align: center; background: #121720; cursor: pointer; transition: transform .15s, border-color .15s, background .15s; }
+.horse-pick:hover { transform: translateY(-2px); border-color: rgba(102,217,163,.55); }
+.horse-pick input { position: absolute; opacity: 0; pointer-events: none; }
+.horse-pick img { width: 82px; max-width: 100%; height: 50px; object-fit: contain; }
+.horse-pick strong { max-width: 100%; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.horse-pick-number { position: absolute; top: 7px; left: 7px; color: var(--track-gold); font-weight: 900; }
+.horse-pick.is-selected { border-color: var(--accent); background: rgba(102,217,163,.13); box-shadow: 0 0 0 2px rgba(102,217,163,.08); }
+.horse-pick.is-disabled { cursor: not-allowed; opacity: .65; }
+.horse-pick.is-disabled:hover { transform: none; border-color: var(--border); }
+.horse-wager-row { display: grid; grid-template-columns: minmax(190px, 270px) auto; align-items: end; gap: 12px; }
+.horse-wager-row label { gap: 7px; }
+.horse-stake-input { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 10px; background: #0f1320; }
+.horse-stake-input:focus-within { border-color: var(--accent); }
+.horse-stake-input input { min-width: 0; border: 0; background: transparent; }
+.horse-stake-input span { padding-right: 12px; color: var(--muted); font-size: 12px; }
+.horse-wager-row > button { min-height: 42px; }
+.horse-current-bet { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid rgba(102,217,163,.3); border-radius: 12px; background: rgba(102,217,163,.08); }
+.horse-inline-message { min-height: 18px; color: var(--muted); font-size: 13px; }
+.horse-inline-message.is-success { color: var(--accent); }
+.horse-inline-message.is-error { color: var(--danger); }
+
+.horse-results-grid { margin: 0; }
+.horse-results-list { display: grid; gap: 5px; margin: 14px 0 0; padding: 0; list-style: none; }
+.horse-results-list li { display: grid; grid-template-columns: 34px 1fr; align-items: center; min-height: 35px; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.horse-results-list li:first-child { color: var(--track-gold); }
+.horse-payout-card { display: grid; align-content: start; }
+.horse-payout-row { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.horse-payout-row strong { color: var(--accent); }
+.horse-user-result { margin-top: 15px; padding: 13px; border: 1px solid var(--border); border-radius: 12px; line-height: 1.45; }
+.horse-user-result.is-win { color: var(--accent); border-color: rgba(102,217,163,.45); background: rgba(102,217,163,.1); }
+.horse-user-result.is-loss { color: #ffc1c1; border-color: rgba(255,107,107,.4); background: rgba(255,107,107,.08); }
+
+.horse-chat-card { position: sticky; top: 90px; display: grid; grid-template-rows: auto minmax(300px, 56vh) auto auto; gap: 13px; padding: 17px; }
+.horse-chat-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.horse-chat-head p { margin-bottom: 3px; }
+.horse-chat-head h2 { margin: 0; }
+.horse-chat-live { padding: 4px 8px; border-radius: 999px; color: var(--muted); background: #11151d; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.horse-chat-live.is-live { color: var(--accent); background: rgba(102,217,163,.12); }
+.horse-chat-live.is-live::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 7px var(--accent); }
+.horse-chat-messages { overflow-y: auto; display: grid; align-content: start; gap: 9px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: #0f131a; scrollbar-color: #3d4658 transparent; }
+.horse-chat-messages > .muted { margin: auto; padding: 25px 10px; text-align: center; }
+.horse-chat-messages article { padding: 9px 10px; border-radius: 10px; background: #191e29; }
+.horse-chat-messages article div { display: flex; justify-content: space-between; gap: 8px; }
+.horse-chat-messages article strong { color: var(--track-gold); font-size: 12px; }
+.horse-chat-messages article time { color: #717b8e; font-size: 10px; }
+.horse-chat-messages article p { margin: 5px 0 0; color: var(--text); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+.horse-chat-form { display: grid; gap: 8px; }
+.horse-chat-form textarea { width: 100%; resize: none; border: 1px solid var(--border); border-radius: 10px; padding: 10px; color: var(--text); background: #0f1320; font: inherit; }
+.horse-chat-form textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.horse-chat-form > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.horse-chat-form small { color: var(--muted); }
+
+.horse-buy-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .65fr); align-items: end; gap: 24px; }
+.horse-buy-card h2 { margin: 4px 0 8px; }
+.horse-buy-card p { margin-bottom: 5px; }
+.horse-buy-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto; align-items: end; gap: 12px; }
+.horse-buy-form label { display: grid; gap: 6px; }
+.horse-owned-card { display: grid; gap: 16px; }
+.horse-owned-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.horse-owned-entry { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 13px; background: var(--card2); }
+.horse-owned-entry > div:first-child { display: grid; gap: 3px; }
+.horse-owned-entry > div:first-child strong { color: var(--track-gold); font-size: 19px; }
+.horse-owned-entry small { color: var(--muted); }
+.horse-owned-entry dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0; }
+.horse-owned-entry dl div { display: grid; gap: 3px; padding: 9px; border-radius: 9px; background: rgba(255,255,255,.035); }
+.horse-owned-entry dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.horse-owned-entry dd { margin: 0; font-weight: 900; }
+.horse-owned-entry form, .horse-owned-entry button { width: 100%; }
+
+@media (max-width: 980px) {
+  .horse-race-layout { grid-template-columns: 1fr; }
+  .horse-chat-card { position: static; grid-template-rows: auto 330px auto auto; }
+  .horse-buy-card { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .horse-race-hero { align-items: flex-start; flex-direction: column; }
+  .horse-race-clock-wrap { justify-items: start; min-width: 0; }
+  .horse-admin-controls { grid-template-columns: 1fr; }
+  .horse-admin-controls .horse-inline-message { grid-column: auto; }
+  .horse-pick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .horse-pick:last-child { grid-column: 1 / -1; }
+  .horse-wager-row { grid-template-columns: 1fr; }
+  .horse-wager-row > button { width: 100%; }
+  .horse-lane { height: 76px; }
+  .horse-runner { width: 88px; top: 4px; }
+  .horse-runner img { width: 88px; height: 55px; }
+  .horse-runner-name { bottom: -6px; max-width: 82px; font-size: 9px; }
+  .horse-finish-line { right: 110px; }
+  .horse-place-badge { right: 2px; }
+  .horse-buy-form { grid-template-columns: 1fr; }
+  .horse-buy-form button { width: 100%; }
+  .horse-owned-entry dl { grid-template-columns: repeat(2, 1fr); }
 }

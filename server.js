@@ -58,9 +58,55 @@ import {
   setCasinoLinkVisible,
   resetCasinoData,
   spinCasinoSlots,
+  getHorseRaceStateForUser,
+  placeOrUpdateHorseRaceBet,
+  buyHorse,
+  claimHorseOwnerWinnings,
+  saveHorseRacingConfig,
+  processCurrentHorseRace,
+  getHorseRaceChatState,
+  addHorseRaceChatMessage,
+  controlCurrentHorseRace,
   getShotDoctorStateForUser,
   startShotDoctorRun,
-  submitShotDoctorGuess
+  submitShotDoctorGuess,
+  getCardsConfig,
+  getCardsAdminState,
+  saveCardsConfig,
+  setCardsOpen,
+  setCardsLinkVisible,
+  setCardsAllowRetroactiveAssignment,
+  setCardsPositionOverride,
+  setCardsTierOverride,
+  setCardsPlayerOverrides,
+  saveCalculatedCardTiers,
+  getCardsOwnedState,
+  getCardsLineup,
+  getAllCardsLineupsForWeek,
+  setCardsLineupSlot,
+  resolveCardsLineupResult,
+  createCardsPackPurchase,
+  getPendingCardsPack,
+  claimCardsPack,
+  getWutMembershipState,
+  joinWut,
+  openWutStarterPack,
+  grantCardsTestItem,
+  getCardsWeekReviews,
+  acknowledgeCardsWeekReview,
+  finalizeCardsWeek,
+  getCardsLeaderboard,
+  resetCardsData,
+  getArenaStateForUser,
+  getArenaAdminState,
+  enterArenaQueue,
+  assignArenaMatchups,
+  commitArenaTurn,
+  autoAssignExpiredArenaTurns,
+  getArenaMatchesNeedingScoring,
+  completeArenaMatch,
+  completeArenaReveal,
+  claimArenaWinnings
 } from './db.js';
 import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries, getPlayers } from './services/wcplData.js';
 import { buildShotDoctorRunShots } from './services/shotDoctor.js';
@@ -68,12 +114,52 @@ import { buildWeekSettlementResults, evaluateBetAgainstResults } from './service
 import { buildSeriesOddsRecommendations } from './services/oddsRecommendations.js';
 import { buildWeeklyPropMarkets, propMarketsToBettingBoards } from './services/weeklyPropMarkets.js';
 import { buildLeaderPropRecommendations } from './services/leaderPropRecommendations.js';
+import {
+  BOOST_TYPES,
+  CARD_STARS,
+  CARD_COOLDOWNS,
+  DEFAULT_BOOST_EFFECTS,
+  applyChemistryBonus,
+  buildFantasyBreakdown,
+  buildCardPlayerCatalog,
+  generateBoostPack,
+  generatePlayerPack,
+  generateWutStarterPack,
+  chemistryMultiplierForCount,
+  getCardSeriesOptions,
+  scoreCardSeries,
+  scoreHistoricalCardSample
+} from './services/cards.js';
+import { HORSE_RACING_CONFIG } from './services/horseRacing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 3000);
 initDb();
+
+// Keep time-based race transitions moving even when nobody has the page open.
+// The interval is deliberately unref'd so it never prevents a clean shutdown.
+const horseRaceClock = setInterval(() => {
+  try {
+    processCurrentHorseRace(new Date());
+  } catch (err) {
+    console.error('Horse race clock failed:', err);
+  }
+}, 5000);
+horseRaceClock.unref?.();
+
+let arenaClockBusy = false;
+
+let horseChatCooldownCardDate = null;
+const horseChatCooldowns = new Map();
+
+function syncHorseChatCooldowns(cardDate) {
+  if (horseChatCooldownCardDate !== cardDate) {
+    horseChatCooldownCardDate = cardDate;
+    horseChatCooldowns.clear();
+  }
+}
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -97,6 +183,8 @@ app.use((req, res, next) => {
   res.locals.seasonId = adminSettings.seasonId;
   res.locals.casinoOpen = adminSettings.casinoOpen;
   res.locals.casinoLinkVisible = adminSettings.casinoLinkVisible;
+  res.locals.cardsOpen = adminSettings.cardsOpen;
+  res.locals.cardsLinkVisible = adminSettings.cardsLinkVisible;
   res.locals.maxBet = Number(process.env.MAX_BET || 250);
   res.locals.propMaxBet = Number(process.env.PROP_MAX_BET || 100);
   res.locals.goalTotalLine = Number(process.env.GOAL_TOTAL_LINE || 10.5);
@@ -110,6 +198,21 @@ function requireLogin(req, res, next) {
     return res.redirect('/login');
   }
   next();
+}
+
+function requireWutReady(req, res, next) {
+  const membership = getWutMembershipState(req.session.userId);
+  if (!membership.joined || !membership.starterOpened) {
+    req.session.flash = { type: 'error', message: 'Join WUT and open your starter pack first.' };
+    return res.redirect('/cards');
+  }
+  next();
+}
+
+function requireWutOpen(req, res, next) {
+  if (getAdminSettings().cardsOpen) return next();
+  req.session.flash = { type: 'error', message: 'WUT is currently closed.' };
+  return res.redirect('/cards');
 }
 
 function getBettingView(req) {
@@ -292,6 +395,124 @@ function groupSeriesByDivision(series, teamTotalMap, seriesResults = {}) {
   return [...groups.values()];
 }
 
+function betReviewGroupKey(bet) {
+  const kind = String(bet.bet_kind || 'series');
+  if (kind === 'prop') {
+    return [
+      kind,
+      bet.market_key || bet.prop_key || '',
+      bet.player_key || '',
+      bet.quantity ?? '',
+      bet.prop_line ?? ''
+    ].join('|');
+  }
+  return [
+    kind,
+    bet.market_key || bet.label || '',
+    bet.goal_total_side || '',
+    bet.goal_total_line ?? ''
+  ].join('|');
+}
+
+async function buildSeriesBetReview({ seasonId, week, series, bets }) {
+  const divisions = [...new Set(series.map(item => item.division_id))];
+  const playerRows = await Promise.all(divisions.map(async divisionId => ({
+    divisionId,
+    players: await getPlayers(divisionId, seasonId)
+  })));
+  const playerTeams = new Map();
+  for (const division of playerRows) {
+    for (const player of division.players) {
+      playerTeams.set(
+        `${division.divisionId}|${String(player.player_key || '').trim()}`,
+        String(player.team_id || '').trim()
+      );
+    }
+  }
+
+  const reviewBySeries = new Map(series.map(item => [item.series_key, {
+    ...item,
+    matchup_label: `${item.away_team_name} at ${item.home_team_name}`,
+    groupsByKey: new Map()
+  }]));
+
+  for (const bet of bets) {
+    const directSeriesKey = String(bet.series_key || '').trim();
+    let matchingSeries = directSeriesKey && reviewBySeries.has(directSeriesKey)
+      ? [reviewBySeries.get(directSeriesKey)]
+      : [];
+
+    if (!matchingSeries.length && bet.bet_kind === 'prop') {
+      const playerTeamId = String(
+        bet.player_team_id ||
+        playerTeams.get(`${bet.division_id}|${String(bet.player_key || '').trim()}`) ||
+        ''
+      ).trim();
+      if (playerTeamId) {
+        matchingSeries = series
+          .filter(item =>
+            item.division_id === bet.division_id &&
+            [item.home_team_id, item.away_team_id].includes(playerTeamId)
+          )
+          .map(item => reviewBySeries.get(item.series_key));
+      }
+    }
+
+    for (const review of matchingSeries) {
+      const key = betReviewGroupKey(bet);
+      if (!review.groupsByKey.has(key)) {
+        review.groupsByKey.set(key, {
+          key,
+          bet_kind: bet.bet_kind || 'series',
+          label: bet.label,
+          total_stake: 0,
+          total_payout: 0,
+          bet_count: 0,
+          settled_count: 0,
+          winning_count: 0,
+          open_count: 0,
+          bets: []
+        });
+      }
+      const group = review.groupsByKey.get(key);
+      group.total_stake += Number(bet.stake || 0);
+      group.bet_count += 1;
+      if (bet.status === 'settled') {
+        group.settled_count += 1;
+        group.total_payout += Number(bet.payout || 0);
+        if (bet.won) group.winning_count += 1;
+      } else {
+        group.open_count += 1;
+      }
+      group.bets.push(bet);
+    }
+  }
+
+  return [...reviewBySeries.values()].map(review => {
+    const groups = [...review.groupsByKey.values()]
+      .map(group => ({
+        ...group,
+        bets: group.bets.sort((a, b) =>
+          Number(b.stake || 0) - Number(a.stake || 0) ||
+          String(a.user_display_name || '').localeCompare(String(b.user_display_name || ''))
+        )
+      }))
+      .sort((a, b) =>
+        String(a.bet_kind).localeCompare(String(b.bet_kind)) ||
+        Number(b.total_stake) - Number(a.total_stake) ||
+        String(a.label).localeCompare(String(b.label))
+      );
+    return {
+      ...review,
+      groupsByKey: undefined,
+      groups,
+      bet_count: groups.reduce((sum, group) => sum + group.bet_count, 0),
+      total_stake: groups.reduce((sum, group) => sum + group.total_stake, 0),
+      total_payout: groups.reduce((sum, group) => sum + group.total_payout, 0)
+    };
+  });
+}
+
 
 async function settleCompletedBetsOrThrow({ week, seasonId }) {
   const weekResults = await buildWeekSettlementResults({ seasonId, week });
@@ -453,6 +674,117 @@ app.post('/casino/slots/spin', requireLogin, (req, res) => {
   }
 });
 
+app.get('/casino/horse-racing', requireLogin, (req, res) => {
+  const horseRaceState = getHorseRaceStateForUser(req.session.userId);
+  res.render('horse_racing', { horseRaceState });
+});
+
+app.get('/casino/horse-racing/state', requireLogin, (req, res) => {
+  res.json({ ok: true, horseRaceState: getHorseRaceStateForUser(req.session.userId) });
+});
+
+app.post('/casino/horse-racing/bet', requireLogin, (req, res) => {
+  const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
+  try {
+    const result = placeOrUpdateHorseRaceBet({
+      userId: req.session.userId,
+      horseId: req.body.horse_id,
+      stake: req.body.stake
+    });
+    const horseRaceState = getHorseRaceStateForUser(req.session.userId);
+    if (wantsJson) return res.json({ ok: true, result, horseRaceState });
+    req.session.flash = { type: 'success', message: `Race wager ${result.action}.` };
+    return res.redirect('/casino/horse-racing');
+  } catch (err) {
+    if (wantsJson) return res.status(400).json({ ok: false, error: err.message });
+    req.session.flash = { type: 'error', message: err.message };
+    return res.redirect('/casino/horse-racing');
+  }
+});
+
+app.post('/casino/horse-racing/horses/buy', requireLogin, (req, res) => {
+  try {
+    const horse = buyHorse({ userId: req.session.userId, name: req.body.name });
+    req.session.flash = { type: 'success', message: `${horse.name} has joined the horse pool.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/casino/horse-racing#horse-ownership');
+});
+
+app.post('/casino/horse-racing/horses/claim', requireLogin, (req, res) => {
+  try {
+    const result = claimHorseOwnerWinnings({ userId: req.session.userId, horseId: req.body.horse_id });
+    req.session.flash = { type: 'success', message: `${result.amount} Mushybux collected from ${result.horseName}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/casino/horse-racing#owned-horses');
+});
+
+app.get('/casino/horse-racing/chat', requireLogin, (req, res) => {
+  const now = new Date();
+  const chat = getHorseRaceChatState(now);
+  syncHorseChatCooldowns(chat.cardDate);
+  res.json({
+    ok: true,
+    open: chat.open,
+    closesAt: chat.closesAt,
+    resetAt: chat.resetAt,
+    messages: chat.messages
+  });
+});
+
+app.post('/casino/horse-racing/chat', requireLogin, (req, res) => {
+  const now = new Date();
+  const chat = getHorseRaceChatState(now);
+  syncHorseChatCooldowns(chat.cardDate);
+  if (!chat.open) {
+    return res.status(400).json({ ok: false, error: 'Race chat is currently closed.' });
+  }
+
+  const message = String(req.body.message || '').replace(/[\u0000-\u001F\u007F]/g, ' ').trim();
+  if (!message) return res.status(400).json({ ok: false, error: 'Enter a message first.' });
+  if (message.length > HORSE_RACING_CONFIG.chatMaxLength) {
+    return res.status(400).json({ ok: false, error: `Messages are limited to ${HORSE_RACING_CONFIG.chatMaxLength} characters.` });
+  }
+
+  const userId = Number(req.session.userId);
+  const lastSentAt = Number(horseChatCooldowns.get(userId) || 0);
+  if (now.getTime() - lastSentAt < HORSE_RACING_CONFIG.chatCooldownMs) {
+    return res.status(429).json({ ok: false, error: 'Easy, jockey. Wait two seconds between messages.' });
+  }
+
+  const user = getUserById(userId);
+  const chatMessage = addHorseRaceChatMessage({
+    userId,
+    username: user?.display_name || user?.username || `User ${userId}`,
+    message,
+    now
+  });
+  horseChatCooldowns.set(userId, now.getTime());
+  res.json({ ok: true, message: chatMessage });
+});
+
+app.post('/casino/horse-racing/admin/:action', requireAdmin, (req, res) => {
+  const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
+  try {
+    const result = controlCurrentHorseRace(req.params.action);
+    if (wantsJson) {
+      return res.json({
+        ok: true,
+        result,
+        horseRaceState: getHorseRaceStateForUser(req.session.userId)
+      });
+    }
+    req.session.flash = { type: 'success', message: `Horse race debug command: ${result.action}.` };
+  } catch (err) {
+    if (wantsJson) return res.status(400).json({ ok: false, error: err.message });
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  return res.redirect('/casino/horse-racing');
+});
+
 
 app.get('/casino/puckIQ', requireLogin, (req, res) => {
   const shotDoctorState = getShotDoctorStateForUser(req.session.userId);
@@ -504,6 +836,979 @@ app.post('/casino/puckIQ/guess', requireLogin, (req, res) => {
 app.get('/casino/shot-doctor', requireLogin, (req, res) => res.redirect(301, '/casino/puckIQ'));
 app.post('/casino/shot-doctor/start', requireLogin, (req, res) => res.redirect(307, '/casino/puckIQ/start'));
 app.post('/casino/shot-doctor/guess', requireLogin, (req, res) => res.redirect(307, '/casino/puckIQ/guess'));
+
+async function getCardsCatalog() {
+  const admin = getCardsAdminState();
+  return buildCardPlayerCatalog({
+    seasonId: getAdminSettings().seasonId,
+    positionOverrides: admin.positionOverrides,
+    tierOverrides: admin.tierOverrides,
+    scoringConfig: admin.config.scoring
+  });
+}
+
+function sortCardsCatalogForAdmin(catalog) {
+  const seasonRank = { S1: 1, S2: 2, S3: 3, MYTHIC: 4 };
+  const rarityRank = { mythic: 6, legendary: 5, epic: 4, rare: 3, uncommon: 2, common: 1 };
+  return [...catalog].sort((a, b) =>
+    (seasonRank[a.edition] || 99) - (seasonRank[b.edition] || 99) ||
+    (rarityRank[b.tier] || 0) - (rarityRank[a.tier] || 0) ||
+    (a.edition === 'S3' || b.edition === 'S3' ? String(a.divisionId || '').localeCompare(String(b.divisionId || '')) : 0) ||
+    String(a.name || '').localeCompare(String(b.name || ''))
+  );
+}
+
+function cardsCatalogMap(catalog) {
+  const map = new Map();
+  for (const player of catalog) {
+    map.set(player.catalogKey, player);
+    map.set(player.cardIdentity, player);
+    if (player.edition === 'S3') map.set(`${player.divisionId}|${player.playerKey}`, player);
+  }
+  return map;
+}
+
+function decorateOwnedCard(card, catalogByKey) {
+  const player = catalogByKey.get(card.card_identity) ||
+    catalogByKey.get(`${card.edition || 'S3'}|${card.division_id}|${card.player_key}`) ||
+    catalogByKey.get(`${card.division_id}|${card.player_key}`) ||
+    {};
+  const appearances = Object.values(card.fantasy_stats || {});
+  const statKeys = player.position === 'G'
+    ? ['saves', 'shotsAgainst', 'goalsAgainst', 'shutouts']
+    : ['goals', 'assists', 'shots', 'hits', 'blocks'];
+  const fantasyTotals = Object.fromEntries(statKeys.map(key => [
+    key,
+    appearances.reduce((sum, appearance) => sum + Number(appearance?.stats?.[key] || 0), 0)
+  ]));
+  if (player.position === 'G') {
+    fantasyTotals.savePct = fantasyTotals.shotsAgainst > 0
+      ? fantasyTotals.saves / fantasyTotals.shotsAgainst
+      : 0;
+  }
+  return {
+    ...card,
+    player,
+    fantasyAppearances: {
+      appearances: appearances.length,
+      gamesPlayed: appearances.reduce((sum, appearance) => sum + Number(appearance?.gamesPlayed || 0), 0),
+      fp: Number(card.total_fp_for_user || 0),
+      stats: fantasyTotals
+    }
+  };
+}
+
+function boostFitsPosition(boost, position) {
+  const goalieBoost = ['save', 'shutout'].includes(boost?.boost_type);
+  return position === 'G' ? goalieBoost : !goalieBoost;
+}
+
+function boostFitsCard(boost, card) {
+  if (!boost || !card) return true;
+  return boostFitsPosition(boost, card.player?.position);
+}
+
+async function seriesOptionsForCard({ settings, week, card }) {
+  if (!card?.player?.position) return [];
+  if (card.edition !== 'S3') {
+    return [{
+      seriesKey: '',
+      opponentTeamId: '',
+      opponentTeamName: 'Historical sample',
+      historical: true,
+      voided: false
+    }];
+  }
+  return getCardSeriesOptions({
+    seasonId: settings.seasonId,
+    week,
+    divisionId: card.player.divisionId,
+    teamId: card.player.teamId
+  });
+}
+
+async function scoreOwnedCardLineup({ settings, week, row, card, boost }) {
+  if (!card?.player?.position) return null;
+  const cardsConfig = getCardsConfig();
+  const scoringBoost = boost ? {
+    ...boost,
+    effect: cardsConfig.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect
+  } : null;
+  if (card.edition !== 'S3') {
+    return scoreHistoricalCardSample({
+      player: card.player,
+      position: card.player.position,
+      boost: scoringBoost,
+      scoringConfig: cardsConfig.scoring,
+      sampleMatchIds: row.sample_match_ids || [],
+      syntheticGames: row.synthetic_games || []
+    });
+  }
+  if (!row.selected_series_key) return null;
+  return scoreCardSeries({
+    seasonId: settings.seasonId,
+    divisionId: card.player.divisionId,
+    player: card.player,
+    position: card.player.position,
+    seriesKey: row.selected_series_key,
+    boost: scoringBoost,
+    scoringConfig: cardsConfig.scoring
+  });
+}
+
+function chemistryBonusForCard({ lineup, ownedCards, catalogByKey, card }) {
+  const teamId = String(card?.player?.teamId || '').trim();
+  if (!teamId) return { count: 0, multiplier: 1 };
+  let count = 0;
+  for (const row of lineup || []) {
+    if (!row.card_id) continue;
+    const ownedCard = ownedCards.find(item => Number(item.id) === Number(row.card_id));
+    const decorated = ownedCard ? decorateOwnedCard(ownedCard, catalogByKey) : null;
+    if (String(decorated?.player?.teamId || '').trim() === teamId) count += 1;
+  }
+  return { count, multiplier: chemistryMultiplierForCount(count, getCardsConfig().scoring) };
+}
+
+function scoreFromResolvedLineup({ row, card, boost }) {
+  if (!row?.finalized || !row.stats || !card?.player?.position) return null;
+  const scoringConfig = getCardsConfig().scoring;
+  const breakdown = buildFantasyBreakdown(row.stats, card.player.position, boost, {
+    unavailableStats: card.player.unavailableStats || [],
+    scoringConfig
+  });
+  const exact = breakdown.reduce((sum, item) => sum + Number(item.points || 0), 0);
+  const fantasyWeek = card.fantasy_stats?.[String(row.week)] || {};
+  return {
+    gamesPlayed: Number(fantasyWeek.gamesPlayed || row.sample_match_ids?.length || row.synthetic_games?.length || 0),
+    fp: Math.round(exact),
+    exactFp: exact,
+    stats: row.stats,
+    sampleMatchIds: row.sample_match_ids || fantasyWeek.sampleMatchIds || [],
+    syntheticGames: row.synthetic_games || fantasyWeek.syntheticGames || [],
+    breakdown
+  };
+}
+
+async function refreshResolvedChemistryForUserWeek(userId, week, catalog = null) {
+  const activeCatalog = catalog || await getCardsCatalog();
+  const catalogByKey = cardsCatalogMap(activeCatalog);
+  const owned = getCardsOwnedState(userId);
+  const lineup = getCardsLineup(userId, week);
+  let updated = 0;
+
+  for (const row of lineup) {
+    if (!row.card_id || !row.finalized || !row.resources_resolved) continue;
+    const ownedCard = owned.cards.find(item => Number(item.id) === Number(row.card_id));
+    const card = ownedCard ? decorateOwnedCard(ownedCard, catalogByKey) : null;
+    const boost = owned.boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const rawScore = scoreFromResolvedLineup({ row, card, boost });
+    if (!rawScore) continue;
+    const score = applyChemistryBonus(rawScore, chemistryBonusForCard({
+      lineup,
+      ownedCards: owned.cards,
+      catalogByKey,
+      card
+    }));
+    resolveCardsLineupResult({
+      userId,
+      week,
+      slot: row.slot,
+      seriesComplete: true,
+      ...score,
+      sampleMatchIds: score.sampleMatchIds || [],
+      syntheticGames: score.syntheticGames || [],
+      scoreBreakdown: score.breakdown || [],
+      allowResolvedUpdate: true
+    });
+    updated += 1;
+  }
+
+  return updated;
+}
+
+async function buildCardsHub(userId) {
+  const settings = getAdminSettings();
+  const week = Number(settings.currentWeek);
+  const catalog = await getCardsCatalog();
+  const catalogByKey = cardsCatalogMap(catalog);
+  const owned = getCardsOwnedState(userId);
+  let lineup = getCardsLineup(userId, week);
+
+  for (const row of lineup) {
+    if (!row.card_id || row.resources_resolved) continue;
+    const card = owned.cards.find(item => Number(item.id) === Number(row.card_id));
+    const decorated = card ? decorateOwnedCard(card, catalogByKey) : null;
+    const player = decorated?.player;
+    if (!card || !player) continue;
+    if (decorated.edition !== 'S3') continue;
+    if (decorated.edition === 'S3') {
+      if (!row.selected_series_key) continue;
+      const options = await getCardSeriesOptions({
+        seasonId: settings.seasonId,
+        week,
+        divisionId: player.divisionId,
+        teamId: player.teamId
+      });
+      const selected = options.find(option => option.seriesKey === row.selected_series_key);
+      if (selected?.voided) continue;
+    }
+    const boost = owned.boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const rawScore = await scoreOwnedCardLineup({ settings, week, row, card: decorated, boost });
+    if (!rawScore) continue;
+    const score = applyChemistryBonus(rawScore, chemistryBonusForCard({
+      lineup,
+      ownedCards: owned.cards,
+      catalogByKey,
+      card: decorated
+    }));
+    if (score.gamesPlayed > 0) {
+      resolveCardsLineupResult({
+        userId,
+        week,
+        slot: row.slot,
+        seriesComplete: false,
+        ...score,
+        sampleMatchIds: score.sampleMatchIds || [],
+        syntheticGames: score.syntheticGames || [],
+        scoreBreakdown: score.breakdown || []
+      });
+    }
+  }
+  await refreshResolvedChemistryForUserWeek(userId, week, catalog);
+
+  const refreshedOwned = getCardsOwnedState(userId);
+  lineup = getCardsLineup(userId, week);
+  const activeLineupCardIds = new Set(lineup.map(row => Number(row.card_id || 0)).filter(Boolean));
+  const rarityRank = { mythic: 6, legendary: 5, epic: 4, rare: 3, uncommon: 2, common: 1 };
+  const decoratedCards = await Promise.all(refreshedOwned.cards
+    .filter(card => !activeLineupCardIds.has(Number(card.id)))
+    .map(async card => {
+    const decorated = decorateOwnedCard(card, catalogByKey);
+    decorated.seriesOptions = await seriesOptionsForCard({ settings, week, card: decorated });
+    return decorated;
+  }));
+  const decoratedLineupCards = await Promise.all(refreshedOwned.cards
+    .filter(card => activeLineupCardIds.has(Number(card.id)))
+    .map(async card => {
+      const decorated = decorateOwnedCard(card, catalogByKey);
+      decorated.seriesOptions = await seriesOptionsForCard({ settings, week, card: decorated });
+      return decorated;
+    }));
+  const allDecoratedCards = [...decoratedCards, ...decoratedLineupCards];
+  decoratedCards.sort((a, b) =>
+    (rarityRank[b.player.tier] || 0) - (rarityRank[a.player.tier] || 0) ||
+    a.player.name.localeCompare(b.player.name)
+  );
+  refreshedOwned.boosts.sort((a, b) =>
+    (rarityRank[b.rarity] || 0) - (rarityRank[a.rarity] || 0) ||
+    a.boost_type.localeCompare(b.boost_type)
+  );
+  const decoratedLineup = await Promise.all(lineup.map(async row => {
+    const card = allDecoratedCards.find(item => Number(item.id) === Number(row.card_id)) || null;
+    const boost = refreshedOwned.boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const seriesOptions = card ? await seriesOptionsForCard({ settings, week, card }) : [];
+    const selected = seriesOptions.find(option => option.seriesKey === row.selected_series_key);
+    return {
+      ...row,
+      card,
+      boost,
+      seriesOptions,
+      selectedSeries: selected || null,
+      breakdown: row.finalized && row.score_breakdown?.length
+        ? row.score_breakdown
+        : row.finalized && row.stats && card
+        ? buildFantasyBreakdown(row.stats, card.player.position, boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: getCardsConfig().scoring })
+        : [],
+      warning: selected?.voided
+        ? 'This series is postponed or voided. The card and boost will not be consumed.'
+        : row.warning
+    };
+  }));
+  const reviews = getCardsWeekReviews(userId);
+  const rawPendingReview = reviews.find(review => !review.acknowledged) || null;
+  const pendingReview = rawPendingReview ? {
+    ...rawPendingReview,
+    lineup: rawPendingReview.lineup.map(row => ({
+      ...row,
+      card: allDecoratedCards.find(card => Number(card.id) === Number(row.cardId)) || null
+    }))
+  } : null;
+  const currentScores = new Map();
+  for (const row of getAllCardsLineupsForWeek(week)) {
+    currentScores.set(Number(row.user_id), (currentScores.get(Number(row.user_id)) || 0) + Number(row.fp || 0));
+  }
+  const users = getUserSummaries();
+  const weeklyLeaderboard = users.map(user => ({
+    display_name: user.display_name,
+    fp: currentScores.get(Number(user.id)) || 0
+  })).sort((a, b) => b.fp - a.fp || a.display_name.localeCompare(b.display_name));
+  const reviewedSeasonByUser = new Map(getCardsLeaderboard().map(row => [Number(row.user_id), Number(row.fp || 0)]));
+  const seasonLeaderboard = users.map(user => ({
+    display_name: user.display_name,
+    fp: (reviewedSeasonByUser.get(Number(user.id)) || 0) + (currentScores.get(Number(user.id)) || 0)
+  })).sort((a, b) => b.fp - a.fp || a.display_name.localeCompare(b.display_name));
+
+  return {
+    week,
+    balance: getUserById(userId)?.balance || 0,
+    catalog,
+    cards: decoratedCards,
+    boosts: refreshedOwned.boosts,
+    lineup: decoratedLineup,
+    pendingReview,
+    weeklyLeaderboard,
+    seasonLeaderboard,
+    collectionCounts: {
+      cards: decoratedCards.length,
+      boosts: refreshedOwned.boosts.filter(boost => !boost.consumed).length
+    },
+    collectionProgress: ['S1', 'S2', 'S3'].map(edition => {
+      const eligible = catalog.filter(player => player.edition === edition && player.cardType !== 'mythic');
+      const ownedKeys = new Set(allDecoratedCards
+        .filter(card => card.player.edition === edition && card.player.cardType !== 'mythic')
+        .map(card => card.player.catalogKey));
+      return { label: `Season ${edition.replace('S', '')}`, owned: ownedKeys.size, total: eligible.length };
+    })
+  };
+}
+
+async function finalizeCardsForWeek(week, nextWeek) {
+  const settings = getAdminSettings();
+  const catalog = await getCardsCatalog();
+  const catalogByKey = cardsCatalogMap(catalog);
+  const rows = getAllCardsLineupsForWeek(week);
+  const results = [];
+
+  for (const row of rows) {
+    if (!row.card_id) continue;
+    const owned = getCardsOwnedState(row.user_id);
+    const card = owned.cards.find(item => Number(item.id) === Number(row.card_id));
+    const decoratedCard = card ? decorateOwnedCard(card, catalogByKey) : null;
+    const player = decoratedCard?.player;
+    const boost = owned.boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const userLineup = rows.filter(item => Number(item.user_id) === Number(row.user_id));
+    let result = {
+      userId: row.user_id,
+      slot: row.slot,
+      gamesPlayed: 0,
+      fp: 0,
+      stats: {},
+      warning: row.selected_series_key ? 'No confirmed appearance.' : 'No series selected.'
+    };
+    if (decoratedCard && player) {
+      if (decoratedCard.edition === 'S3') {
+        if (!row.selected_series_key) {
+          results.push(result);
+          continue;
+        }
+        const options = await getCardSeriesOptions({
+          seasonId: settings.seasonId,
+          week,
+          divisionId: player.divisionId,
+          teamId: player.teamId
+        });
+        const selected = options.find(option => option.seriesKey === row.selected_series_key);
+        if (selected?.voided) {
+          result.warning = 'Series postponed or voided. Card and boost preserved.';
+        } else {
+          const rawScore = await scoreOwnedCardLineup({ settings, week, row, card: decoratedCard, boost });
+          const score = applyChemistryBonus(rawScore, chemistryBonusForCard({
+            lineup: userLineup,
+            ownedCards: owned.cards,
+            catalogByKey,
+            card: decoratedCard
+          }));
+          result = {
+            ...result,
+            ...score,
+            sampleMatchIds: score.sampleMatchIds || [],
+            syntheticGames: score.syntheticGames || [],
+            scoreBreakdown: score.breakdown || [],
+            warning: score.gamesPlayed ? '' : result.warning
+          };
+          if (score.gamesPlayed > 0) {
+            resolveCardsLineupResult({
+              userId: row.user_id,
+              week,
+              slot: row.slot,
+              seriesComplete: true,
+              ...score,
+              sampleMatchIds: score.sampleMatchIds || [],
+              syntheticGames: score.syntheticGames || [],
+              scoreBreakdown: score.breakdown || []
+            });
+          }
+        }
+      } else {
+        const rawScore = await scoreOwnedCardLineup({ settings, week, row, card: decoratedCard, boost });
+        const score = applyChemistryBonus(rawScore, chemistryBonusForCard({
+          lineup: userLineup,
+          ownedCards: owned.cards,
+          catalogByKey,
+          card: decoratedCard
+        }));
+        result = {
+          ...result,
+          ...score,
+          sampleMatchIds: score.sampleMatchIds || [],
+          syntheticGames: score.syntheticGames || [],
+          scoreBreakdown: score.breakdown || [],
+          warning: score.gamesPlayed ? '' : score.warning || result.warning
+        };
+        if (score.gamesPlayed > 0) {
+          resolveCardsLineupResult({
+            userId: row.user_id,
+            week,
+            slot: row.slot,
+            seriesComplete: true,
+            ...score,
+            sampleMatchIds: score.sampleMatchIds || [],
+            syntheticGames: score.syntheticGames || [],
+            scoreBreakdown: score.breakdown || []
+          });
+        }
+      }
+    }
+    results.push(result);
+  }
+  for (const userId of [...new Set(rows.map(row => Number(row.user_id)).filter(Number.isFinite))]) {
+    await refreshResolvedChemistryForUserWeek(userId, week, catalog);
+  }
+  const calculatedTiers = Object.fromEntries(catalog.map(player => [player.catalogKey, {
+    tier: player.tier,
+    position: player.position,
+    weightedFpPerGame: player.weightedFpPerGame,
+    updatedAt: new Date().toISOString()
+  }]));
+  return finalizeCardsWeek({ week, nextWeek, results, calculatedTiers });
+}
+
+async function refreshCardsAppearancesForWeek(week) {
+  const settings = getAdminSettings();
+  const catalog = await getCardsCatalog();
+  const catalogByKey = cardsCatalogMap(catalog);
+  let resolved = 0;
+  for (const row of getAllCardsLineupsForWeek(week)) {
+    if (!row.card_id || row.resources_resolved) continue;
+    const owned = getCardsOwnedState(row.user_id);
+    const card = owned.cards.find(item => Number(item.id) === Number(row.card_id));
+    const decoratedCard = card ? decorateOwnedCard(card, catalogByKey) : null;
+    const player = decoratedCard?.player;
+    if (!decoratedCard || !player) continue;
+    if (decoratedCard.edition !== 'S3') continue;
+    if (decoratedCard.edition === 'S3') {
+      if (!row.selected_series_key) continue;
+      const options = await getCardSeriesOptions({
+        seasonId: settings.seasonId,
+        week,
+        divisionId: player.divisionId,
+        teamId: player.teamId
+      });
+      if (options.find(option => option.seriesKey === row.selected_series_key)?.voided) continue;
+    }
+    const boost = owned.boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const rawScore = await scoreOwnedCardLineup({ settings, week, row, card: decoratedCard, boost });
+    const userLineup = getAllCardsLineupsForWeek(week).filter(item => Number(item.user_id) === Number(row.user_id));
+    const score = applyChemistryBonus(rawScore, chemistryBonusForCard({
+      lineup: userLineup,
+      ownedCards: owned.cards,
+      catalogByKey,
+      card: decoratedCard
+    }));
+    if (score.gamesPlayed > 0) {
+      resolveCardsLineupResult({
+        userId: row.user_id,
+        week,
+        slot: row.slot,
+        ...score,
+        sampleMatchIds: score.sampleMatchIds || [],
+        syntheticGames: score.syntheticGames || [],
+        scoreBreakdown: score.breakdown || []
+      });
+      resolved += 1;
+    }
+  }
+  return resolved;
+}
+
+function arenaCatalogByIdentity(catalog) {
+  const out = {};
+  for (const player of catalog || []) {
+    out[player.catalogKey] = player;
+    out[player.cardIdentity] = player;
+    out[`${player.edition || 'S3'}|${player.divisionId}|${player.playerKey}`] = player;
+    out[`${player.divisionId}|${player.playerKey}`] = player;
+  }
+  return out;
+}
+
+async function scorePendingArenaMatches(catalog = null) {
+  const activeCatalog = catalog || await getCardsCatalog();
+  const catalogByKey = cardsCatalogMap(activeCatalog);
+  const config = getCardsConfig();
+  let resolved = 0;
+  for (const match of getArenaMatchesNeedingScoring()) {
+    const rawScores = [];
+    for (const placement of match.placements) {
+      const owned = getCardsOwnedState(placement.user_id);
+      const rawCard = owned.cards.find(card => Number(card.id) === Number(placement.card_id));
+      const card = rawCard ? decorateOwnedCard(rawCard, catalogByKey) : null;
+      const rawBoost = owned.boosts.find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
+      const boost = rawBoost ? {
+        ...rawBoost,
+        effect: config.boostEffects?.[rawBoost.boost_type]?.[rawBoost.rarity] || rawBoost.effect || DEFAULT_BOOST_EFFECTS[rawBoost.boost_type]?.[rawBoost.rarity]
+      } : null;
+      if (!card?.player?.position) {
+        rawScores.push({ placement, card: null, result: { fp: 0, exactFp: 0, gamesPlayed: 0, stats: {}, sampleMatchIds: [], syntheticGames: [], breakdown: [] } });
+        continue;
+      }
+      const result = await scoreHistoricalCardSample({
+        player: card.player,
+        position: card.player.position,
+        boost,
+        scoringConfig: config.scoring
+      });
+      rawScores.push({ placement, card, result });
+    }
+    const scored = rawScores.map(entry => {
+      const teamId = String(entry.card?.player?.teamId || '').trim();
+      const teamCount = teamId
+        ? rawScores.filter(other =>
+          Number(other.placement.user_id) === Number(entry.placement.user_id) &&
+          String(other.card?.player?.teamId || '').trim() === teamId
+        ).length
+        : 0;
+      const result = applyChemistryBonus(entry.result, {
+        count: teamCount,
+        multiplier: chemistryMultiplierForCount(teamCount, config.scoring)
+      });
+      return {
+        ...entry.placement,
+        fp: Number(result.fp || 0),
+        exact_fp: Number(result.exactFp || result.fp || 0),
+        games_played: Number(result.gamesPlayed || 0),
+        stats: result.stats || {},
+        sample_match_ids: result.sampleMatchIds || [],
+        synthetic_games: result.syntheticGames || [],
+        score_breakdown: result.breakdown || [],
+        card_rarity: entry.card?.player?.tier || 'common'
+      };
+    });
+    completeArenaMatch(match.id, scored);
+    resolved += 1;
+  }
+  return resolved;
+}
+
+async function processArena(now = new Date()) {
+  if (arenaClockBusy) return;
+  arenaClockBusy = true;
+  try {
+    if (!getAdminSettings().cardsOpen) return getCardsCatalog();
+    const admin = getArenaAdminState(now);
+    if (admin.matchmakingDue) {
+      assignArenaMatchups(now);
+    }
+    const catalog = await getCardsCatalog();
+    const identityMap = arenaCatalogByIdentity(catalog);
+    autoAssignExpiredArenaTurns(identityMap, now);
+    await scorePendingArenaMatches(catalog);
+    return catalog;
+  } finally {
+    arenaClockBusy = false;
+  }
+}
+
+function decorateArenaMatch(match, allCards, boosts) {
+  return {
+    ...match,
+    placements: (match.placements || []).map(row => {
+      const card = allCards.find(item => Number(item.id) === Number(row.card_id)) || null;
+      const boost = boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+      const needsSavePctBreakdown = card?.player?.position === 'G' && row.stats && !(row.score_breakdown || []).some(item => item.type === 'save_pct');
+      return {
+        ...row,
+        card,
+        boost,
+        score_breakdown: needsSavePctBreakdown
+          ? buildFantasyBreakdown(row.stats, 'G', boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: getCardsConfig().scoring })
+          : row.score_breakdown
+      };
+    })
+  };
+}
+
+async function buildArenaCardsHub(userId, query = {}) {
+  const catalog = await processArena(new Date()) || await getCardsCatalog();
+  const catalogByKey = cardsCatalogMap(catalog);
+  const owned = getCardsOwnedState(userId);
+  const config = getCardsConfig();
+  const cards = owned.cards.map(card => decorateOwnedCard(card, catalogByKey));
+  const boosts = owned.boosts.map(boost => ({
+    ...boost,
+    effect: config.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect || DEFAULT_BOOST_EFFECTS[boost.boost_type]?.[boost.rarity]
+  }));
+  const arena = getArenaStateForUser(userId);
+  const allMatchCardIds = new Set([
+    ...arena.activeMatches, ...arena.readyMatches, ...arena.history
+  ].flatMap(match => match.placements.map(row => Number(row.card_id))));
+  const missingCards = [];
+  for (const matchUserId of [...new Set([...arena.activeMatches, ...arena.readyMatches, ...arena.history].flatMap(match => match.player_ids))]) {
+    if (Number(matchUserId) === Number(userId)) continue;
+    for (const card of getCardsOwnedState(matchUserId).cards) {
+      if (allMatchCardIds.has(Number(card.id))) missingCards.push(decorateOwnedCard(card, catalogByKey));
+    }
+  }
+  const matchCards = [...cards, ...missingCards];
+  const otherBoosts = [];
+  for (const matchUserId of [...new Set([...arena.activeMatches, ...arena.readyMatches, ...arena.history].flatMap(match => match.player_ids))]) {
+    if (Number(matchUserId) === Number(userId)) continue;
+    otherBoosts.push(...getCardsOwnedState(matchUserId).boosts);
+  }
+  const matchBoosts = [...boosts, ...otherBoosts];
+  arena.activeMatches = arena.activeMatches.map(match => decorateArenaMatch(match, matchCards, matchBoosts));
+  arena.readyMatches = arena.readyMatches.map(match => decorateArenaMatch(match, matchCards, matchBoosts));
+  arena.history = arena.history.map(match => decorateArenaMatch(match, matchCards, matchBoosts));
+  const lockedCardIds = new Set(arena.activeMatches.flatMap(match => match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id))));
+  const lockedBoostIds = new Set(arena.activeMatches.flatMap(match => match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.boost_id))));
+  cards.sort((a, b) => (CARD_STARS[b.player?.tier] || 0) - (CARD_STARS[a.player?.tier] || 0) || String(a.player?.name).localeCompare(String(b.player?.name)));
+  return {
+    arena,
+    wutMembership: getWutMembershipState(userId),
+    cards: cards.map(card => ({ ...card, arenaLocked: lockedCardIds.has(Number(card.id)) })),
+    boosts: boosts.filter(boost => !boost.consumed).map(boost => ({ ...boost, arenaLocked: lockedBoostIds.has(Number(boost.id)) })),
+    balance: getUserById(userId)?.balance || 0,
+    adminArena: getArenaAdminState(),
+    replayMatchId: Number(query.replay || query.reveal || 0) || null,
+    revealMatchId: Number(query.reveal || 0) || null,
+    cooldowns: CARD_COOLDOWNS,
+    collectionProgress: ['S1', 'S2', 'S3'].map(edition => {
+      const eligible = catalog.filter(player => player.edition === edition && player.cardType !== 'mythic');
+      const ownedKeys = new Set(cards.filter(card => card.player.edition === edition && card.player.cardType !== 'mythic').map(card => card.player.catalogKey));
+      return { label: `Season ${edition.replace('S', '')}`, owned: ownedKeys.size, total: eligible.length };
+    })
+  };
+}
+
+const arenaClock = setInterval(() => {
+  processArena(new Date()).catch(err => console.error('WUT clock failed:', err));
+}, 60000);
+arenaClock.unref?.();
+
+app.use('/cards', (req, res, next) => {
+  if (getAdminSettings().cardsOpen || (req.method === 'GET' && req.path === '/')) return next();
+  return requireWutOpen(req, res, next);
+});
+
+app.get('/cards', requireLogin, async (req, res, next) => {
+  try {
+    res.render('cards', await buildArenaCardsHub(req.session.userId, req.query));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/cards/wut/join', requireLogin, (req, res) => {
+  try {
+    joinWut(req.session.userId);
+    req.session.flash = { type: 'success', message: 'Welcome to WUT. Your starter pack is ready.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards');
+});
+
+app.post('/cards/wut/starter-pack', requireLogin, async (req, res) => {
+  try {
+    const membership = getWutMembershipState(req.session.userId);
+    if (!membership.joined) throw new Error('Join WUT before opening your starter pack.');
+    if (membership.starterOpened) throw new Error('Your WUT starter pack has already been opened.');
+    const items = generateWutStarterPack(await getCardsCatalog());
+    openWutStarterPack({ userId: req.session.userId, items });
+    req.session.flash = { type: 'success', message: 'Starter pack opened: 2 forwards, 2 defense, and 1 goalie added to your collection.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards');
+});
+
+app.get('/cards/collection', requireLogin, requireWutReady, async (req, res, next) => {
+  try {
+    res.render('cards_collection', await buildArenaCardsHub(req.session.userId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/cards/arena/matches/:matchId', requireLogin, requireWutReady, async (req, res, next) => {
+  try {
+    const payload = await buildArenaCardsHub(req.session.userId);
+    const matchId = Number(req.params.matchId);
+    const match = [...payload.arena.activeMatches, ...payload.arena.readyMatches, ...payload.arena.history]
+      .find(item => Number(item.id) === matchId);
+    if (!match) return res.status(404).send('WUT match not found.');
+    return res.render('cards_match', { ...payload, match });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.get('/cards/arena/history', requireLogin, requireWutReady, async (req, res, next) => {
+  try {
+    res.render('cards_history', await buildArenaCardsHub(req.session.userId, req.query));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/cards/arena/enter', requireLogin, requireWutReady, (req, res) => {
+  try {
+    enterArenaQueue(req.session.userId);
+    req.session.flash = { type: 'success', message: 'WUT entry confirmed. Matchmaking will assign your opponent.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards');
+});
+
+app.post('/cards/arena/matches/:matchId/turn', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const count = Math.max(0, Math.min(2, Number(req.body.count || 0)));
+    const placements = Array.from({ length: count }, (_, index) => ({
+      slot: req.body[`slot_${index}`],
+      cardId: req.body[`card_id_${index}`],
+      boostId: req.body[`boost_id_${index}`] || null
+    }));
+    const catalog = await getCardsCatalog();
+    commitArenaTurn({
+      userId: req.session.userId,
+      matchId: req.params.matchId,
+      placements,
+      catalogByIdentity: arenaCatalogByIdentity(catalog)
+    });
+    await scorePendingArenaMatches(catalog);
+    req.session.flash = { type: 'success', message: 'Turn locked in. Your opponent can now see the committed cards.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
+});
+
+app.post('/cards/arena/matches/:matchId/reveal', requireLogin, requireWutReady, (req, res) => {
+  try {
+    completeArenaReveal(req.session.userId, req.params.matchId);
+    return res.redirect(`/cards/arena/history?reveal=${encodeURIComponent(req.params.matchId)}#arena-results`);
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+    return res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
+  }
+});
+
+app.post('/cards/arena/matches/:matchId/claim', requireLogin, requireWutReady, (req, res) => {
+  try {
+    const result = claimArenaWinnings(req.session.userId, req.params.matchId);
+    req.session.flash = { type: 'success', message: `${result.prize} Mushybux collected.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/arena/history');
+});
+
+app.post('/cards/arena/admin/match', requireAdmin, async (req, res) => {
+  try {
+    const result = assignArenaMatchups();
+    await scorePendingArenaMatches();
+    req.session.flash = { type: 'success', message: `${result.createdMatchIds.length} WUT matchup${result.createdMatchIds.length === 1 ? '' : 's'} assigned.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards#arena-admin');
+});
+
+app.post('/cards/legacy-lineup/calculate', requireLogin, async (req, res) => {
+  try {
+    const settings = getAdminSettings();
+    const week = Number(settings.currentWeek);
+    const slot = String(req.body.slot || '').toUpperCase();
+    const row = getCardsLineup(req.session.userId, week).find(item => item.slot === slot);
+    if (!row?.card_id) throw new Error('Choose a historical card for this slot first.');
+    if (row.locked || row.resources_resolved) throw new Error('This lineup slot is already locked.');
+
+    const catalog = await getCardsCatalog();
+    const catalogByKey = cardsCatalogMap(catalog);
+    const owned = getCardsOwnedState(req.session.userId);
+    const ownedCard = owned.cards.find(item => Number(item.id) === Number(row.card_id));
+    const card = ownedCard ? decorateOwnedCard(ownedCard, catalogByKey) : null;
+    if (!card?.player?.position) throw new Error('Card could not be resolved.');
+    if (card.edition === 'S3') {
+      throw new Error('Only historical cards can be manually calculated.');
+    }
+
+    const boost = owned.boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const rawScore = await scoreOwnedCardLineup({ settings, week, row, card, boost });
+    if (!rawScore) throw new Error('This historical card could not be calculated.');
+    const score = applyChemistryBonus(rawScore, chemistryBonusForCard({
+      lineup: getCardsLineup(req.session.userId, week),
+      ownedCards: owned.cards,
+      catalogByKey,
+      card
+    }));
+    const resolved = resolveCardsLineupResult({
+      userId: req.session.userId,
+      week,
+      slot,
+      seriesComplete: true,
+      ...score,
+      sampleMatchIds: score.sampleMatchIds || [],
+      syntheticGames: score.syntheticGames || [],
+      scoreBreakdown: score.breakdown || []
+    });
+
+    if (!resolved?.finalized) {
+      throw new Error(score.warning || 'This historical card could not be calculated.');
+    }
+    await refreshResolvedChemistryForUserWeek(req.session.userId, week, catalog);
+    req.session.flash = { type: 'success', message: `${card.player.name} locked and calculated for ${slot}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards');
+});
+
+app.post('/cards/legacy-lineup', requireLogin, async (req, res) => {
+  try {
+    const settings = getAdminSettings();
+    const catalog = await getCardsCatalog();
+    const catalogByKey = cardsCatalogMap(catalog);
+    const owned = getCardsOwnedState(req.session.userId);
+    const card = owned.cards.find(item => Number(item.id) === Number(req.body.card_id)) || null;
+    const decoratedCard = card ? decorateOwnedCard(card, catalogByKey) : null;
+    const player = decoratedCard?.player || null;
+    const slot = String(req.body.slot || '').toUpperCase();
+    if (card && (!player || (slot === 'G' ? player.position !== 'G' : player.position !== slot[0]))) {
+      throw new Error('That player is not eligible for this lineup slot.');
+    }
+    const boost = owned.boosts.find(item => Number(item.id) === Number(req.body.boost_id)) || null;
+    const targetPosition = player?.position || (slot === 'G' ? 'G' : slot[0]);
+    if (boost && !boostFitsPosition(boost, targetPosition)) {
+      throw new Error('That boost cannot be used by this position.');
+    }
+    let seriesKey = String(req.body.selected_series_key || '');
+    if (player && decoratedCard.edition === 'S3') {
+      const options = await getCardSeriesOptions({
+        seasonId: settings.seasonId,
+        week: settings.currentWeek,
+        divisionId: player.divisionId,
+        teamId: player.teamId
+      });
+      if (!seriesKey && options.length === 1) seriesKey = options[0].seriesKey;
+      if (!seriesKey) throw new Error('Choose which series this card will score in.');
+      if (!options.some(option => option.seriesKey === seriesKey)) throw new Error('Invalid series selection.');
+      const existing = getCardsLineup(req.session.userId, settings.currentWeek)
+        .find(row => row.slot === slot);
+      const changedSelection =
+        Number(existing?.card_id || 0) !== Number(card.id) ||
+        String(existing?.selected_series_key || '') !== seriesKey;
+      if (changedSelection && !settings.cardsAllowRetroactiveAssignment) {
+        const alreadyStarted = await scoreCardSeries({
+          seasonId: settings.seasonId,
+          divisionId: player.divisionId,
+          player,
+          position: player.position,
+          seriesKey
+        });
+        if (alreadyStarted.gamesPlayed > 0) {
+          throw new Error('That player has already appeared in this series and can no longer be added retroactively.');
+        }
+      }
+    } else if (player) {
+      seriesKey = '';
+    }
+    setCardsLineupSlot({
+      userId: req.session.userId,
+      week: settings.currentWeek,
+      slot,
+      cardId: card?.id || null,
+      boostId: boost?.id || null,
+      selectedSeriesKey: seriesKey
+    });
+    await refreshResolvedChemistryForUserWeek(req.session.userId, settings.currentWeek, catalog);
+    req.session.flash = { type: 'success', message: card ? `${player.name} added to ${slot}.` : `${slot} cleared.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards');
+});
+
+app.post('/cards/legacy-week-review/ack', requireLogin, (req, res) => {
+  try {
+    acknowledgeCardsWeekReview(req.session.userId, req.body.week);
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards');
+});
+
+app.get('/cards/store', requireLogin, requireWutReady, async (req, res, next) => {
+  try {
+    const catalog = await getCardsCatalog();
+    const pendingPack = getPendingCardsPack(req.session.userId);
+    const catalogByKey = cardsCatalogMap(catalog);
+    const decoratedPack = pendingPack ? {
+      ...pendingPack,
+      items: pendingPack.items.map(item => ({
+        ...item,
+        player: item.itemType === 'player'
+          ? catalogByKey.get(item.cardIdentity || item.catalogKey) || catalogByKey.get(`${item.edition || 'S3'}|${item.divisionId}|${item.playerKey}`)
+          : null
+      }))
+    } : null;
+    res.render('cards_store', {
+      config: getCardsConfig(),
+      balance: getUserById(req.session.userId)?.balance || 0,
+      pendingPack: decoratedPack
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/cards/store/buy', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const packKind = String(req.body.pack_kind || '');
+    const packType = String(req.body.pack_type || '');
+    if (!['player', 'boost'].includes(packKind) || !['standard', 'premium', 'prestige'].includes(packType)) {
+      throw new Error('Invalid pack selection.');
+    }
+    const config = getCardsConfig();
+    const catalog = await getCardsCatalog();
+    const items = packKind === 'player'
+      ? generatePlayerPack({ packType, catalog, config })
+      : generateBoostPack({ packType, config });
+    const prices = packKind === 'player' ? config.playerPackPrices : config.boostPackPrices;
+    createCardsPackPurchase({
+      userId: req.session.userId,
+      week: getAdminSettings().currentWeek,
+      packKind,
+      packType,
+      price: prices[packType],
+      items
+    });
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/store');
+});
+
+app.post('/cards/store/claim', requireLogin, requireWutReady, (req, res) => {
+  try {
+    claimCardsPack(req.session.userId, req.body.purchase_id);
+    req.session.flash = { type: 'success', message: 'Pack added to your collection.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/store');
+});
 
 app.get('/betting', requireLogin, async (req, res, next) => {
   try {
@@ -760,14 +2065,23 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     const oddsWeekMode = String(req.query.odds_week || '') === 'current' ? 'current' : 'next';
     const oddsWeek = oddsWeekMode === 'current' ? currentWeek : nextWeek;
     const currentWeekBets = getAdminBetsForWeek(currentWeek);
+    const reviewableWeekBets = getAdminBetsForWeek(currentWeek, ['open', 'settled']);
     const nextWeekBets = getAdminBetsForWeek(nextWeek);
     const users = getUserSummaries();
     const seasons = await getAvailableSeasons();
     const reviewedOdds = getOddsAdjustmentsForWeek(oddsWeek);
     const currentWeekSeries = await getUpcomingSeries(currentWeek, settings.seasonId);
+    const seriesBetReview = await buildSeriesBetReview({
+      seasonId: settings.seasonId,
+      week: currentWeek,
+      series: currentWeekSeries,
+      bets: reviewableWeekBets
+    });
     const voidRefunds = getVoidRefundsForWeek(currentWeek);
     const backupInfo = getBackupInfo();
     const casinoSummary = getCasinoSummary();
+    const cardsAdmin = getCardsAdminState();
+    const cardsCatalog = sortCardsCatalogForAdmin(await getCardsCatalog());
     let settlementPreview = null;
     let seriesOddsRecommendations = null;
     let propOddsRecommendations = [];
@@ -878,6 +2192,7 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       openWeek: currentWeek,
       currentWeekBets,
       currentWeekSeries,
+      seriesBetReview,
       voidRefunds,
       nextWeekBets,
       openWeekBets: nextWeekBets,
@@ -888,7 +2203,13 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       propOddsRecommendations,
       leaderPropRecommendations,
       backupInfo,
-      casinoSummary
+      casinoSummary,
+      cardsAdmin,
+      cardsCatalog,
+      cardStars: CARD_STARS,
+      cardCooldowns: CARD_COOLDOWNS,
+      boostEffects: cardsAdmin.config.boostEffects,
+      boostTypes: BOOST_TYPES
     });
   } catch (err) {
     next(err);
@@ -930,6 +2251,21 @@ app.post('/admin/casino/close', requireAdmin, (req, res) => {
   res.redirect('/admin#casino-controls');
 });
 
+app.post('/admin/casino/horse-racing-config', requireAdmin, (req, res) => {
+  try {
+    saveHorseRacingConfig({
+      maxBet: req.body.max_bet,
+      horsePurchasePrice: req.body.horse_purchase_price,
+      ownerBetSharePercent: req.body.owner_bet_share_percent,
+      ownerWinBonus: req.body.owner_win_bonus
+    });
+    req.session.flash = { type: 'success', message: 'Horse racing settings saved.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#casino-controls');
+});
+
 app.post('/admin/casino/show-link', requireAdmin, (req, res) => {
   setCasinoLinkVisible(true);
   req.session.flash = { type: 'success', message: 'Casino navigation link is now visible.' };
@@ -953,6 +2289,151 @@ app.post('/admin/casino/reset', requireAdmin, (req, res) => {
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/admin#casino-controls');
+});
+
+app.post('/admin/cards/show-link', requireAdmin, (req, res) => {
+  setCardsLinkVisible(true);
+  req.session.flash = { type: 'success', message: 'Cards navigation link is now visible.' };
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/open', requireAdmin, (req, res) => {
+  setCardsOpen(true);
+  req.session.flash = { type: 'success', message: 'WUT opened. All WUT features are available again.' };
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/close', requireAdmin, (req, res) => {
+  setCardsOpen(false);
+  req.session.flash = { type: 'success', message: 'WUT closed. All WUT activity and hourly matchmaking are paused.' };
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/hide-link', requireAdmin, (req, res) => {
+  setCardsLinkVisible(false);
+  req.session.flash = { type: 'success', message: 'Cards navigation link is now hidden.' };
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/retroactive-assignment', requireAdmin, (req, res) => {
+  const allowed = String(req.body.allowed || '') === 'true';
+  setCardsAllowRetroactiveAssignment(allowed);
+  req.session.flash = {
+    type: 'success',
+    message: allowed
+      ? 'Testing override enabled: players may be assigned after their series has started.'
+      : 'Testing override disabled: retroactive Cards assignments are blocked.'
+  };
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/config', requireAdmin, (req, res) => {
+  try {
+    saveCardsConfig(req.body);
+    req.session.flash = { type: 'success', message: 'Cards economy and scoring settings saved.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/position', requireAdmin, (req, res) => {
+  try {
+    setCardsPositionOverride(req.body.catalog_key, req.body.position);
+    req.session.flash = { type: 'success', message: 'Card position override saved.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-player-pools');
+});
+
+app.post('/admin/cards/tier', requireAdmin, (req, res) => {
+  try {
+    setCardsTierOverride(req.body.catalog_key, req.body.tier);
+    req.session.flash = { type: 'success', message: 'Card tier override saved.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-player-pools');
+});
+
+app.post('/admin/cards/player-overrides', requireAdmin, (req, res) => {
+  try {
+    const result = setCardsPlayerOverrides({ positions: req.body.positions, tiers: req.body.tiers });
+    req.session.flash = {
+      type: 'success',
+      message: `Saved ${Object.keys(result.positions).length} position and ${Object.keys(result.tiers).length} rarity override(s).`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-player-pools');
+});
+
+app.post('/admin/cards/recalculate', requireAdmin, async (req, res) => {
+  try {
+    const catalog = await getCardsCatalog();
+    saveCalculatedCardTiers(catalog);
+    req.session.flash = { type: 'success', message: `Recalculated ${catalog.length} card player tiers.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-player-pools');
+});
+
+app.post('/admin/cards/grant', requireAdmin, async (req, res) => {
+  try {
+    const catalog = await getCardsCatalog();
+    const itemType = String(req.body.item_type || 'player');
+    let item;
+    if (itemType === 'boost') {
+      const rarity = String(req.body.rarity || 'common');
+      const boostType = String(req.body.boost_type || 'goal');
+      item = {
+        itemType: 'boost',
+        boostType,
+        rarity,
+        effect: getCardsConfig().boostEffects?.[boostType]?.[rarity] || DEFAULT_BOOST_EFFECTS[boostType]?.[rarity]
+      };
+    } else {
+      const player = catalog.find(entry => entry.catalogKey === req.body.catalog_key);
+      if (!player) throw new Error('Choose a player.');
+      item = {
+        itemType: 'player',
+        cardIdentity: player.cardIdentity || player.catalogKey,
+        catalogKey: player.catalogKey,
+        cardType: player.cardType || 'player',
+        edition: player.edition || 'S3',
+        sourceSeason: player.sourceSeason || player.edition || 'S3',
+        sourceStage: player.sourceStage || 'reg',
+        sourceTeamId: player.sourceTeamId || player.teamId,
+        sourcePlayerKey: player.sourcePlayerKey || player.playerKey,
+        sourceSteamId: player.sourceSteamId || player.steamId,
+        displayName: player.displayName || player.name,
+        divisionId: player.divisionId,
+        playerKey: player.playerKey,
+        rolledTier: player.tier
+      };
+    }
+    grantCardsTestItem({ userId: req.body.user_id, item });
+    req.session.flash = { type: 'success', message: 'Test Cards item granted.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/reset', requireAdmin, (req, res) => {
+  try {
+    const result = resetCardsData();
+    req.session.flash = {
+      type: 'success',
+      message: `Cards data reset. Restored ${result.usersRestored} user balance(s).`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-controls');
 });
 
 app.post('/admin/season', requireAdmin, (req, res) => {
@@ -1124,7 +2605,7 @@ app.post('/admin/advance-week', requireAdmin, async (req, res) => {
     const allowance = applyWeeklyAllowance(after.currentWeek);
     req.session.flash = {
       type: 'success',
-      message: `Advanced to Week ${after.currentWeek}. Betting is open and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.${retiredProps.count ? ` Voided ${retiredProps.count} retired hat-trick bet(s) and refunded ${retiredProps.refunded} Mushybux.` : ''}`
+      message: `Advanced to Week ${after.currentWeek}. Betting is open, and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.${retiredProps.count ? ` Voided ${retiredProps.count} retired hat-trick bet(s) and refunded ${retiredProps.refunded} Mushybux.` : ''}`
     };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };

@@ -72,3 +72,26 @@ DIVISIONS=D1,D2
 The betting app only reads WCPL CSV data. It does not write to the main WCPL repo.
 
 Recommended Railway setting: keep the app at one instance/replica while using JSON storage.
+
+## WUT configuration
+
+WUT defaults can be changed with environment variables:
+
+```env
+WUT_JOIN_FEE=100
+ARENA_TIME_ZONE=America/Los_Angeles
+ARENA_MAX_ACTIVE_MATCHES=3
+ARENA_TURN_HOURS=24
+```
+
+Entering the WUT matchmaking queue is free and each match awards 50 Mushybux to the winner. First-time membership costs 100 Mushybux by default and can be changed with `WUT_JOIN_FEE`. Matchmaking runs at the top of every hour; unmatched players remain in the queue for the next run.
+
+Flat boost values are editable in the existing Cards section of the admin page. Admins also get a collapsed testing panel directly on the WUT page for running matchmaking immediately.
+
+S3 player cards remain in the catalog but do not appear in starter or shop packs until the player has recorded at least 6 GP. Existing S1/S2 eligibility and mythic-card availability are unchanged.
+
+Base fantasy-stat values, Save% thresholds and multipliers, and same-team chemistry percentages are editable in the Cards section of the admin panel. Chemistry is applied to each matching teammate after stat and boost scoring.
+
+Horse names, ownership, career statistics, claimable owner rewards, and race economy settings are persisted in the main JSON database under `casino.horseRacing`. A horse costs 5,000 Mushybux by default; owner rewards are 5% of final stakes placed on that horse plus 200 Mushybux for a win. Max bet, purchase cost, owner cut, and win bonus are editable in the admin panel; environment variables provide only the initial defaults.
+
+The nightly horse-racing card posts at 7:00, 8:00, and 9:00 PM Pacific. Race-one betting and chat open at 6:30 PM; each later betting window opens after the preceding race settles. Chat becomes read-only 15 minutes after race three and its history is retained until the next card opens at 6:30 PM.

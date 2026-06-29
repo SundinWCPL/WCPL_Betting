@@ -1,0 +1,42 @@
+[
+  {
+    "_comment": "Manual skater: rates are per game. team_id drives chemistry and defaults to WUT/Logos/<team_id>.png. Add manual_logo only when the logo filename differs. Flavor supports **bold**, *italic*, __underline__, ~~strike~~, newlines, and [center]text[/center] alignment.",
+    "id": "mythic-oak-scorer",
+    "display_name": "Oak Scorer",
+    "position": "F",
+    "source_type": "manual",
+    "team_id": "OAK",
+    "manual_goalrate": 2.0,
+    "manual_assistrate": 1.5,
+    "manual_shotrate": 5.0,
+    "manual_hitrate": 2.0,
+    "manual_blockrate": 1.0,
+    "flavor_text": "[center]A **legend** forged in overtime.[/center]\n[center]*The crowd still remembers.*[/center]"
+  },
+  {
+    "_comment": "Manual goalie: skater rate fields are omitted. manual_savep is entered as a decimal. scoring_pool is optional and only needed to override the default sampleSize of 3.",
+    "id": "mythic-oak-goalie",
+    "display_name": "Oak Goalie",
+    "position": "G",
+    "source_type": "manual",
+    "team_id": "OAK",
+    "manual_saverate": 10.0,
+    "manual_shutoutrate": 0.4,
+    "manual_savep": 0.9,
+    "flavor_text": "[center]**Stonewall.**[/center]\nOne save at a time.\n[right]*- The Oak faithful*[/right]"
+  },
+  {
+    "_comment": "Automatic: randomly samples real games from the selected season, stage, division, and player. source_steam_id may be supplied instead of relying on player_name. Mythic backs always show WUT Stats rather than career stats.",
+    "id": "mythic-s2-playoffs-milk",
+    "display_name": "S2 Playoffs Milk",
+    "position": "G",
+    "source_type": "automatic",
+    "source_division_id": "ALL",
+    "source_season": "S2",
+    "source_stage": "playoffs",
+    "source_team_id": "TEAM",
+    "source_player_key": "milk",
+    "player_name": "Milk",
+    "flavor_text": "[center]**Stonewall.**[/center]\nOne save at a time.\n[right]*- The Oak faithful*[/right]"
+  }
+]

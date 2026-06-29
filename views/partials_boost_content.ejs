@@ -1,0 +1,18 @@
+<%
+  const displayBoostType = String(boost?.boost_type || boost?.boostType || '').toLowerCase();
+  const displayBoostRarity = String(boost?.rarity || 'common').toLowerCase();
+  const displayBoostEffect = boost?.effect || {};
+  const displayBoostPer = Math.max(1, Number(displayBoostEffect.per || 1));
+  const displayBoostBonus = Number(displayBoostEffect.bonus || 0);
+  const displayBoostTitleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+  const displayBoostLabels = {
+    goal: ['Goal', 'Goals'], assist: ['Assist', 'Assists'], shot: ['Shot', 'Shots'], hit: ['Hit', 'Hits'],
+    block: ['Block', 'Blocks'], save: ['Save', 'Saves'], shutout: ['Shutout', 'Shutouts']
+  };
+  const displayBoostLabel = displayBoostLabels[displayBoostType] || [displayBoostTitleCase(displayBoostType), `${displayBoostTitleCase(displayBoostType)}s`];
+  const displayBoostPerText = displayBoostPer === 1 ? displayBoostLabel[0] : `${displayBoostPer} ${displayBoostLabel[1]}`;
+  const displayBoostStars = '★'.repeat(({ common:1, uncommon:2, rare:3, epic:4, legendary:5 })[displayBoostRarity] || 1);
+%>
+<span class="boost-card-stars"><%= displayBoostStars %></span>
+<h3 class="boost-card-title"><%= displayBoostTitleCase(displayBoostRarity) %> <%= displayBoostTitleCase(displayBoostType) %> Boost</h3>
+<strong class="boost-card-effect">+<%= displayBoostBonus %> FP per <%= displayBoostPerText %></strong>

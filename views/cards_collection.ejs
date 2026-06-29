@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your Card Collection</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const titleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+    const statusForCard = card => card.arenaLocked ? 'Committed to an active match' : Number(card.cooldown_remaining || 0) > 0 ? `Cooldown: ${card.cooldown_remaining} WUT matches remaining` : 'Available for WUT';
+    const availableCollectionBoosts = boosts.filter(boost => !boost.arenaLocked);
+  %>
+  <main class="container cards-page arena-page">
+    <section class="card page-title cards-title">
+      <div><p class="eyebrow">Owned items</p><h1>Your Collection</h1><p>Browse every player card and boost with season, position, rarity, and availability filters.</p></div>
+      <div class="cards-title-actions"><a class="button-link ghost" href="/cards">← WUT</a><a class="button-link" href="/cards/store">Card Shop</a></div>
+    </section>
+
+    <section class="card cards-collection full-collection-page">
+      <div class="cards-section-head"><div><p class="eyebrow">Collection browser</p><h2>Cards & Boosts</h2></div><span class="pill"><%= cards.length %> cards · <%= availableCollectionBoosts.length %> boosts</span></div>
+      <div class="collection-progress"><% collectionProgress.forEach(pool => { %><span><strong><%= pool.owned %>/<%= pool.total %></strong> <%= pool.label %></span><% }) %></div>
+      <div class="collection-tabs"><button type="button" class="collection-tab is-active" data-collection-tab="players">Player Cards</button><button type="button" class="collection-tab" data-collection-tab="boosts">Boosts</button></div>
+
+      <div class="full-collection-filters" data-filter-panel="players">
+        <label class="collection-search">Search<input type="search" placeholder="Player or team" data-card-search></label>
+        <fieldset><legend>Season</legend><% ['S1','S2','S3','MYTHIC'].forEach(edition => { %><label><input type="checkbox" data-edition-filter value="<%= edition %>" checked> <%= edition === 'MYTHIC' ? 'Mythic' : edition %></label><% }) %></fieldset>
+        <fieldset><legend>Position</legend><% [['F','Forwards'],['D','Defense'],['G','Goalies']].forEach(([position,label]) => { %><label><input type="checkbox" data-position-filter value="<%= position %>" checked> <%= label %></label><% }) %></fieldset>
+        <label>Rarity<select data-rarity-filter><option value="">All rarities</option><% ['common','uncommon','rare','epic','legendary','mythic'].forEach(rarity => { %><option value="<%= rarity %>"><%= titleCase(rarity) %></option><% }) %></select></label>
+        <label>Status<select data-status-filter><option value="">All statuses</option><option value="available">Available</option><option value="cooldown">Cooldown</option><option value="committed">Committed</option></select></label>
+      </div>
+
+      <div class="full-collection-filters" data-filter-panel="boosts" hidden>
+        <label class="collection-search">Search<input type="search" placeholder="Boost type" data-boost-search></label>
+        <label>Rarity<select data-boost-rarity-filter><option value="">All rarities</option><% ['common','uncommon','rare','epic','legendary'].forEach(rarity => { %><option value="<%= rarity %>"><%= titleCase(rarity) %></option><% }) %></select></label>
+        <label>Type<select data-boost-type-filter><option value="">All boost types</option><% ['goal','assist','shot','hit','block','save','shutout'].forEach(type => { %><option value="<%= type %>"><%= titleCase(type) %></option><% }) %></select></label>
+      </div>
+
+      <p class="muted collection-result-count" data-result-count></p>
+      <div class="collection-grid" data-collection-panel="players">
+        <% cards.forEach(card => { const status = card.arenaLocked ? 'committed' : Number(card.cooldown_remaining || 0) > 0 ? 'cooldown' : 'available'; %>
+          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %> <%= status !== 'available' ? 'is-retired' : '' %>" tabindex="0" data-position="<%= card.player.position %>" data-edition="<%= card.player.cardType === 'mythic' ? 'MYTHIC' : card.player.edition %>" data-rarity="<%= card.player.tier %>" data-status="<%= status %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''}`.toLowerCase() %>">
+            <%- include('partials_wut_card', { card, statusText: statusForCard(card) }) %>
+          </article>
+        <% }) %>
+      </div>
+      <div class="collection-grid arena-boost-collection" data-collection-panel="boosts" hidden>
+        <% availableCollectionBoosts.forEach(boost => { %>
+          <article class="collection-boost tier-<%= boost.rarity %>" data-rarity="<%= boost.rarity %>" data-type="<%= boost.boost_type %>" data-search="<%= `${boost.rarity} ${boost.boost_type}`.toLowerCase() %>">
+            <%- include('partials_boost_content', { boost }) %>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+  </main>
+  <script>
+    const playerCards = [...document.querySelectorAll('[data-collection-panel="players"] .arena-collection-card')];
+    const boostCards = [...document.querySelectorAll('[data-collection-panel="boosts"] .collection-boost')];
+    const resultCount = document.querySelector('[data-result-count]');
+    const checkedValues = selector => new Set([...document.querySelectorAll(`${selector}:checked`)].map(input => input.value));
+    const filterPlayers = () => {
+      const editions = checkedValues('[data-edition-filter]');
+      const positions = checkedValues('[data-position-filter]');
+      const rarity = document.querySelector('[data-rarity-filter]').value;
+      const status = document.querySelector('[data-status-filter]').value;
+      const search = document.querySelector('[data-card-search]').value.trim().toLowerCase();
+      let visible = 0;
+      playerCards.forEach(card => {
+        const show = editions.has(card.dataset.edition) && positions.has(card.dataset.position) && (!rarity || card.dataset.rarity === rarity) && (!status || card.dataset.status === status) && (!search || card.dataset.search.includes(search));
+        card.hidden = !show; if (show) visible += 1;
+      });
+      resultCount.textContent = `${visible} player card${visible === 1 ? '' : 's'} shown`;
+    };
+    const filterBoosts = () => {
+      const rarity = document.querySelector('[data-boost-rarity-filter]').value;
+      const type = document.querySelector('[data-boost-type-filter]').value;
+      const search = document.querySelector('[data-boost-search]').value.trim().toLowerCase();
+      let visible = 0;
+      boostCards.forEach(boost => {
+        const show = (!rarity || boost.dataset.rarity === rarity) && (!type || boost.dataset.type === type) && (!search || boost.dataset.search.includes(search));
+        boost.hidden = !show; if (show) visible += 1;
+      });
+      resultCount.textContent = `${visible} boost${visible === 1 ? '' : 's'} shown`;
+    };
+    document.querySelectorAll('[data-filter-panel="players"] input, [data-filter-panel="players"] select').forEach(control => control.addEventListener('input', filterPlayers));
+    document.querySelectorAll('[data-filter-panel="boosts"] input, [data-filter-panel="boosts"] select').forEach(control => control.addEventListener('input', filterBoosts));
+    document.querySelectorAll('[data-collection-tab]').forEach(tab => tab.addEventListener('click', () => {
+      document.querySelectorAll('[data-collection-tab]').forEach(item => item.classList.toggle('is-active', item === tab));
+      document.querySelectorAll('[data-collection-panel], [data-filter-panel]').forEach(panel => panel.hidden = panel.dataset.collectionPanel !== tab.dataset.collectionTab && panel.dataset.filterPanel !== tab.dataset.collectionTab);
+      tab.dataset.collectionTab === 'players' ? filterPlayers() : filterBoosts();
+    }));
+    filterPlayers();
+  </script>
+</body>
+</html>

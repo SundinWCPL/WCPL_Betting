@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nightly Horse Racing | WCPL Casino</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<%- include('partials_header') %>
+
+<main class="container casino-container horse-racing-page">
+  <section class="casino-topbar">
+    <div class="toggle-row casino-tabs">
+      <a class="button-link ghost" href="/casino">Slots</a>
+      <a class="button-link ghost" href="/casino/puckIQ">Puck IQ</a>
+      <a class="button-link ghost-active" href="/casino/horse-racing">Horse Racing</a>
+    </div>
+    <div class="casino-balance card">
+      <span class="muted">Available Balance</span>
+      <strong data-race-balance><%= horseRaceState.balanceSummary.available_balance.toLocaleString() %></strong>
+    </div>
+  </section>
+
+  <% if (!horseRaceState.isCasinoOpen) { %>
+    <section class="casino-closed-notice card">
+      <strong>Casino Closed</strong>
+      <span>The track is visible, but wagers are disabled until the casino reopens.</span>
+    </section>
+  <% } %>
+
+  <section class="card horse-race-hero">
+    <div>
+      <p class="eyebrow">Mushy Downs · Three-Race Nightly Card</p>
+      <h1>Five horses. One questionable financial decision.</h1>
+      <p class="horse-race-schedule" data-race-schedule></p>
+    </div>
+    <div class="horse-race-clock-wrap">
+      <span class="horse-race-status" data-race-status>Loading track...</span>
+      <strong class="horse-race-clock" data-race-clock>--:--</strong>
+      <small data-race-clock-label>Checking server time</small>
+    </div>
+  </section>
+
+  <% if (currentUser.role === 'admin') { %>
+    <section class="card horse-admin-controls">
+      <div>
+        <p class="eyebrow">Admin Race Control</p>
+        <strong>Debug active race</strong>
+        <span class="muted">Overrides remain active until reset.</span>
+      </div>
+      <div class="toggle-row">
+        <button type="button" data-race-admin="open">Open Betting</button>
+        <button type="button" class="horse-admin-close" data-race-admin="close">Close Betting</button>
+        <button type="button" class="horse-admin-start" data-race-admin="start">Start Race</button>
+        <button type="button" class="horse-admin-reset" data-race-admin="reset">Reset Race</button>
+      </div>
+      <span class="horse-inline-message" data-admin-message></span>
+    </section>
+  <% } %>
+
+  <div class="horse-race-layout">
+    <div class="horse-race-main">
+      <section class="card horse-track-card">
+        <div class="horse-track-head">
+          <div>
+            <p class="eyebrow">Race <%= horseRaceState.race.number %> of <%= horseRaceState.card.raceCount %></p>
+            <h2>The Mushy Mile · Race <%= horseRaceState.race.number %></h2>
+          </div>
+          <span class="pill" data-race-date><%= horseRaceState.race.date %></span>
+        </div>
+
+        <div class="horse-track" data-horse-track>
+          <div class="horse-track-sky"><span></span><span></span><span></span></div>
+          <% horseRaceState.race.horses.forEach((horse, index) => { %>
+            <div class="horse-lane" data-horse-lane="<%= horse.id %>">
+              <div class="horse-lane-number"><%= index + 1 %></div>
+              <div class="horse-runner" data-horse-runner="<%= horse.id %>">
+                <img src="<%= horse.image %>" alt="<%= horse.name %>">
+                <span class="horse-runner-name"><%= horse.name %></span>
+                <div class="horse-career-tooltip" data-horse-career="<%= horse.id %>">
+                  <strong>Career</strong>
+                  <span>Races <b data-career-stat="races"><%= horse.career.races %></b></span>
+                  <span>Wins <b data-career-stat="wins"><%= horse.career.wins %></b></span>
+                  <span>Avg. Finish <b data-career-stat="averageFinish"><%= horse.career.averageFinish == null ? '—' : horse.career.averageFinish.toFixed(2) %></b></span>
+                </div>
+              </div>
+              <div class="horse-finish-line" aria-hidden="true"></div>
+              <div class="horse-place-badge" data-place-badge="<%= horse.id %>"></div>
+            </div>
+          <% }) %>
+        </div>
+        <div class="horse-track-message" data-track-message>The grounds crew is pretending to know what it’s doing.</div>
+      </section>
+
+      <section class="card horse-betting-card">
+        <div class="horse-section-head">
+          <div>
+            <p class="eyebrow">Place Your Wager</p>
+            <h2>Back one horse</h2>
+          </div>
+          <span class="pill">Max <%= horseRaceState.config.maxBet %> Mushybux</span>
+        </div>
+
+        <form method="post" action="/casino/horse-racing/bet" data-horse-bet-form>
+          <div class="horse-pick-grid" data-horse-picks>
+            <% horseRaceState.race.horses.forEach((horse, index) => { %>
+              <label class="horse-pick" data-horse-pick="<%= horse.id %>">
+                <input type="radio" name="horse_id" value="<%= horse.id %>">
+                <span class="horse-pick-number"><%= index + 1 %></span>
+                <img src="<%= horse.image %>" alt="">
+                <strong><%= horse.name %></strong>
+                <span class="horse-career-tooltip" data-horse-career="<%= horse.id %>">
+                  <b>Career</b>
+                  <span>Races <b data-career-stat="races"><%= horse.career.races %></b></span>
+                  <span>Wins <b data-career-stat="wins"><%= horse.career.wins %></b></span>
+                  <span>Avg. Finish <b data-career-stat="averageFinish"><%= horse.career.averageFinish == null ? '—' : horse.career.averageFinish.toFixed(2) %></b></span>
+                </span>
+              </label>
+            <% }) %>
+          </div>
+          <div class="horse-wager-row">
+            <label>
+              <span>Stake</span>
+              <div class="horse-stake-input">
+                <input type="number" name="stake" min="1" max="<%= horseRaceState.config.maxBet %>" step="1" inputmode="numeric" value="<%= horseRaceState.userBet?.stake || 50 %>" required>
+                <span>Mushybux</span>
+              </div>
+            </label>
+            <button type="submit" data-horse-bet-submit>Place Wager</button>
+          </div>
+          <div class="horse-inline-message" data-bet-message></div>
+        </form>
+
+        <div class="horse-current-bet" data-current-bet>
+          <span class="muted">Current wager</span>
+          <strong data-current-bet-text>No horse selected yet.</strong>
+        </div>
+      </section>
+
+      <section class="grid two horse-results-grid">
+        <div class="card horse-results-card">
+          <p class="eyebrow">Official Result</p>
+          <h2>Finishing order</h2>
+          <ol class="horse-results-list" data-race-results>
+            <li class="muted">Results appear after the race.</li>
+          </ol>
+        </div>
+        <div class="card horse-payout-card">
+          <p class="eyebrow">Payouts</p>
+          <h2>Win, place, or pain</h2>
+          <div class="horse-payout-row"><span>🥇 1st place</span><strong><%= horseRaceState.config.payouts[1] %>× stake</strong></div>
+          <div class="horse-payout-row"><span>🥈 2nd place</span><strong><%= horseRaceState.config.payouts[2] %>× stake</strong></div>
+          <div class="horse-payout-row"><span>3rd–5th</span><strong>0×</strong></div>
+          <div class="horse-user-result" data-user-result hidden></div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="card horse-chat-card">
+      <div class="horse-chat-head">
+        <div>
+          <p class="eyebrow">Trackside Chat</p>
+          <h2>The Rail</h2>
+        </div>
+        <span class="horse-chat-live" data-chat-live>Closed</span>
+      </div>
+      <div class="horse-chat-messages" data-chat-messages>
+        <p class="muted">Chat opens when betting does.</p>
+      </div>
+      <form class="horse-chat-form" data-chat-form>
+        <textarea name="message" maxlength="<%= horseRaceState.config.chatMaxLength %>" rows="2" placeholder="Cheer, cope, or call a fix..."></textarea>
+        <div>
+          <small><span data-chat-count>0</span>/<%= horseRaceState.config.chatMaxLength %> · Enter to send</small>
+          <button type="submit">Send</button>
+        </div>
+      </form>
+      <span class="horse-inline-message" data-chat-error></span>
+    </aside>
+  </div>
+
+  <section class="card horse-buy-card" id="horse-ownership">
+    <div>
+      <p class="eyebrow">Horse Ownership</p>
+      <h2>Buy a horse</h2>
+      <p class="muted">Name your horse and add it to the permanent race pool. Each race randomly selects five horses. You can own up to <strong><%= horseRaceState.horseOwnership.maxOwnedHorses %></strong>.</p>
+      <p class="muted">Owners earn <strong><%= horseRaceState.horseOwnership.ownerBetSharePercent %>%</strong> of wagers placed on their horse, plus <strong><%= horseRaceState.horseOwnership.ownerWinBonus %> Mushybux</strong> when it wins.</p>
+    </div>
+    <form method="post" action="/casino/horse-racing/horses/buy" class="horse-buy-form">
+      <label>Horse name
+        <input name="name" minlength="2" maxlength="<%= horseRaceState.horseOwnership.nameMaxLength %>" placeholder="Name your champion" required>
+      </label>
+      <button data-buy-horse-button <%= !horseRaceState.isCasinoOpen || horseRaceState.horseOwnership.ownedHorses.length >= horseRaceState.horseOwnership.maxOwnedHorses || horseRaceState.balanceSummary.available_balance < horseRaceState.horseOwnership.purchasePrice ? 'disabled' : '' %>><%= horseRaceState.horseOwnership.ownedHorses.length >= horseRaceState.horseOwnership.maxOwnedHorses ? 'Stable Full' : `Buy for ${horseRaceState.horseOwnership.purchasePrice.toLocaleString()} Mushybux` %></button>
+    </form>
+  </section>
+
+  <% if (horseRaceState.horseOwnership.ownedHorses.length) { %>
+    <section class="card horse-owned-card" id="owned-horses">
+      <div class="horse-section-head">
+        <div><p class="eyebrow">Your Stable</p><h2>Owned horses</h2></div>
+        <span class="pill"><%= horseRaceState.horseOwnership.pendingWinnings.toLocaleString() %> Mushybux ready</span>
+      </div>
+      <div class="horse-owned-grid">
+        <% horseRaceState.horseOwnership.ownedHorses.forEach(horse => { %>
+          <article class="horse-owned-entry" data-owned-horse="<%= horse.id %>">
+            <div><strong><%= horse.name %></strong><small>Career statistics</small></div>
+            <dl>
+              <div><dt>Races</dt><dd data-owned-stat="races"><%= horse.races %></dd></div>
+              <div><dt>Wins</dt><dd data-owned-stat="wins"><%= horse.wins %></dd></div>
+              <div><dt>2nd Places</dt><dd data-owned-stat="secondPlaces"><%= horse.secondPlaces %></dd></div>
+              <div><dt>Avg. Finish</dt><dd data-owned-stat="averageFinish"><%= horse.averageFinish == null ? '—' : horse.averageFinish.toFixed(2) %></dd></div>
+            </dl>
+            <form method="post" action="/casino/horse-racing/horses/claim">
+              <input type="hidden" name="horse_id" value="<%= horse.id %>">
+              <button data-owned-claim <%= horse.pendingWinnings <= 0 ? 'disabled' : '' %>><%= horse.pendingWinnings > 0 ? `Collect ${horse.pendingWinnings.toLocaleString()} Mushybux` : 'No winnings to collect' %></button>
+            </form>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+  <% } %>
+</main>
+
+<script>
+(() => {
+  let raceState = <%- JSON.stringify(horseRaceState) %>;
+  let serverOffset = new Date(raceState.serverNow).getTime() - Date.now();
+  let activeAnimationKey = '';
+  let raceAnimations = [];
+  let racePlaceTimers = [];
+  let leaderFollowFrame = null;
+  let lastChatId = 0;
+  let pendingHorseSelection = null;
+
+  const $ = (selector) => document.querySelector(selector);
+  const $$ = (selector) => [...document.querySelectorAll(selector)];
+  const statusEl = $('[data-race-status]');
+  const clockEl = $('[data-race-clock]');
+  const clockLabelEl = $('[data-race-clock-label]');
+  const scheduleEl = $('[data-race-schedule]');
+  const trackMessageEl = $('[data-track-message]');
+  const trackEl = $('[data-horse-track]');
+  const balanceEl = $('[data-race-balance]');
+  const betForm = $('[data-horse-bet-form]');
+  const betButton = $('[data-horse-bet-submit]');
+  const betMessage = $('[data-bet-message]');
+  const currentBetText = $('[data-current-bet-text]');
+  const resultsEl = $('[data-race-results]');
+  const userResultEl = $('[data-user-result]');
+  const chatMessagesEl = $('[data-chat-messages]');
+  const chatForm = $('[data-chat-form]');
+  const chatInput = chatForm?.querySelector('textarea');
+  const chatCount = $('[data-chat-count]');
+  const chatLive = $('[data-chat-live]');
+  const chatError = $('[data-chat-error]');
+  const buyHorseButton = $('[data-buy-horse-button]');
+  const fmt = (number) => Number(number || 0).toLocaleString();
+
+  function nowMs() {
+    return Date.now() + serverOffset;
+  }
+
+  function durationLabel(ms) {
+    const seconds = Math.max(0, Math.ceil(ms / 1000));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remainder = seconds % 60;
+    if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+    return `${minutes}:${String(remainder).padStart(2, '0')}`;
+  }
+
+  function formatTrackTime(iso) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: raceState.config.timeZone,
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short'
+    }).format(new Date(iso));
+  }
+
+  function setStatusCopy() {
+    const status = raceState.race.status;
+    const copy = {
+      upcoming: ['Gates closed', 'Betting opens in', 'The tote window is taking a strategic nap.'],
+      betting: ['Betting open', 'Betting closes in', 'Pick your champion. You can edit the wager until the bell.'],
+      countdown: ['Wagers locked', 'Race starts in', 'Bets are locked. The horses are loading into the gate.'],
+      racing: ['Race in progress', 'Time to finish', 'They’re off!'],
+      complete: ['Race complete', 'Official', 'The stewards have made it official.']
+    }[status] || ['Track update', '', ''];
+    statusEl.textContent = copy[0];
+    statusEl.dataset.status = status;
+    clockLabelEl.textContent = copy[1];
+    trackMessageEl.textContent = copy[2];
+    scheduleEl.textContent = `Nightly posts 7:00, 8:00 & 9:00 PM Pacific · Race ${raceState.race.number} of ${raceState.card.raceCount} · Betting ${formatTrackTime(raceState.race.bettingOpensAt)}–${formatTrackTime(raceState.race.bettingClosesAt)} · Post time ${formatTrackTime(raceState.race.raceStartsAt)}`;
+  }
+
+  function updateClock() {
+    const status = raceState.race.status;
+    const target = raceState.race.nextTransitionAt ? new Date(raceState.race.nextTransitionAt).getTime() : null;
+    if (status === 'complete') {
+      clockEl.textContent = 'FINAL';
+      return;
+    }
+    if (target) clockEl.textContent = durationLabel(target - nowMs());
+    else if (status === 'betting' && raceState.race.isDebug) clockEl.textContent = 'OPEN';
+    else if (status === 'upcoming' && raceState.race.isDebug) clockEl.textContent = 'RESET';
+    else clockEl.textContent = '--:--';
+  }
+
+  function renderBetting() {
+    const canBet = raceState.race.status === 'betting' && raceState.isCasinoOpen;
+    if (!canBet) pendingHorseSelection = null;
+    const selectedId = pendingHorseSelection || raceState.userBet?.horse_id || '';
+    $$('[data-horse-pick]').forEach(label => {
+      const radio = label.querySelector('input');
+      radio.disabled = !canBet;
+      radio.checked = radio.value === selectedId;
+      label.classList.toggle('is-selected', radio.checked);
+      label.classList.toggle('is-disabled', !canBet);
+    });
+    const stakeInput = betForm?.elements.stake;
+    if (stakeInput) stakeInput.disabled = !canBet;
+    if (betButton) {
+      betButton.disabled = !canBet;
+      betButton.textContent = canBet
+        ? (raceState.userBet ? 'Update Wager' : 'Place Wager')
+        : (raceState.isCasinoOpen ? 'Betting Closed' : 'Casino Closed');
+    }
+    currentBetText.textContent = raceState.userBet
+      ? `${raceState.userBet.horse_name} · ${fmt(raceState.userBet.stake)} Mushybux${raceState.userBet.settled ? ' · Settled' : ''}`
+      : 'No horse selected yet.';
+    balanceEl.textContent = fmt(raceState.balanceSummary.available_balance);
+  }
+
+  function renderResults() {
+    const order = raceState.race.finishingOrder;
+    if (['upcoming', 'betting', 'countdown'].includes(raceState.race.status)) clearPlaceBadges();
+    if (raceState.race.status !== 'complete' || !order) {
+      resultsEl.innerHTML = '<li class="muted">Results appear after the race.</li>';
+      userResultEl.hidden = true;
+      return;
+    }
+    resultsEl.innerHTML = '';
+    order.forEach(result => {
+      const li = document.createElement('li');
+      const position = document.createElement('span');
+      const name = document.createElement('strong');
+      position.textContent = result.position === 1 ? '🥇' : result.position === 2 ? '🥈' : `#${result.position}`;
+      name.textContent = result.name;
+      li.append(position, name);
+      resultsEl.appendChild(li);
+      showPlaceBadge(result);
+    });
+    if (raceState.userBet?.settled) {
+      const position = raceState.userBet.finishing_position;
+      const payout = Number(raceState.userBet.payout || 0);
+      userResultEl.hidden = false;
+      userResultEl.className = `horse-user-result ${payout > 0 ? 'is-win' : 'is-loss'}`;
+      userResultEl.textContent = payout > 0
+        ? `${raceState.userBet.horse_name} finished #${position}. You received ${fmt(payout)} Mushybux.`
+        : `${raceState.userBet.horse_name} finished #${position}. The house sends its regards.`;
+    }
+  }
+
+  function renderOwnership() {
+    if (buyHorseButton) {
+      const stableFull = raceState.horseOwnership.ownedHorses.length >= Number(raceState.horseOwnership.maxOwnedHorses);
+      buyHorseButton.disabled = !raceState.isCasinoOpen || stableFull || Number(raceState.balanceSummary.available_balance) < Number(raceState.horseOwnership.purchasePrice);
+      buyHorseButton.textContent = stableFull ? 'Stable Full' : `Buy for ${fmt(raceState.horseOwnership.purchasePrice)} Mushybux`;
+    }
+    raceState.horseOwnership.ownedHorses.forEach(horse => {
+      const entry = document.querySelector(`[data-owned-horse="${horse.id}"]`);
+      if (!entry) return;
+      for (const key of ['races', 'wins', 'secondPlaces']) {
+        const value = entry.querySelector(`[data-owned-stat="${key}"]`);
+        if (value) value.textContent = fmt(horse[key]);
+      }
+      const average = entry.querySelector('[data-owned-stat="averageFinish"]');
+      if (average) average.textContent = horse.averageFinish == null ? '—' : Number(horse.averageFinish).toFixed(2);
+      const claim = entry.querySelector('[data-owned-claim]');
+      if (claim) {
+        claim.disabled = Number(horse.pendingWinnings) <= 0;
+        claim.textContent = horse.pendingWinnings > 0 ? `Collect ${fmt(horse.pendingWinnings)} Mushybux` : 'No winnings to collect';
+      }
+    });
+  }
+
+  function renderHorseCareers() {
+    raceState.race.horses.forEach(horse => {
+      document.querySelectorAll(`[data-horse-career="${horse.id}"]`).forEach(tooltip => {
+        const races = tooltip.querySelector('[data-career-stat="races"]');
+        const wins = tooltip.querySelector('[data-career-stat="wins"]');
+        const average = tooltip.querySelector('[data-career-stat="averageFinish"]');
+        if (races) races.textContent = fmt(horse.career.races);
+        if (wins) wins.textContent = fmt(horse.career.wins);
+        if (average) average.textContent = horse.career.averageFinish == null ? '—' : Number(horse.career.averageFinish).toFixed(2);
+      });
+    });
+  }
+
+  function seeded(seed) {
+    let value = seed >>> 0;
+    return () => {
+      value += 0x6D2B79F5;
+      let mixed = value;
+      mixed = Math.imul(mixed ^ mixed >>> 15, mixed | 1);
+      mixed ^= mixed + Math.imul(mixed ^ mixed >>> 7, mixed | 61);
+      return ((mixed ^ mixed >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function stopRaceAnimation() {
+    raceAnimations.forEach(animation => animation.cancel());
+    raceAnimations = [];
+    racePlaceTimers.forEach(timer => clearTimeout(timer));
+    racePlaceTimers = [];
+    if (leaderFollowFrame != null) cancelAnimationFrame(leaderFollowFrame);
+    leaderFollowFrame = null;
+  }
+
+  function followRaceLeader() {
+    if (!trackEl || raceState.race.status !== 'racing') return;
+    let leaderCenter = 0;
+    $$('[data-horse-runner]').forEach(runner => {
+      const transform = new DOMMatrixReadOnly(getComputedStyle(runner).transform);
+      leaderCenter = Math.max(leaderCenter, runner.offsetLeft + transform.m41 + runner.offsetWidth / 2);
+    });
+    const target = Math.max(0, Math.min(trackEl.scrollWidth - trackEl.clientWidth, leaderCenter - trackEl.clientWidth * 0.5));
+    trackEl.scrollLeft += (target - trackEl.scrollLeft) * 0.1;
+    leaderFollowFrame = requestAnimationFrame(followRaceLeader);
+  }
+
+  function smoothRaceFrames({ crossingDistance, finishDistance, crossingOffset, random }) {
+    const paceSamples = 108;
+    const cumulative = [0];
+    let speed = 0.7 + random() * 0.55;
+    let targetSpeed = 0.5 + random() * 1.25;
+    let nextPaceChange = 10 + Math.floor(random() * 10);
+
+    for (let step = 1; step <= paceSamples; step += 1) {
+      if (step >= nextPaceChange) {
+        targetSpeed = 0.42 + random() * 1.5;
+        nextPaceChange += 10 + Math.floor(random() * 13);
+      }
+      speed += (targetSpeed - speed) * 0.1;
+      cumulative.push(cumulative.at(-1) + Math.max(0.2, speed));
+    }
+
+    const totalPace = cumulative.at(-1);
+    const frames = cumulative.map((distance, step) => ({
+      transform: `translateX(${crossingDistance * distance / totalPace}px)`,
+      offset: crossingOffset * step / paceSamples
+    }));
+    const coastSamples = 12;
+    for (let step = 1; step <= coastSamples; step += 1) {
+      const u = step / coastSamples;
+      const coast = 1 - Math.pow(1 - u, 2);
+      frames.push({
+        transform: `translateX(${crossingDistance + (finishDistance - crossingDistance) * coast}px)`,
+        offset: crossingOffset + (1 - crossingOffset) * u
+      });
+    }
+    return frames;
+  }
+
+  function runnerCrossingDistance(runner) {
+    const finishLine = runner.closest('.horse-lane').querySelector('.horse-finish-line');
+    return Math.max(60, finishLine.offsetLeft - runner.offsetLeft - runner.offsetWidth + 2);
+  }
+
+  function runnerFinishDistance(runner, place) {
+    const finishLine = runner.closest('.horse-lane').querySelector('.horse-finish-line');
+    const coastPastLine = Math.max(30, 54 - Number(place || 5) * 4);
+    return finishLine.offsetLeft + finishLine.offsetWidth + coastPastLine - runner.offsetLeft;
+  }
+
+  function ordinal(position) {
+    if (position === 1) return '1st';
+    if (position === 2) return '2nd';
+    if (position === 3) return '3rd';
+    return `${position}th`;
+  }
+
+  function clearPlaceBadges() {
+    $$('[data-place-badge]').forEach(badge => {
+      badge.textContent = '';
+      badge.className = 'horse-place-badge';
+    });
+  }
+
+  function showPlaceBadge(result) {
+    const badge = document.querySelector(`[data-place-badge="${result.id}"]`);
+    if (!badge || badge.classList.contains('is-visible')) return;
+    badge.textContent = ordinal(result.position);
+    badge.classList.add(`place-${result.position}`, 'is-visible');
+  }
+
+  function positionRunnersAtStart() {
+    stopRaceAnimation();
+    if (trackEl) trackEl.scrollLeft = 0;
+    $$('[data-horse-runner]').forEach(runner => { runner.style.transform = 'translateX(0)'; });
+  }
+
+  function positionRunnersAfterFinish() {
+    stopRaceAnimation();
+    const orderById = new Map((raceState.race.finishingOrder || []).map(result => [result.id, result.position]));
+    $$('[data-horse-runner]').forEach(runner => {
+      const place = orderById.get(runner.dataset.horseRunner) || 5;
+      runner.style.transform = `translateX(${runnerFinishDistance(runner, place)}px)`;
+    });
+    if (trackEl) trackEl.scrollLeft = trackEl.scrollWidth - trackEl.clientWidth;
+  }
+
+  function startRaceAnimation() {
+    const race = raceState.race;
+    if (race.status !== 'racing' || !race.finishingOrder?.length) {
+      if (race.status === 'complete') {
+        activeAnimationKey = `${race.id}|complete`;
+        positionRunnersAfterFinish();
+      } else {
+        activeAnimationKey = '';
+        positionRunnersAtStart();
+      }
+      return;
+    }
+    const key = `${race.id}|${race.raceStartsAt}|${race.raceDurationSeconds}`;
+    if (activeAnimationKey === key) return;
+    activeAnimationKey = key;
+    stopRaceAnimation();
+    clearPlaceBadges();
+
+    requestAnimationFrame(() => {
+      const orderById = new Map(race.finishingOrder.map(result => [result.id, result.position]));
+      const duration = Number(race.raceDurationSeconds) * 1000;
+      const elapsed = Math.max(0, nowMs() - new Date(race.raceStartsAt).getTime());
+      $$('[data-horse-runner]').forEach((runner, index) => {
+        const place = orderById.get(runner.dataset.horseRunner) || 5;
+        const crossingOffset = .86 + place * .012;
+        const crossingDistance = runnerCrossingDistance(runner);
+        const finishDistance = runnerFinishDistance(runner, place);
+        const random = seeded(Number(race.paceSeed || race.id) * 100 + index + 1);
+        const frames = smoothRaceFrames({ crossingDistance, finishDistance, crossingOffset, random });
+        const animation = runner.animate(frames, { duration, easing: 'linear', fill: 'forwards' });
+        animation.currentTime = Math.min(duration, elapsed);
+        raceAnimations.push(animation);
+
+        const result = race.finishingOrder.find(candidate => candidate.id === runner.dataset.horseRunner);
+        const timeUntilCrossing = crossingOffset * duration - elapsed;
+        if (timeUntilCrossing <= 0) {
+          showPlaceBadge(result);
+        } else {
+          racePlaceTimers.push(setTimeout(() => showPlaceBadge(result), timeUntilCrossing));
+        }
+      });
+      followRaceLeader();
+    });
+  }
+
+  function renderState() {
+    document.querySelector('.horse-racing-page')?.classList.toggle('is-racing', raceState.race.status === 'racing');
+    setStatusCopy();
+    updateClock();
+    renderBetting();
+    renderResults();
+    renderOwnership();
+    renderHorseCareers();
+    startRaceAnimation();
+    const open = raceState.chatOpen;
+    chatLive.textContent = open ? 'Live' : 'Closed';
+    chatLive.classList.toggle('is-live', open);
+    if (chatInput) chatInput.disabled = !open;
+    const send = chatForm?.querySelector('button');
+    if (send) send.disabled = !open;
+  }
+
+  async function refreshState() {
+    try {
+      const response = await fetch('/casino/horse-racing/state', { headers: { Accept: 'application/json' } });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) return;
+      if (Number(payload.horseRaceState.race.id) !== Number(raceState.race.id)) {
+        window.location.reload();
+        return;
+      }
+      raceState = payload.horseRaceState;
+      serverOffset = new Date(raceState.serverNow).getTime() - Date.now();
+      renderState();
+    } catch (_) {
+      // A later poll will reconnect; keep the current clock moving meanwhile.
+    }
+  }
+
+  $$('[data-horse-pick] input').forEach(radio => radio.addEventListener('change', () => {
+    pendingHorseSelection = radio.checked ? radio.value : pendingHorseSelection;
+    $$('[data-horse-pick]').forEach(label => label.classList.toggle('is-selected', label.querySelector('input').checked));
+  }));
+
+  betForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    betMessage.textContent = '';
+    betMessage.className = 'horse-inline-message';
+    betButton.disabled = true;
+    try {
+      const response = await fetch(betForm.action, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+        body: new URLSearchParams(new FormData(betForm))
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Wager failed.');
+      raceState = payload.horseRaceState;
+      pendingHorseSelection = null;
+      serverOffset = new Date(raceState.serverNow).getTime() - Date.now();
+      betMessage.textContent = payload.result.action === 'updated' ? 'Wager updated. The ticket window approves.' : 'Wager placed. Good luck out there.';
+      betMessage.classList.add('is-success');
+      renderState();
+    } catch (err) {
+      betMessage.textContent = err.message;
+      betMessage.classList.add('is-error');
+      renderBetting();
+    }
+  });
+
+  async function pollChat() {
+    try {
+      const response = await fetch('/casino/horse-racing/chat', { headers: { Accept: 'application/json' } });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) return;
+      if (!payload.messages.length) {
+        chatMessagesEl.innerHTML = payload.open
+          ? '<p class="muted">The rail is quiet. Suspiciously quiet.</p>'
+          : '<p class="muted">Chat is closed. The rail reopens with tomorrow’s card.</p>';
+        lastChatId = 0;
+        return;
+      }
+      const newestId = payload.messages[payload.messages.length - 1].id;
+      if (newestId === lastChatId) return;
+      chatMessagesEl.innerHTML = '';
+      payload.messages.forEach(message => {
+        const article = document.createElement('article');
+        const header = document.createElement('div');
+        const username = document.createElement('strong');
+        const time = document.createElement('time');
+        const body = document.createElement('p');
+        username.textContent = message.username;
+        time.textContent = new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        body.textContent = message.message;
+        header.append(username, time);
+        article.append(header, body);
+        chatMessagesEl.appendChild(article);
+      });
+      lastChatId = newestId;
+      chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    } catch (_) {}
+  }
+
+  chatInput?.addEventListener('input', () => { chatCount.textContent = chatInput.value.length; });
+  chatInput?.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    if (!chatInput.disabled && chatInput.value.trim()) chatForm.requestSubmit();
+  });
+  chatForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    chatError.textContent = '';
+    try {
+      const response = await fetch('/casino/horse-racing/chat', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: new URLSearchParams(new FormData(chatForm))
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Message failed.');
+      chatForm.reset();
+      chatCount.textContent = '0';
+      await pollChat();
+    } catch (err) {
+      chatError.textContent = err.message;
+      chatError.className = 'horse-inline-message is-error';
+    }
+  });
+
+  $$('[data-race-admin]').forEach(button => button.addEventListener('click', async () => {
+    const action = button.dataset.raceAdmin;
+    if (action === 'reset' && !window.confirm('Reset the active race and reverse all of its wagers and payouts?')) return;
+    const messageEl = $('[data-admin-message]');
+    $$('[data-race-admin]').forEach(control => { control.disabled = true; });
+    try {
+      const response = await fetch(`/casino/horse-racing/admin/${action}`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Command failed.');
+      raceState = payload.horseRaceState;
+      pendingHorseSelection = null;
+      serverOffset = new Date(raceState.serverNow).getTime() - Date.now();
+      activeAnimationKey = '';
+      messageEl.textContent = `${action[0].toUpperCase()}${action.slice(1)} command applied.`;
+      messageEl.className = 'horse-inline-message is-success';
+      renderState();
+      await pollChat();
+    } catch (err) {
+      messageEl.textContent = err.message;
+      messageEl.className = 'horse-inline-message is-error';
+    } finally {
+      $$('[data-race-admin]').forEach(control => { control.disabled = false; });
+    }
+  }));
+
+  renderState();
+  pollChat();
+  setInterval(updateClock, 250);
+  setInterval(refreshState, 2000);
+  setInterval(pollChat, 3000);
+})();
+</script>
+</body>
+</html>
