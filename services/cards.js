@@ -621,8 +621,8 @@ export async function buildCardPlayerCatalog({
         const override = clean(positionOverrides[key] || positionOverrides[`${sourceDivisionId}|${player.player_key}`]).toUpperCase();
         const counts = countPositions(player, boxes);
         const rosterPosition = clean(player.position).toUpperCase();
-        let resolvedPosition = override || resolveCountWinner(counts) || currentIdentity?.resolvedPosition || positionGroup(rosterPosition);
-        if (!resolvedPosition && rosterPosition === 'G') resolvedPosition = 'G';
+        const explicitHistoricalGoalie = rosterPosition === 'G' ? 'G' : '';
+        const resolvedPosition = override || resolveCountWinner(counts) || explicitHistoricalGoalie || currentIdentity?.resolvedPosition || positionGroup(rosterPosition);
         const rate = resolvedPosition
           ? (boxes.length ? aggregatePlayerRate(player, boxes, resolvedPosition, scoringConfig) : aggregatePlayerRateFromSeasonRow(player, resolvedPosition, scoringConfig))
           : { games: 0, fp: 0, fpPerGame: 0 };
