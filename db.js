@@ -2354,6 +2354,19 @@ function arenaLockedCardIds(userId, exceptMatchId = null) {
   }));
 }
 
+function arenaRarityAllowedForSlot(match, userId, slot, player, catalogByIdentity) {
+  const opposingPlacement = match.placements.find(row =>
+    Number(row.user_id) !== Number(userId) && row.slot === slot
+  );
+  if (!opposingPlacement) return true;
+  const opposingCard = state.cards.ownedCards.find(card => Number(card.id) === Number(opposingPlacement.card_id));
+  const opposingPlayer = opposingCard ? catalogPlayerForOwnedCard(opposingCard, catalogByIdentity) : null;
+  const opposingRank = ARENA_RARITY_RANK[opposingPlayer?.tier];
+  const candidateRank = ARENA_RARITY_RANK[player?.tier];
+  if (!opposingRank || !candidateRank) return false;
+  return candidateRank <= opposingRank + 1;
+}
+
 export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity, now = new Date(), automatic = false }) {
   ensureArenaState();
   const match = state.cards.arena.matches.find(item => Number(item.id) === Number(matchId));
@@ -2380,6 +2393,9 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
     const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
     const requiredPosition = slot === 'G' ? 'G' : slot[0];
     if (!player || player.position !== requiredPosition) throw new Error(`That card is not eligible for ${slot}.`);
+    if (!arenaRarityAllowedForSlot(match, userId, slot, player, catalogByIdentity)) {
+      throw new Error(`${slot} can be at most one rarity higher than the opponent's committed card. Any lower rarity is allowed.`);
+    }
     const duplicatePlayer = match.placements.some(row => {
       if (Number(row.user_id) !== Number(userId)) return false;
       const other = state.cards.ownedCards.find(item => Number(item.id) === Number(row.card_id));
@@ -2433,7 +2449,11 @@ export function autoAssignExpiredArenaTurns(catalogByIdentity, now = new Date())
       const picked = [];
       for (const slot of CARD_LINEUP_SLOTS.filter(slot => !occupied.has(slot))) {
         const position = slot === 'G' ? 'G' : slot[0];
-        const index = candidates.findIndex(row => row.player.position === position && !picked.some(item => item.player.playerKey === row.player.playerKey && item.player.divisionId === row.player.divisionId));
+        const index = candidates.findIndex(row =>
+          row.player.position === position &&
+          arenaRarityAllowedForSlot(match, userId, slot, row.player, catalogByIdentity) &&
+          !picked.some(item => item.player.playerKey === row.player.playerKey && item.player.divisionId === row.player.divisionId)
+        );
         if (index < 0) continue;
         const [choice] = candidates.splice(index, 1);
         picked.push({ ...choice, slot });

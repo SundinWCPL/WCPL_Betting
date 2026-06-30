@@ -11,6 +11,7 @@
   <%- include('partials_header') %>
   <%
     const slots = ['F1','F2','D1','D2','G'];
+    const rarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
     const titleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
     const placementFor = (userId, slot) => match.placements.find(row => Number(row.user_id) === Number(userId) && row.slot === slot);
     const playerName = id => match.players.find(player => Number(player.id) === Number(id))?.displayName || 'Player';
@@ -50,8 +51,8 @@
         <% if (match.is_your_turn) { %><span class="pill">Choose <%= match.cards_required_this_turn %> open slot<%= match.cards_required_this_turn === 1 ? '' : 's' %></span><% } %>
       </div>
       <div class="cards-lineup arena-card-lineup" data-user-lineup>
-        <% slots.forEach(slot => { const row = placementFor(currentUser.id, slot); const requiredPosition = slot === 'G' ? 'G' : slot[0]; %>
-          <article class="lineup-slot <%= row ? 'is-locked' : '' %>" data-match-slot="<%= slot %>" data-position="<%= requiredPosition %>" data-committed="<%= row ? '1' : '0' %>">
+        <% slots.forEach(slot => { const row = placementFor(currentUser.id, slot); const opposingRow = placementFor(match.opponent.id, slot); const requiredPosition = slot === 'G' ? 'G' : slot[0]; %>
+          <article class="lineup-slot <%= row ? 'is-locked' : '' %>" data-match-slot="<%= slot %>" data-position="<%= requiredPosition %>" data-committed="<%= row ? '1' : '0' %>" data-opponent-rarity="<%= opposingRow?.card?.player?.tier || '' %>" data-opponent-rarity-rank="<%= rarityRank[opposingRow?.card?.player?.tier] || 0 %>">
             <span class="arena-lineup-slot-name"><%= slot %></span>
             <% if (row?.card) { %>
               <div class="arena-wut-card tier-<%= row.card.player.tier %>" data-flip-card><%- include('partials_wut_card', { card: row.card, statusText: row.automatic ? 'Auto-picked and committed' : 'Committed to this match' }) %></div>
@@ -77,7 +78,7 @@
         <form method="post" action="/cards/arena/matches/<%= match.id %>/turn" class="arena-visual-lock-form" id="arenaTurnForm">
           <input type="hidden" name="count" value="<%= match.cards_required_this_turn %>">
           <div data-turn-inputs></div>
-          <div><strong data-turn-progress>0/<%= match.cards_required_this_turn %> cards staged</strong><p class="muted">You can preview and change staged choices until you lock the whole turn.</p></div>
+          <div><strong data-turn-progress>0/<%= match.cards_required_this_turn %> cards staged</strong><p class="muted">You can preview and change staged choices until you lock the whole turn. A responding card may be at most one rarity higher than the opponent's card in the same slot; any lower rarity is allowed.</p></div>
           <button type="submit" disabled data-lock-turn>Lock In Turn</button>
         </form>
       <% } %>
@@ -103,7 +104,7 @@
       <p class="muted" data-context-collection-help></p>
       <div class="collection-grid" data-collection-panel="players">
         <% cards.forEach(card => { const unavailable = card.arenaLocked || Number(card.cooldown_remaining || 0) > 0; %>
-          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %> <%= unavailable ? 'is-retired' : '' %>" tabindex="0" data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-card-name="<%= card.player.name %>" data-unavailable="<%= unavailable ? '1' : '0' %>">
+          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %> <%= unavailable ? 'is-retired' : '' %>" tabindex="0" data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-card-name="<%= card.player.name %>" data-rarity="<%= card.player.tier %>" data-rarity-rank="<%= rarityRank[card.player.tier] || 0 %>" data-unavailable="<%= unavailable ? '1' : '0' %>">
             <%- include('partials_wut_card', { card, statusText: statusForCard(card) }) %>
           </article>
         <% }) %>
@@ -129,6 +130,7 @@
     const collectionTitle = matchCollection?.querySelector('[data-context-collection-title]');
     const collectionHelp = matchCollection?.querySelector('[data-context-collection-help]');
     const collectionCount = matchCollection?.querySelector('[data-context-collection-count]');
+    const rarityNames = ['', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
 
     const showStatus = (message, error = false) => {
       if (!statusEl) return;
@@ -157,17 +159,25 @@
       matchCollection.hidden = false;
       matchCollection.querySelectorAll('[data-collection-panel]').forEach(panel => { panel.hidden = panel.dataset.collectionPanel !== panelName; });
     };
+    const cardFitsSlotRarity = (slot, card) => {
+      const opponentRank = Number(slot?.dataset.opponentRarityRank || 0);
+      const cardRank = Number(card?.dataset.rarityRank || 0);
+      return !opponentRank || (cardRank > 0 && cardRank <= opponentRank + 1);
+    };
     const showCardsForSlot = slot => {
       showCollectionPanel('players');
       let available = 0;
       matchCollection.querySelectorAll('[data-card-id]').forEach(card => {
-        const show = card.dataset.unavailable === '0' && card.dataset.position === slot.dataset.position && !card.classList.contains('is-staged');
+        const show = card.dataset.unavailable === '0' && card.dataset.position === slot.dataset.position && cardFitsSlotRarity(slot, card) && !card.classList.contains('is-staged');
         card.hidden = !show;
         if (show) available += 1;
       });
       const positionName = slot.dataset.position === 'F' ? 'Forward' : slot.dataset.position === 'D' ? 'Defense' : 'Goalie';
       collectionTitle.textContent = `${positionName} Cards for ${slot.dataset.matchSlot}`;
-      collectionHelp.textContent = `Showing every available ${positionName.toLowerCase()} card eligible for this slot.`;
+      const opponentRank = Number(slot.dataset.opponentRarityRank || 0);
+      collectionHelp.textContent = opponentRank
+        ? `The opponent committed a ${slot.dataset.opponentRarity} card here. You may use any lower rarity, up to ${rarityNames[Math.min(6, opponentRank + 1)]}.`
+        : `Showing every available ${positionName.toLowerCase()} card eligible for this slot.`;
       collectionCount.textContent = `${available} available`;
       matchCollection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
@@ -190,6 +200,7 @@
       if (slot.dataset.cardId) return showStatus('That lineup slot already has a staged card.', true);
       if (stagedSlots().length >= requiredCount) return showStatus(`This turn only allows ${requiredCount} card${requiredCount === 1 ? '' : 's'}.`, true);
       if (slot.dataset.position !== card.dataset.position) return showStatus(`That card is not eligible for ${slot.dataset.matchSlot}.`, true);
+      if (!cardFitsSlotRarity(slot, card)) return showStatus(`${slot.dataset.matchSlot} can be at most one rarity higher than the opponent's committed ${slot.dataset.opponentRarity} card. Any lower rarity is allowed.`, true);
       if (stagedSlots().some(item => item.dataset.cardId === card.dataset.cardId)) return showStatus('That card is already staged.', true);
       slot.dataset.cardId = card.dataset.cardId;
       const preview = slot.querySelector('[data-staged-card]');
