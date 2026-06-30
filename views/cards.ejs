@@ -37,7 +37,13 @@
     <% if (currentUser.role === 'admin') { %>
       <details class="card arena-admin" id="arena-admin">
         <summary><span><strong>Admin WUT Testing</strong><small><%= adminArena.queued %> waiting · <%= adminArena.active %> active</small></span></summary>
-        <div class="arena-admin-body"><p class="muted">Run the skill-aware matchmaking step immediately.</p><div class="admin-action-row"><form method="post" action="/cards/arena/admin/match"><button>Run Matchmaking Now</button></form></div></div>
+        <div class="arena-admin-body">
+          <p class="muted">Run matchmaking early, or rebuild every rating by replaying completed matches from oldest to newest.</p>
+          <div class="admin-action-row">
+            <form method="post" action="/cards/arena/admin/match"><button>Run Matchmaking Now</button></form>
+            <form method="post" action="/cards/arena/admin/recalculate-elo" onsubmit="return confirm('Reset every ELO to 1000 and replay all completed WUT matches oldest to newest?');"><button>Recalculate All ELO</button></form>
+          </div>
+        </div>
       </details>
     <% } %>
 
@@ -65,6 +71,33 @@
       </div>
     </section>
     <% } %>
+
+    <section class="card arena-elo-leaderboard" id="elo-leaderboard">
+      <div class="cards-section-head">
+        <div><p class="eyebrow">Skill standings</p><h2>ELO Leaderboard</h2></div>
+        <span class="pill"><%= arena.leaderboard.length %> ranked</span>
+      </div>
+      <% if (!arena.leaderboard.length) { %>
+        <p class="muted">Completed WUT matches will populate the leaderboard.</p>
+      <% } else { %>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Rank</th><th>Player</th><th>ELO</th><th>Record</th><th>Matches</th></tr></thead>
+            <tbody>
+              <% arena.leaderboard.forEach(entry => { %>
+                <tr class="<%= Number(entry.userId) === Number(currentUser.id) ? 'is-current-user' : '' %>">
+                  <td><strong>#<%= entry.rank %></strong></td>
+                  <td><%= entry.displayName %></td>
+                  <td><strong><%= entry.rating %></strong></td>
+                  <td><%= entry.wins %>-<%= entry.losses %><%= entry.draws ? `-${entry.draws}` : '' %></td>
+                  <td><%= entry.matches %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </section>
   </main>
   <script>
     const queueCountdown = document.querySelector('[data-queue-countdown]');

@@ -2179,6 +2179,60 @@ function applyArenaElo(match, now = new Date()) {
   match.elo_updated_at = now.toISOString();
 }
 
+function arenaCompletedMatchesOldestFirst() {
+  return state.cards.arena.matches
+    .filter(match => match.status === 'completed' && match.scores && Array.isArray(match.player_ids) && match.player_ids.length === 2)
+    .sort((a, b) => {
+      const aTime = new Date(a.resolved_at || a.completed_at || a.created_at || 0).getTime();
+      const bTime = new Date(b.resolved_at || b.completed_at || b.created_at || 0).getTime();
+      return (Number.isFinite(aTime) ? aTime : 0) - (Number.isFinite(bTime) ? bTime : 0) || Number(a.id) - Number(b.id);
+    });
+}
+
+function arenaEloLeaderboard() {
+  const completed = arenaCompletedMatchesOldestFirst();
+  const participantIds = new Set(completed.flatMap(match => match.player_ids.map(Number)));
+  return state.users
+    .filter(user => participantIds.has(Number(user.id)))
+    .map(user => {
+      const matches = completed.filter(match => match.player_ids.map(Number).includes(Number(user.id)));
+      const wins = matches.filter(match => Number(match.winner_user_id) === Number(user.id)).length;
+      const losses = matches.filter(match => match.winner_user_id != null && Number(match.winner_user_id) !== Number(user.id)).length;
+      return {
+        userId: Number(user.id),
+        displayName: user.display_name || user.username || `Player ${user.id}`,
+        rating: arenaRating(user.id),
+        wins,
+        losses,
+        draws: matches.length - wins - losses,
+        matches: matches.length
+      };
+    })
+    .sort((a, b) => b.rating - a.rating || b.wins - a.wins || a.losses - b.losses || a.displayName.localeCompare(b.displayName))
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
+export function recalculateArenaEloFromHistory(now = new Date()) {
+  ensureArenaState();
+  state.cards.arena.ratings = Object.fromEntries(state.users.map(user => [String(user.id), ARENA_DEFAULT_ELO]));
+  for (const match of state.cards.arena.matches) {
+    delete match.elo;
+    delete match.elo_updated_at;
+  }
+  const completed = arenaCompletedMatchesOldestFirst();
+  for (const match of completed) {
+    const matchDate = new Date(match.resolved_at || match.completed_at || match.created_at || now);
+    applyArenaElo(match, Number.isFinite(matchDate.getTime()) ? matchDate : now);
+  }
+  state.cards.arena.elo_recalculated_at = now.toISOString();
+  saveState();
+  return {
+    matchesReplayed: completed.length,
+    playersRanked: arenaEloLeaderboard().length,
+    recalculatedAt: state.cards.arena.elo_recalculated_at
+  };
+}
+
 function arenaOpponent(match, userId) {
   return match.player_ids.find(id => Number(id) !== Number(userId));
 }
@@ -2235,6 +2289,7 @@ export function getArenaStateForUser(userId, now = new Date()) {
     queuedEntry: queued ? { ...queued } : null,
     rating: arenaRating(userId),
     record: { wins, losses, draws },
+    leaderboard: arenaEloLeaderboard(),
     activeMatches: matches.filter(match => match.status === 'active').map(match => publicArenaMatch(match, userId)),
     readyMatches: matches.filter(match => match.status === 'ready' && !(match.revealed_by || []).map(Number).includes(Number(userId))).map(match => publicArenaMatch(match, userId)),
     history: matches.filter(match => match.status === 'completed' || (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(Number(userId)))).map(match => publicArenaMatch(match, userId)),

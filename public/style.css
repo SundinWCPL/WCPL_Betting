@@ -630,6 +630,10 @@ ul { color: var(--muted); line-height: 1.7; }
 .arena-admin summary span { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .arena-admin summary small { color: var(--muted); font-weight: 500; }
 .arena-admin-body { padding: 0 22px 20px; }
+.arena-elo-leaderboard { display: grid; gap: 14px; }
+.arena-elo-leaderboard table { margin: 0; }
+.arena-elo-leaderboard th:nth-child(n+3), .arena-elo-leaderboard td:nth-child(n+3) { text-align: right; }
+.arena-elo-leaderboard tr.is-current-user td { background: rgba(102,217,163,.08); }
 .arena-queue-card, .arena-ready-match, .arena-history-row, .arena-match-head, .arena-running-totals { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .arena-queue-card h2, .arena-match h2 { margin: 4px 0; }
 .arena-ready-list { border-color: var(--accent); }

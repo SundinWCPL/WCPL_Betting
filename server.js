@@ -99,6 +99,7 @@ import {
   resetCardsData,
   getArenaStateForUser,
   getArenaAdminState,
+  recalculateArenaEloFromHistory,
   enterArenaQueue,
   assignArenaMatchups,
   commitArenaTurn,
@@ -1619,6 +1620,19 @@ app.post('/cards/arena/admin/match', requireAdmin, async (req, res) => {
     const result = assignArenaMatchups();
     await scorePendingArenaMatches();
     req.session.flash = { type: 'success', message: `${result.createdMatchIds.length} WUT matchup${result.createdMatchIds.length === 1 ? '' : 's'} assigned.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards#arena-admin');
+});
+
+app.post('/cards/arena/admin/recalculate-elo', requireAdmin, (req, res) => {
+  try {
+    const result = recalculateArenaEloFromHistory();
+    req.session.flash = {
+      type: 'success',
+      message: `ELO recalculated from ${result.matchesReplayed} completed match${result.matchesReplayed === 1 ? '' : 'es'} for ${result.playersRanked} player${result.playersRanked === 1 ? '' : 's'}.`
+    };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
