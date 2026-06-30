@@ -36,7 +36,7 @@
               <span class="pack-card-cover" aria-hidden="true">
                 <strong>?</strong>
               </span>
-              <span class="pack-card-content <%= item.itemType === 'player' ? 'wut-card-face wut-card-front' : '' %>">
+              <span class="pack-card-content <%= item.itemType === 'player' ? 'wut-card-face wut-card-front' : '' %>" data-card-edition="<%= item.itemType === 'player' ? String(item.player?.cardArt || item.player?.card_art || item.cardArt || item.player?.edition || '').trim().toUpperCase() : '' %>">
                 <% if (item.itemType === 'player') { %>
                   <span class="wut-front-badge <%= item.player?.cardType === 'mythic' ? 'is-position-only' : '' %>">
                     <% if (item.player?.cardType !== 'mythic') { %><span><%= item.player?.edition %></span><% } %>

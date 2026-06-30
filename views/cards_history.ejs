@@ -75,7 +75,8 @@
       <div class="cards-section-head"><div><p class="eyebrow">All completed matches</p><h2>Results</h2></div></div>
       <% if (!arena.history.length) { %><p class="muted">Completed matches will appear here.</p><% } %>
       <% arena.history.forEach(match => { %>
-        <div class="arena-history-row"><span><strong>#<%= match.id %> vs <%= match.opponent.displayName %></strong><small><%= match.scores[String(currentUser.id)] %>–<%= match.scores[String(match.opponent.id)] %> · <%= Number(match.winner_user_id) === Number(currentUser.id) ? 'Win' : match.winner_user_id == null ? 'Draw' : 'Loss' %></small></span><a class="button-link ghost" href="/cards/arena/history?replay=<%= match.id %>#arena-results">Replay Reveal</a></div>
+        <% const ownRating = match.players.find(player => Number(player.id) === Number(currentUser.id)); %>
+        <div class="arena-history-row"><span><strong>#<%= match.id %> vs <%= match.opponent.displayName %></strong><small><%= match.scores[String(currentUser.id)] %>–<%= match.scores[String(match.opponent.id)] %> · <%= Number(match.winner_user_id) === Number(currentUser.id) ? 'Win' : match.winner_user_id == null ? 'Draw' : 'Loss' %><%= ownRating?.eloChange == null ? '' : ` · ELO ${ownRating.eloBefore} → ${ownRating.elo} (${ownRating.eloChange >= 0 ? '+' : ''}${ownRating.eloChange})` %></small></span><a class="button-link ghost" href="/cards/arena/history?replay=<%= match.id %>#arena-results">Replay Reveal</a></div>
       <% }) %>
     </section>
   </main>

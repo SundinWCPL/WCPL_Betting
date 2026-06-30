@@ -22,6 +22,7 @@
         <div class="arena-page-nav"><a class="button-link ghost" href="/cards">← WUT</a><a class="button-link ghost" href="/cards/arena/history">Match History</a></div>
         <p class="eyebrow">WUT Match #<%= match.id %></p>
         <h1>You vs <%= match.opponent.displayName %></h1>
+        <p class="eyebrow"><%= arena.rating %> ELO vs <%= match.opponent.elo %> ELO</p>
         <p><%= playerName(match.first_player_id) %> won the coin flip. Once a turn is locked, every committed card and boost is permanent.</p>
       </div>
       <div class="arena-turn-status <%= match.is_your_turn ? 'is-yours' : '' %>">

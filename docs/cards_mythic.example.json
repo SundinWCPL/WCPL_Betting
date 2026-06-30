@@ -1,7 +1,8 @@
 [
   {
-    "_comment": "Manual skater: rates are per game. team_id drives chemistry and defaults to WUT/Logos/<team_id>.png. Add manual_logo only when the logo filename differs. Flavor supports **bold**, *italic*, __underline__, ~~strike~~, newlines, and [center]text[/center] alignment.",
+    "_comment": "Manual skater: rates are per game. card_art selects the matching front/back pair and accepts S1, S2, or S3 (default). team_id drives chemistry and defaults to WUT/Logos/<team_id>.png. Add manual_logo only when the logo filename differs. Flavor supports **bold**, *italic*, __underline__, ~~strike~~, newlines, and [center]text[/center] alignment.",
     "id": "mythic-oak-scorer",
+    "card_art": "S1",
     "display_name": "Oak Scorer",
     "position": "F",
     "source_type": "manual",
@@ -28,6 +29,7 @@
   {
     "_comment": "Automatic: randomly samples real games from the selected season, stage, division, and player. source_steam_id may be supplied instead of relying on player_name. Mythic backs always show WUT Stats rather than career stats.",
     "id": "mythic-s2-playoffs-milk",
+    "card_art": "S2",
     "display_name": "S2 Playoffs Milk",
     "position": "G",
     "source_type": "automatic",

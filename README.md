@@ -84,7 +84,7 @@ ARENA_MAX_ACTIVE_MATCHES=3
 ARENA_TURN_HOURS=24
 ```
 
-Entering the WUT matchmaking queue is free and each match awards 50 Mushybux to the winner. First-time membership costs 100 Mushybux by default and can be changed with `WUT_JOIN_FEE`. Matchmaking runs at the top of every hour; unmatched players remain in the queue for the next run.
+Entering the WUT matchmaking queue is free and each match awards 50 Mushybux to the winner. First-time membership costs 100 Mushybux by default and can be changed with `WUT_JOIN_FEE`. Matchmaking runs every 30 minutes or immediately when the queue reaches 10 players. Pairing prefers the closest available ELO ratings, while unmatched players remain prioritized for the next run.
 
 Flat boost values are editable in the existing Cards section of the admin page. Admins also get a collapsed testing panel directly on the WUT page for running matchmaking immediately.
 

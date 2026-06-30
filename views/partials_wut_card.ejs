@@ -2,6 +2,8 @@
   const visualFantasy = card?.fantasyAppearances || { gamesPlayed: 0, fp: 0, stats: {} };
   const visualStats = visualFantasy.stats || {};
   const visualPlayer = card?.player || {};
+  const visualEdition = String(visualPlayer.edition || '').trim().toUpperCase();
+  const visualCardArt = String(visualPlayer.cardArt || visualPlayer.card_art || card?.card_art || visualEdition || 'S3').trim().toUpperCase();
   const visualEditionStats = visualPlayer.editionStats || visualPlayer.seasonStats?.[visualPlayer.edition] || {};
   const visualRarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
   const visualTitleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
@@ -17,7 +19,7 @@
   const visualStatus = statusText || 'Available for WUT';
 %>
 <div class="arena-wut-card-inner">
-  <div class="arena-wut-card-face wut-card-face wut-card-front">
+  <div class="arena-wut-card-face wut-card-face wut-card-front" data-card-edition="<%= visualCardArt %>">
     <div class="wut-front-badge <%= visualPlayer.cardType === 'mythic' ? 'is-position-only' : '' %>">
       <% if (visualPlayer.cardType !== 'mythic') { %><span><%= visualPlayer.edition %></span><% } %>
       <strong><%= visualPlayer.position %></strong>
@@ -28,7 +30,7 @@
     </div>
     <% if (visualPlayer.teamLogo) { %><img class="wut-front-logo" src="<%= visualPlayer.teamLogo %>" alt="" style="--team-bg:<%= visualPlayer.teamBgColor %>"><% } %>
   </div>
-  <div class="arena-wut-card-face arena-wut-card-back wut-card-face wut-card-back">
+  <div class="arena-wut-card-face arena-wut-card-back wut-card-face wut-card-back" data-card-edition="<%= visualCardArt %>">
     <div class="wut-back-header">
       <strong><%= visualName %></strong>
       <span><%= visualTitleCase(visualPlayer.tier) %> <small><%= '★'.repeat(Number(visualPlayer.stars || visualRarityRank[visualPlayer.tier] || 1)) %></small></span>

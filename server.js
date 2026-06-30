@@ -1563,8 +1563,8 @@ app.get('/cards/arena/history', requireLogin, requireWutReady, async (req, res, 
 
 app.post('/cards/arena/enter', requireLogin, requireWutReady, (req, res) => {
   try {
-    enterArenaQueue(req.session.userId);
-    req.session.flash = { type: 'success', message: 'WUT entry confirmed. Matchmaking will assign your opponent.' };
+    const entry = enterArenaQueue(req.session.userId);
+    req.session.flash = { type: 'success', message: entry.matchmakingTriggered ? 'Queue reached 10 players. Matchmaking ran immediately.' : 'WUT entry confirmed. Matchmaking will assign your opponent.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
@@ -2305,7 +2305,7 @@ app.post('/admin/cards/open', requireAdmin, (req, res) => {
 
 app.post('/admin/cards/close', requireAdmin, (req, res) => {
   setCardsOpen(false);
-  req.session.flash = { type: 'success', message: 'WUT closed. All WUT activity and hourly matchmaking are paused.' };
+  req.session.flash = { type: 'success', message: 'WUT closed. All WUT activity and matchmaking are paused.' };
   res.redirect('/admin#cards-controls');
 });
 
@@ -2403,6 +2403,7 @@ app.post('/admin/cards/grant', requireAdmin, async (req, res) => {
         cardIdentity: player.cardIdentity || player.catalogKey,
         catalogKey: player.catalogKey,
         cardType: player.cardType || 'player',
+        cardArt: player.cardArt || player.card_art || player.edition || 'S3',
         edition: player.edition || 'S3',
         sourceSeason: player.sourceSeason || player.edition || 'S3',
         sourceStage: player.sourceStage || 'reg',

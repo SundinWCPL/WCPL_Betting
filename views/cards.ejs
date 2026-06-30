@@ -15,13 +15,13 @@
   <main class="container cards-page arena-page">
     <section class="card page-title cards-title">
       <div><p class="eyebrow">Asynchronous head-to-head</p><h1>WUT</h1><p>Build a five-card lineup, assign boosts, and go head-to-head.</p></div>
-      <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(balance) %> Mushybux</span><% if (wutMembership.starterOpened) { %><span class="pill">Record <%= arena.record.wins %>-<%= arena.record.losses %></span><% } %><% if (cardsOpen && wutMembership.starterOpened) { %><a class="button-link ghost" href="/cards/collection">Collection</a><a class="button-link" href="/cards/store">Card Shop</a><% } %></div>
+      <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(balance) %> Mushybux</span><% if (wutMembership.starterOpened) { %><span class="pill">ELO <%= arena.rating %></span><span class="pill">Record <%= arena.record.wins %>-<%= arena.record.losses %><%= arena.record.draws ? `-${arena.record.draws}` : '' %></span><% } %><% if (cardsOpen && wutMembership.starterOpened) { %><a class="button-link ghost" href="/cards/collection">Collection</a><a class="button-link" href="/cards/store">Card Shop</a><% } %></div>
     </section>
 
     <% if (!cardsOpen) { %>
       <section class="card casino-closed-notice">
         <strong>WUT is temporarily closed.</strong>
-        <span>Collections, the shop, matches, queue entries, and hourly matchmaking are paused until an admin reopens WUT.</span>
+        <span>Collections, the shop, matches, queue entries, and matchmaking are paused until an admin reopens WUT.</span>
       </section>
     <% } else if (!wutMembership.joined) { %>
       <section class="card arena-queue-card wut-onboarding-card">
@@ -37,13 +37,13 @@
     <% if (currentUser.role === 'admin') { %>
       <details class="card arena-admin" id="arena-admin">
         <summary><span><strong>Admin WUT Testing</strong><small><%= adminArena.queued %> waiting · <%= adminArena.active %> active</small></span></summary>
-        <div class="arena-admin-body"><p class="muted">Run the hourly matchmaking step immediately.</p><div class="admin-action-row"><form method="post" action="/cards/arena/admin/match"><button>Run Matchmaking Now</button></form></div></div>
+        <div class="arena-admin-body"><p class="muted">Run the skill-aware matchmaking step immediately.</p><div class="admin-action-row"><form method="post" action="/cards/arena/admin/match"><button>Run Matchmaking Now</button></form></div></div>
       </details>
     <% } %>
 
     <section class="card arena-queue-card">
-      <div><p class="eyebrow">Always-open Queue · Matchmaking hourly (<span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span>) · Pacific Time</p><h2><%= arena.queuedEntry ? (arena.queuedEntry.priority ? 'Priority Entry Active' : 'You’re In') : 'Join Queue' %></h2><p class="muted"><%= arena.queuedEntry ? (arena.queuedEntry.priority ? 'You stayed queued and will be matched first in the next hourly run.' : `You are one of ${arena.queueCount} queued players.`) : `Free entry · win ${arena.config.winnerPrize} Mushybux · maximum ${arena.config.maxActiveMatches} active matches` %></p></div>
-      <% if (!arena.queuedEntry) { %><form method="post" action="/cards/arena/enter"><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches ? 'disabled' : '' %>>Enter Queue Free</button></form><% } else { %><span class="pill">Waiting for hourly matchmaking</span><% } %>
+      <div><p class="eyebrow">Always-open Queue · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span> · Runs early at <%= arena.config.queueTrigger %> players</p><h2><%= arena.queuedEntry ? (arena.queuedEntry.priority ? 'Priority Entry Active' : 'You’re In') : 'Join Queue' %></h2><p class="muted"><%= arena.queuedEntry ? (arena.queuedEntry.priority ? 'You stayed queued and will be matched first in the next run.' : `You are one of ${arena.queueCount} queued players. We’ll prefer a nearby ELO, then match from everyone available.`) : `Free entry · skill-aware pairing · win ${arena.config.winnerPrize} Mushybux · maximum ${arena.config.maxActiveMatches} active matches` %></p></div>
+      <% if (!arena.queuedEntry) { %><form method="post" action="/cards/arena/enter"><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches ? 'disabled' : '' %>>Enter Queue Free</button></form><% } else { %><span class="pill">Waiting for matchmaking</span><% } %>
     </section>
 
     <section class="card arena-active-section">
@@ -55,7 +55,7 @@
         <% [...arena.readyMatches, ...arena.activeMatches].forEach(match => { const isReady = match.status === 'ready'; %>
           <a class="arena-match-link <%= isReady ? 'is-ready' : match.is_your_turn ? 'is-your-turn' : '' %>" href="/cards/arena/matches/<%= match.id %>">
             <span class="arena-match-number">Match #<%= match.id %></span>
-            <h3>vs <%= match.opponent.displayName %></h3>
+            <h3>vs <%= match.opponent.displayName %> <small>· <%= match.opponent.elo %> ELO</small></h3>
             <div class="arena-match-progress"><span>You <strong><%= committedCount(match, currentUser.id) %>/5</strong></span><span><%= match.opponent.displayName %> <strong><%= committedCount(match, match.opponent.id) %>/5</strong></span></div>
             <strong class="arena-match-callout"><%= isReady ? 'Lineups Locked — Show Results' : match.is_your_turn ? `Your turn · place ${match.cards_required_this_turn}` : `${playerName(match, match.current_player_id)} is choosing` %></strong>
             <% if (match.turn_deadline) { %><small data-deadline="<%= match.turn_deadline %>"></small><% } %>

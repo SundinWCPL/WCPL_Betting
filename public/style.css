@@ -252,6 +252,10 @@ ul { color: var(--muted); line-height: 1.7; }
 }
 .wut-card-front::before { background-image: url("/images/casino/WUT/CardFront.png"); }
 .wut-card-back::before { background-image: url("/images/casino/WUT/CardBack.png"); }
+.wut-card-front[data-card-edition="S1"]::before { background-image: url("/images/casino/WUT/CardFrontS1.png"); }
+.wut-card-back[data-card-edition="S1"]::before { background-image: url("/images/casino/WUT/CardBackS1.png"); }
+.wut-card-front[data-card-edition="S2"]::before { background-image: url("/images/casino/WUT/CardFrontS2.png"); }
+.wut-card-back[data-card-edition="S2"]::before { background-image: url("/images/casino/WUT/CardBackS2.png"); }
 .wut-front-copy {
   position: absolute;
   left: 13.5%;
@@ -2209,6 +2213,11 @@ a.matchup-result-badge:hover {
   gap: 18px;
   max-width: 1450px;
 }
+.horse-racing-page [hidden] { display: none !important; }
+.horse-live-panel { display: grid; gap: 18px; }
+.horse-view-tabs { display: flex; gap: 8px; padding: 8px; }
+.horse-view-tabs button { color: var(--muted); background: transparent; }
+.horse-view-tabs button.is-active { color: #172019; background: var(--track-gold); }
 .horse-race-hero {
   position: relative;
   overflow: hidden;
@@ -2434,6 +2443,19 @@ a.matchup-result-badge:hover {
 .horse-inline-message.is-error { color: var(--danger); }
 
 .horse-results-grid { margin: 0; }
+.horse-card-results, .horse-past-panel { display: grid; gap: 14px; }
+.horse-past-panel > .muted { margin: -4px 0 2px; }
+.horse-result-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 12px; }
+.horse-result-card { overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--card2); }
+.horse-result-card > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border-bottom: 1px solid var(--border); }
+.horse-result-card > div strong { color: var(--track-gold); }
+.horse-result-card > div small { color: var(--muted); }
+.horse-result-card ol { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.horse-result-card li { display: grid; grid-template-columns: 34px 1fr; gap: 6px; padding: 7px 12px; border-bottom: 1px solid rgba(255,255,255,.05); }
+.horse-result-card li:first-child { color: var(--track-gold); }
+.horse-result-card li span { color: var(--muted); font-size: 12px; font-weight: 900; }
+.horse-result-bet { margin: 0; padding: 10px 12px; color: #ffc1c1; background: rgba(255,107,107,.07); font-size: 12px; }
+.horse-result-bet.is-win { color: var(--accent); background: rgba(102,217,163,.08); }
 .horse-results-list { display: grid; gap: 5px; margin: 14px 0 0; padding: 0; list-style: none; }
 .horse-results-list li { display: grid; grid-template-columns: 34px 1fr; align-items: center; min-height: 35px; padding: 5px 8px; border-bottom: 1px solid var(--border); }
 .horse-results-list li:first-child { color: var(--track-gold); }

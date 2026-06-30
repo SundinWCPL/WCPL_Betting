@@ -730,6 +730,10 @@ async function loadManualMythicCards() {
       throw new Error(`Mythic card ${id} has an invalid source_type. Use "manual" or "automatic".`);
     }
     const sourceSeason = normalizeSeason(entry.source_season || entry.sourceSeason || entry.season || 'S3');
+    const cardArt = clean(entry.card_art || entry.cardArt || 'S3').toUpperCase();
+    if (!PLAYER_CARD_SEASONS.includes(cardArt)) {
+      throw new Error(`Mythic card ${id} has an invalid card_art. Use "S1", "S2", or "S3".`);
+    }
     const sourceStage = clean(entry.source_stage || entry.sourceStage || 'custom') || 'custom';
     const sourceDivisionId = clean(entry.source_division_id || entry.sourceDivisionId || entry.division_id || entry.divisionId || 'ALL');
     const playerKey = clean(entry.source_player_key || entry.sourcePlayerKey || entry.player_key || entry.playerKey || id);
@@ -755,6 +759,8 @@ async function loadManualMythicCards() {
       cardType: 'mythic',
       mythicId: id,
       edition: 'MYTHIC',
+      cardArt,
+      card_art: cardArt,
       sourceType,
       source_type: sourceType,
       season: sourceSeason,
@@ -860,6 +866,7 @@ function playerPackItem(player) {
     cardIdentity: player.cardIdentity || player.catalogKey,
     catalogKey: player.catalogKey,
     cardType: player.cardType || 'player',
+    cardArt: player.cardArt || player.card_art || player.edition || 'S3',
     edition: player.edition || 'S3',
     sourceSeason: player.sourceSeason || player.edition || 'S3',
     sourceStage: player.sourceStage || 'reg',

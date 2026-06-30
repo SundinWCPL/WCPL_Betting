@@ -29,6 +29,13 @@
     </section>
   <% } %>
 
+  <nav class="card horse-view-tabs" aria-label="Horse racing views">
+    <button type="button" class="is-active" data-horse-tab="live">Live Racing</button>
+    <button type="button" data-horse-tab="past">Past Results</button>
+  </nav>
+
+  <div class="horse-live-panel" data-horse-panel="live">
+
   <section class="card horse-race-hero">
     <div>
       <p class="eyebrow">Mushy Downs · Three-Race Nightly Card</p>
@@ -138,6 +145,14 @@
         </div>
       </section>
 
+      <section class="card horse-card-results" data-card-results-section <%= horseRaceState.card.previousResults.length ? '' : 'hidden' %>>
+        <div class="horse-section-head">
+          <div><p class="eyebrow">Tonight's Card</p><h2>Previous race results</h2></div>
+          <span class="pill" data-card-results-count><%= horseRaceState.card.previousResults.length %> official</span>
+        </div>
+        <div class="horse-result-cards" data-card-results></div>
+      </section>
+
       <section class="grid two horse-results-grid">
         <div class="card horse-results-card">
           <p class="eyebrow">Official Result</p>
@@ -219,6 +234,16 @@
       </div>
     </section>
   <% } %>
+  </div>
+
+  <section class="card horse-past-panel" data-horse-panel="past" hidden>
+    <div class="horse-section-head">
+      <div><p class="eyebrow">The Form Book</p><h1>Past results</h1></div>
+      <span class="pill" data-past-results-count><%= horseRaceState.pastResults.length %> races</span>
+    </div>
+    <p class="muted">Official finishing orders from every completed race, newest first.</p>
+    <div class="horse-result-cards horse-past-results" data-past-results></div>
+  </section>
 </main>
 
 <script>
@@ -247,6 +272,11 @@
   const currentBetText = $('[data-current-bet-text]');
   const resultsEl = $('[data-race-results]');
   const userResultEl = $('[data-user-result]');
+  const cardResultsSection = $('[data-card-results-section]');
+  const cardResultsEl = $('[data-card-results]');
+  const cardResultsCount = $('[data-card-results-count]');
+  const pastResultsEl = $('[data-past-results]');
+  const pastResultsCount = $('[data-past-results-count]');
   const chatMessagesEl = $('[data-chat-messages]');
   const chatForm = $('[data-chat-form]');
   const chatInput = chatForm?.querySelector('textarea');
@@ -255,6 +285,69 @@
   const chatError = $('[data-chat-error]');
   const buyHorseButton = $('[data-buy-horse-button]');
   const fmt = (number) => Number(number || 0).toLocaleString();
+
+  function formatRaceDate(date) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: raceState.config.timeZone,
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    }).format(new Date(`${date}T12:00:00Z`));
+  }
+
+  function buildResultCard(result, showDate = false) {
+    const article = document.createElement('article');
+    article.className = 'horse-result-card';
+    const header = document.createElement('div');
+    const title = document.createElement('strong');
+    const date = document.createElement('small');
+    title.textContent = `Race ${result.number}`;
+    date.textContent = showDate ? formatRaceDate(result.date) : 'Official result';
+    header.append(title, date);
+    const list = document.createElement('ol');
+    result.finishingOrder.forEach(horse => {
+      const item = document.createElement('li');
+      const position = document.createElement('span');
+      const name = document.createElement('b');
+      position.textContent = `#${horse.position}`;
+      name.textContent = horse.name;
+      item.append(position, name);
+      list.appendChild(item);
+    });
+    article.append(header, list);
+    if (result.userBet?.settled) {
+      const bet = document.createElement('p');
+      const payout = Number(result.userBet.payout || 0);
+      bet.className = `horse-result-bet ${payout > 0 ? 'is-win' : ''}`;
+      bet.textContent = `Your wager: ${result.userBet.horse_name} finished #${result.userBet.finishing_position} · ${payout > 0 ? `${fmt(payout)} Mushybux paid` : 'no payout'}`;
+      article.appendChild(bet);
+    }
+    return article;
+  }
+
+  function renderResultHistory() {
+    const previous = raceState.card.previousResults || [];
+    if (cardResultsSection) cardResultsSection.hidden = previous.length === 0;
+    if (cardResultsCount) cardResultsCount.textContent = `${previous.length} official`;
+    if (cardResultsEl) {
+      cardResultsEl.innerHTML = '';
+      previous.forEach(result => cardResultsEl.appendChild(buildResultCard(result)));
+    }
+    const past = raceState.pastResults || [];
+    if (pastResultsCount) pastResultsCount.textContent = `${past.length} race${past.length === 1 ? '' : 's'}`;
+    if (pastResultsEl) {
+      pastResultsEl.innerHTML = '';
+      if (!past.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'No races have been completed yet.';
+        pastResultsEl.appendChild(empty);
+      } else {
+        past.forEach(result => pastResultsEl.appendChild(buildResultCard(result, true)));
+      }
+    }
+  }
 
   function nowMs() {
     return Date.now() + serverOffset;
@@ -562,6 +655,7 @@
     updateClock();
     renderBetting();
     renderResults();
+    renderResultHistory();
     renderOwnership();
     renderHorseCareers();
     startRaceAnimation();
@@ -707,6 +801,22 @@
       $$('[data-race-admin]').forEach(control => { control.disabled = false; });
     }
   }));
+
+  function selectHorseTab(tab) {
+    const selected = tab === 'past' ? 'past' : 'live';
+    $$('[data-horse-tab]').forEach(button => {
+      const active = button.dataset.horseTab === selected;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    $$('[data-horse-panel]').forEach(panel => { panel.hidden = panel.dataset.horsePanel !== selected; });
+  }
+
+  $$('[data-horse-tab]').forEach(button => button.addEventListener('click', () => {
+    selectHorseTab(button.dataset.horseTab);
+    history.replaceState(null, '', button.dataset.horseTab === 'past' ? '#past-results' : location.pathname);
+  }));
+  selectHorseTab(location.hash === '#past-results' ? 'past' : 'live');
 
   renderState();
   pollChat();

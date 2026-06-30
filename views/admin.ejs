@@ -219,7 +219,7 @@
         <% } %>
         <form method="post" action="/admin/cards/recalculate"><button>Recalculate Player Tiers</button></form>
       </div>
-      <p class="muted small-note">Closing WUT pauses all pages, purchases, matches, queue entries, and hourly matchmaking. Link visibility is controlled separately.</p>
+      <p class="muted small-note">Closing WUT pauses all pages, purchases, matches, queue entries, and matchmaking. Link visibility is controlled separately.</p>
 
       <form method="post" action="/admin/cards/config" class="cards-admin-config">
         <% [
@@ -284,7 +284,7 @@
           <div class="cards-scoring-config-grid">
             <% ['2','3','4','5'].forEach(count => { %>
               <label><%= count %> same-team players
-                <span class="admin-number-suffix"><input type="number" min="0" step="1" name="scoring[chemistryBonuses][<%= count %>]" value="<%= cardsAdmin.config.scoring.chemistryBonuses[count] %>" required><b>%</b></span>
+                <span class="admin-number-suffix"><input type="number" min="0" step="1" name="scoring[chemistryBonuses][players<%= count %>]" value="<%= cardsAdmin.config.scoring.chemistryBonuses[count] %>" required><b>%</b></span>
               </label>
             <% }) %>
           </div>

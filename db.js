@@ -16,6 +16,10 @@ const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
 const ARENA_ENTRY_FEE = 0;
 const ARENA_WINNER_PRIZE = 50;
+const ARENA_DEFAULT_ELO = 1000;
+const ARENA_ELO_K_FACTOR = 32;
+const ARENA_MATCHMAKING_MINUTES = 30;
+const ARENA_QUEUE_TRIGGER = 10;
 
 function ensureDirForFile(filePath) {
   const dir = path.dirname(filePath);
@@ -131,9 +135,14 @@ function defaultState() {
           winnerPrize: ARENA_WINNER_PRIZE,
           timeZone: process.env.ARENA_TIME_ZONE || 'America/Los_Angeles',
           maxActiveMatches: Number(process.env.ARENA_MAX_ACTIVE_MATCHES || 3),
-          turnHours: Number(process.env.ARENA_TURN_HOURS || 24)
+          turnHours: Number(process.env.ARENA_TURN_HOURS || 24),
+          matchmakingMinutes: ARENA_MATCHMAKING_MINUTES,
+          queueTrigger: ARENA_QUEUE_TRIGGER,
+          defaultElo: ARENA_DEFAULT_ELO,
+          eloKFactor: ARENA_ELO_K_FACTOR
         },
-        lastMatchmakingHour: '',
+        lastMatchmakingSlot: '',
+        ratings: {},
         entries: [],
         matches: [],
         nextEntryId: 1,
@@ -417,6 +426,7 @@ function ensureCardsState() {
     card.source_team_id = card.source_team_id || '';
     card.source_player_key = card.source_player_key || card.player_key || '';
     card.source_steam_id = card.source_steam_id || '';
+    card.card_art = card.card_art || '';
     card.display_name = card.display_name || '';
     card.card_identity = card.card_identity || `${card.edition}|${card.division_id}|${card.player_key}`;
     card.fantasy_stats = card.fantasy_stats && typeof card.fantasy_stats === 'object' ? card.fantasy_stats : {};
@@ -439,10 +449,17 @@ function ensureCardsState() {
   };
   state.cards.arena.entries = Array.isArray(state.cards.arena.entries) ? state.cards.arena.entries : [];
   state.cards.arena.matches = Array.isArray(state.cards.arena.matches) ? state.cards.arena.matches : [];
+  state.cards.arena.ratings = state.cards.arena.ratings && typeof state.cards.arena.ratings === 'object'
+    ? state.cards.arena.ratings
+    : {};
   state.cards.arena.nextEntryId = Number(state.cards.arena.nextEntryId || 1);
   state.cards.arena.nextMatchId = Number(state.cards.arena.nextMatchId || 1);
   state.cards.arena.config.entryFee = ARENA_ENTRY_FEE;
   state.cards.arena.config.winnerPrize = ARENA_WINNER_PRIZE;
+  state.cards.arena.config.matchmakingMinutes = ARENA_MATCHMAKING_MINUTES;
+  state.cards.arena.config.queueTrigger = ARENA_QUEUE_TRIGGER;
+  state.cards.arena.config.defaultElo = ARENA_DEFAULT_ELO;
+  state.cards.arena.config.eloKFactor = ARENA_ELO_K_FACTOR;
   for (const entry of state.cards.arena.entries.filter(item => item.status === 'queued' && Number(item.paid_amount || 0) > 0)) {
     const refund = Math.ceil(Number(entry.paid_amount || 0));
     const user = state.users.find(item => Number(item.id) === Number(entry.user_id));
@@ -469,8 +486,8 @@ function ensureCardsState() {
   if (!process.env.ARENA_TIME_ZONE && state.cards.arena.config.timeZone === 'America/Edmonton') {
     state.cards.arena.config.timeZone = 'America/Los_Angeles';
   }
-  if (!state.cards.arena.lastMatchmakingHour) {
-    state.cards.arena.lastMatchmakingHour = arenaHourKey(new Date());
+  if (!state.cards.arena.lastMatchmakingSlot) {
+    state.cards.arena.lastMatchmakingSlot = arenaSlotKey(new Date());
   }
   state.nextOwnedCardId = Number(state.nextOwnedCardId || 1);
   state.nextOwnedBoostId = Number(state.nextOwnedBoostId || 1);
@@ -1514,7 +1531,7 @@ export function setCardsOpen(open) {
   state.settings.cardsOpen = Boolean(open);
   if (state.settings.cardsOpen) {
     ensureCardsState();
-    state.cards.arena.lastMatchmakingHour = arenaHourKey(new Date());
+    state.cards.arena.lastMatchmakingSlot = arenaSlotKey(new Date());
   }
   saveState();
   return getAdminSettings();
@@ -1979,13 +1996,19 @@ export function saveCardsConfig(config) {
   if (savePctBonuses.some((row, index) => index > 0 && row.threshold <= savePctBonuses[index - 1].threshold)) {
     throw new Error('Save percentage thresholds must be unique.');
   }
-  const chemistryBonuses = Object.fromEntries(['2', '3', '4', '5'].map(count => [
-    count,
-    cleanPositiveConfigNumber(
-      config?.scoring?.chemistryBonuses?.[count] ?? state.cards.config.scoring.chemistryBonuses[count],
-      `${count}-player chemistry bonus`
-    )
-  ]));
+  const submittedChemistryBonuses = config?.scoring?.chemistryBonuses;
+  const chemistryBonuses = Object.fromEntries(['2', '3', '4', '5'].map(count => {
+    const submittedValue = Array.isArray(submittedChemistryBonuses)
+      ? submittedChemistryBonuses[Number(count) - 2]
+      : submittedChemistryBonuses?.[`players${count}`] ?? submittedChemistryBonuses?.[count];
+    return [
+      count,
+      cleanPositiveConfigNumber(
+        submittedValue ?? state.cards.config.scoring.chemistryBonuses[count],
+        `${count}-player chemistry bonus`
+      )
+    ];
+  }));
   const next = {
     playerPackPrices: cleanGroup('playerPackPrices', packTypes),
     boostPackPrices: cleanGroup('boostPackPrices', packTypes),
@@ -2112,15 +2135,13 @@ function arenaLocalDateKey(date = new Date(), timeZone = null) {
   return `${value.year}-${value.month}-${value.day}`;
 }
 
-function arenaHourKey(date = new Date()) {
-  return date.toISOString().slice(0, 13);
+function arenaSlotKey(date = new Date()) {
+  return String(Math.floor(date.getTime() / (ARENA_MATCHMAKING_MINUTES * 60000)));
 }
 
 function nextArenaMatchmakingAt(now = new Date()) {
-  const next = new Date(now);
-  next.setUTCMinutes(0, 0, 0);
-  next.setUTCHours(next.getUTCHours() + 1);
-  return next;
+  const intervalMs = ARENA_MATCHMAKING_MINUTES * 60000;
+  return new Date((Math.floor(now.getTime() / intervalMs) + 1) * intervalMs);
 }
 
 function ensureArenaState() {
@@ -2131,6 +2152,31 @@ function activeArenaMatchesForUser(userId) {
   return state.cards.arena.matches.filter(match =>
     ['active', 'scoring'].includes(match.status) && match.player_ids.map(Number).includes(Number(userId))
   );
+}
+
+function arenaRating(userId) {
+  const key = String(Number(userId));
+  const current = Number(state.cards.arena.ratings[key]);
+  if (!Number.isFinite(current)) state.cards.arena.ratings[key] = ARENA_DEFAULT_ELO;
+  return Number(state.cards.arena.ratings[key]);
+}
+
+function applyArenaElo(match, now = new Date()) {
+  if (match.elo_updated_at || !Array.isArray(match.player_ids) || match.player_ids.length !== 2) return;
+  const [firstId, secondId] = match.player_ids.map(Number);
+  const firstBefore = arenaRating(firstId);
+  const secondBefore = arenaRating(secondId);
+  const expectedFirst = 1 / (1 + Math.pow(10, (secondBefore - firstBefore) / 400));
+  const firstScore = match.winner_user_id == null ? 0.5 : Number(match.winner_user_id) === firstId ? 1 : 0;
+  const firstAfter = Math.max(100, Math.round(firstBefore + ARENA_ELO_K_FACTOR * (firstScore - expectedFirst)));
+  const secondAfter = Math.max(100, secondBefore - (firstAfter - firstBefore));
+  state.cards.arena.ratings[String(firstId)] = firstAfter;
+  state.cards.arena.ratings[String(secondId)] = secondAfter;
+  match.elo = {
+    [String(firstId)]: { before: firstBefore, after: firstAfter, change: firstAfter - firstBefore },
+    [String(secondId)]: { before: secondBefore, after: secondAfter, change: secondAfter - secondBefore }
+  };
+  match.elo_updated_at = now.toISOString();
 }
 
 function arenaOpponent(match, userId) {
@@ -2146,7 +2192,14 @@ function arenaCurrentPlayerId(match) {
 function publicArenaMatch(match, userId) {
   const players = match.player_ids.map(id => {
     const user = state.users.find(item => Number(item.id) === Number(id));
-    return { id: Number(id), displayName: user?.display_name || user?.username || `Player ${id}` };
+    const resultRating = match.elo?.[String(id)];
+    return {
+      id: Number(id),
+      displayName: user?.display_name || user?.username || `Player ${id}`,
+      elo: Number(resultRating?.after ?? arenaRating(id)),
+      eloBefore: resultRating == null ? null : Number(resultRating.before),
+      eloChange: resultRating == null ? null : Number(resultRating.change)
+    };
   });
   return {
     ...JSON.parse(JSON.stringify(match)),
@@ -2174,12 +2227,14 @@ export function getArenaStateForUser(userId, now = new Date()) {
   const losses = resolvedMatches.filter(match =>
     match.winner_user_id != null && Number(match.winner_user_id) !== Number(userId)
   ).length;
+  const draws = resolvedMatches.filter(match => match.winner_user_id == null).length;
   return {
     config: JSON.parse(JSON.stringify(state.cards.arena.config)),
     nextMatchmakingAt: nextArenaMatchmakingAt(now).toISOString(),
     queueCount: state.cards.arena.entries.filter(entry => entry.status === 'queued').length,
     queuedEntry: queued ? { ...queued } : null,
-    record: { wins, losses },
+    rating: arenaRating(userId),
+    record: { wins, losses, draws },
     activeMatches: matches.filter(match => match.status === 'active').map(match => publicArenaMatch(match, userId)),
     readyMatches: matches.filter(match => match.status === 'ready' && !(match.revealed_by || []).map(Number).includes(Number(userId))).map(match => publicArenaMatch(match, userId)),
     history: matches.filter(match => match.status === 'completed' || (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(Number(userId)))).map(match => publicArenaMatch(match, userId)),
@@ -2203,17 +2258,12 @@ export function enterArenaQueue(userId, now = new Date()) {
     paid_amount: ARENA_ENTRY_FEE, priority: false, status: 'queued', created_at: now.toISOString()
   };
   arena.entries.push(entry);
+  if (arena.entries.filter(candidate => candidate.status === 'queued').length >= ARENA_QUEUE_TRIGGER) {
+    assignArenaMatchups(now);
+    return { ...entry, matchmakingTriggered: true };
+  }
   saveState();
   return { ...entry };
-}
-
-function shuffleArenaEntries(entries) {
-  const copy = [...entries];
-  for (let index = copy.length - 1; index > 0; index -= 1) {
-    const other = Math.floor(Math.random() * (index + 1));
-    [copy[index], copy[other]] = [copy[other], copy[index]];
-  }
-  return copy;
 }
 
 export function assignArenaMatchups(now = new Date()) {
@@ -2221,13 +2271,28 @@ export function assignArenaMatchups(now = new Date()) {
   const arena = state.cards.arena;
   const eligible = arena.entries.filter(entry => entry.status === 'queued' &&
     activeArenaMatchesForUser(entry.user_id).length < Number(arena.config.maxActiveMatches || 3));
-  const priority = shuffleArenaEntries(eligible.filter(entry => entry.priority));
-  const normal = shuffleArenaEntries(eligible.filter(entry => !entry.priority));
-  const ordered = [...priority, ...normal];
+  const ordered = [...eligible].sort((a, b) =>
+    Number(Boolean(b.priority)) - Number(Boolean(a.priority)) ||
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+    Number(a.id) - Number(b.id)
+  );
   const created = [];
   while (ordered.length >= 2) {
     const firstEntry = ordered.shift();
-    const secondEntry = ordered.shift();
+    const firstRating = arenaRating(firstEntry.user_id);
+    let closestIndex = 0;
+    for (let index = 1; index < ordered.length; index += 1) {
+      const candidate = ordered[index];
+      const closest = ordered[closestIndex];
+      const candidateGap = Math.abs(arenaRating(candidate.user_id) - firstRating);
+      const closestGap = Math.abs(arenaRating(closest.user_id) - firstRating);
+      if (
+        candidateGap < closestGap ||
+        (candidateGap === closestGap && Number(Boolean(candidate.priority)) > Number(Boolean(closest.priority))) ||
+        (candidateGap === closestGap && Boolean(candidate.priority) === Boolean(closest.priority) && new Date(candidate.created_at) < new Date(closest.created_at))
+      ) closestIndex = index;
+    }
+    const [secondEntry] = ordered.splice(closestIndex, 1);
     firstEntry.status = 'matched'; secondEntry.status = 'matched';
     firstEntry.matched_at = now.toISOString(); secondEntry.matched_at = now.toISOString();
     const firstPlayerId = Math.random() < 0.5 ? firstEntry.user_id : secondEntry.user_id;
@@ -2236,6 +2301,10 @@ export function assignArenaMatchups(now = new Date()) {
       entry_ids: [firstEntry.id, secondEntry.id], first_player_id: Number(firstPlayerId),
       turn_index: 0, turn_deadline: new Date(now.getTime() + Number(arena.config.turnHours || 24) * 3600000).toISOString(),
       entry_fee: ARENA_ENTRY_FEE, prize_amount: ARENA_WINNER_PRIZE,
+      starting_elo: {
+        [String(firstEntry.user_id)]: arenaRating(firstEntry.user_id),
+        [String(secondEntry.user_id)]: arenaRating(secondEntry.user_id)
+      },
       placements: [], status: 'active', scores: null, winner_user_id: null, winnings_claimed_at: null,
       created_at: now.toISOString(), resolved_at: null, completed_at: null
     };
@@ -2246,23 +2315,26 @@ export function assignArenaMatchups(now = new Date()) {
     unmatched.priority = true;
     unmatched.carried_at = now.toISOString();
   }
-  arena.lastMatchmakingHour = arenaHourKey(now);
+  arena.lastMatchmakingSlot = arenaSlotKey(now);
+  arena.lastMatchmakingAt = now.toISOString();
   saveState();
   return {
     createdMatchIds: created,
     unmatchedUserId: ordered[0]?.user_id || null,
-    lastMatchmakingHour: arena.lastMatchmakingHour
+    lastMatchmakingAt: now.toISOString()
   };
 }
 
 export function getArenaAdminState(now = new Date()) {
   ensureArenaState();
-  const currentHour = arenaHourKey(now);
+  const currentSlot = arenaSlotKey(now);
+  const queued = state.cards.arena.entries.filter(entry => entry.status === 'queued').length;
   return {
-    lastMatchmakingHour: state.cards.arena.lastMatchmakingHour,
-    matchmakingDue: state.cards.arena.lastMatchmakingHour !== currentHour,
+    lastMatchmakingAt: state.cards.arena.lastMatchmakingAt || null,
+    matchmakingDue: state.cards.arena.lastMatchmakingSlot !== currentSlot || queued >= ARENA_QUEUE_TRIGGER,
+    queueTriggerReached: queued >= ARENA_QUEUE_TRIGGER,
     nextMatchmakingAt: nextArenaMatchmakingAt(now).toISOString(),
-    queued: state.cards.arena.entries.filter(entry => entry.status === 'queued').length,
+    queued,
     active: state.cards.arena.matches.filter(match => match.status === 'active').length,
     ready: state.cards.arena.matches.filter(match => match.status === 'ready').length,
     config: JSON.parse(JSON.stringify(state.cards.arena.config))
@@ -2421,6 +2493,7 @@ export function completeArenaReveal(userId, matchId, now = new Date()) {
   if (match.revealed_by.length >= match.player_ids.length) {
     match.status = 'completed';
     match.completed_at = match.completed_at || now.toISOString();
+    applyArenaElo(match, now);
   }
   saveState();
   return publicArenaMatch(match, userId);
@@ -2731,6 +2804,7 @@ function createOwnedPlayerCard(userId, item, acquiredWeek) {
     player_key: item.playerKey,
     card_identity: item.cardIdentity || item.catalogKey || `${item.edition || 'S3'}|${item.divisionId}|${item.playerKey}`,
     card_type: item.cardType || item.card_type || 'player',
+    card_art: item.cardArt || item.card_art || '',
     edition: item.edition || 'S3',
     source_season: item.sourceSeason || item.source_season || item.edition || 'S3',
     source_stage: item.sourceStage || item.source_stage || 'reg',
@@ -3304,6 +3378,23 @@ function publicHorseRaceBet(bet) {
   };
 }
 
+function publicHorseRaceResult(race, userId) {
+  if (!race?.settled_at || !Array.isArray(race.finishing_order)) return null;
+  const horsesById = new Map((race.horse_names || []).map(horse => [String(horse.id), horse]));
+  const userBet = horseRaceBetForUser(race.id, userId);
+  return {
+    id: Number(race.id),
+    date: race.race_date,
+    number: Number(race.race_number || 1),
+    settledAt: race.settled_at,
+    finishingOrder: race.finishing_order.map((horseId, index) => ({
+      position: index + 1,
+      ...(horsesById.get(String(horseId)) || { id: String(horseId), name: String(horseId) })
+    })),
+    userBet: publicHorseRaceBet(userBet)
+  };
+}
+
 function publicOwnedHorse(horse, rewards = []) {
   const races = Number(horse.races || 0);
   const pendingRewards = rewards.filter(reward => !reward.claimed_at && String(reward.horse_id) === String(horse.id));
@@ -3484,6 +3575,14 @@ export function getHorseRaceStateForUser(userId, now = new Date()) {
   const cardRaces = store.races
     .filter(candidate => candidate.race_date === race.race_date)
     .sort((a, b) => Number(a.race_number) - Number(b.race_number));
+  const pastResults = store.races
+    .filter(candidate => candidate.settled_at && Array.isArray(candidate.finishing_order))
+    .sort((a, b) => new Date(b.settled_at) - new Date(a.settled_at))
+    .map(candidate => publicHorseRaceResult(candidate, userId))
+    .filter(Boolean);
+  const previousResults = pastResults
+    .filter(result => result.date === race.race_date && result.number < Number(race.race_number || 1))
+    .sort((a, b) => a.number - b.number);
   const horseCareerById = new Map(store.horses.map(horse => [String(horse.id), publicOwnedHorse(horse)]));
   const horseById = Object.fromEntries(race.horse_names.map(horse => [horse.id, horse]));
   const revealOrder = ['racing', 'complete'].includes(status);
@@ -3537,6 +3636,7 @@ export function getHorseRaceStateForUser(userId, now = new Date()) {
     },
     card: {
       raceCount: HORSE_RACING_CONFIG.raceTimes.length,
+      previousResults,
       races: cardRaces.map(candidate => ({
         id: candidate.id,
         number: Number(candidate.race_number),
@@ -3546,6 +3646,7 @@ export function getHorseRaceStateForUser(userId, now = new Date()) {
         raceStartsAt: candidate.race_starts_at
       }))
     },
+    pastResults,
     config: {
       timeZone: HORSE_RACING_CONFIG.timeZone,
       maxBet: store.config.maxBet,
