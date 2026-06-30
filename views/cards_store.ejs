@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WCPL Card Shop</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/card-name-fit.js" defer></script>
 </head>
 <body>
   <%- include('partials_header') %>
@@ -82,17 +83,6 @@
     <% } %>
   </main>
   <script>
-    const fitCardNames = () => {
-      document.querySelectorAll('.player-card-name').forEach(name => {
-        if (!name.clientWidth) return;
-        name.style.fontSize = '';
-        let size = Number.parseFloat(getComputedStyle(name).fontSize) || 16;
-        while (name.scrollWidth > name.clientWidth && size > 8) {
-          size -= 0.5;
-          name.style.fontSize = `${size}px`;
-        }
-      });
-    };
     const revealCards = [...document.querySelectorAll('[data-reveal-card]')];
     revealCards.forEach(card => card.addEventListener('click', () => {
       card.classList.remove('is-hidden');
@@ -100,11 +90,10 @@
       void card.offsetWidth;
       card.classList.add('is-revealed-pop');
       card.disabled = true;
-      fitCardNames();
+      window.fitWutCardNames?.();
       card.addEventListener('animationend', () => card.classList.remove('is-revealed-pop'), { once: true });
       if (revealCards.every(item => !item.classList.contains('is-hidden'))) document.getElementById('claimPack').disabled = false;
     }));
-    window.addEventListener('resize', fitCardNames);
   </script>
 </body>
 </html>
