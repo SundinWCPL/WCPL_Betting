@@ -2452,11 +2452,14 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
     const card = state.cards.ownedCards.find(item => Number(item.id) === Number(input.cardId) && Number(item.user_id) === Number(userId));
     if (!card) throw new Error('Card not found in your collection.');
     if (Number(card.cooldown_remaining || 0) > 0) throw new Error('That card is on cooldown.');
-    if (existingCardIds.has(Number(card.id)) || turnCards.has(Number(card.id)) || lockedElsewhere.has(Number(card.id))) throw new Error('That card is already committed to an active WUT match.');
+    if (existingCardIds.has(Number(card.id)) || turnCards.has(Number(card.id))) throw new Error('That card is already committed to this WUT match.');
     turnCards.add(Number(card.id));
     const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
     const requiredPosition = slot === 'G' ? 'G' : slot[0];
     if (!player || player.position !== requiredPosition) throw new Error(`That card is not eligible for ${slot}.`);
+    if (lockedElsewhere.has(Number(card.id)) && player.tier !== 'common') {
+      throw new Error('Only Common cards can be committed to more than one active WUT match.');
+    }
     if (!arenaRarityAllowedForSlot(match, userId, slot, player, catalogByIdentity)) {
       throw new Error(`${slot} can be at most one rarity higher than the opponent's committed card. Any lower rarity is allowed.`);
     }
@@ -2506,9 +2509,9 @@ export function autoAssignExpiredArenaTurns(catalogByIdentity, now = new Date())
       const occupied = new Set(match.placements.filter(row => Number(row.user_id) === userId).map(row => row.slot));
       const locked = arenaLockedCardIds(userId, match.id);
       const already = new Set(match.placements.filter(row => Number(row.user_id) === userId).map(row => Number(row.card_id)));
-      const candidates = state.cards.ownedCards.filter(card => Number(card.user_id) === userId && !locked.has(Number(card.id)) && !already.has(Number(card.id)) && Number(card.cooldown_remaining || 0) <= 0)
+      const candidates = state.cards.ownedCards.filter(card => Number(card.user_id) === userId && !already.has(Number(card.id)) && Number(card.cooldown_remaining || 0) <= 0)
         .map(card => ({ card, player: catalogPlayerForOwnedCard(card, catalogByIdentity) }))
-        .filter(row => row.player?.position)
+        .filter(row => row.player?.position && (!locked.has(Number(row.card.id)) || row.player.tier === 'common'))
         .sort((a, b) => (ARENA_RARITY_RANK[a.player.tier] || 99) - (ARENA_RARITY_RANK[b.player.tier] || 99) || Number(a.card.id) - Number(b.card.id));
       const picked = [];
       for (const slot of CARD_LINEUP_SLOTS.filter(slot => !occupied.has(slot))) {

@@ -1478,7 +1478,7 @@ async function buildArenaCardsHub(userId, query = {}) {
   return {
     arena,
     wutMembership: getWutMembershipState(userId),
-    cards: cards.map(card => ({ ...card, arenaLocked: lockedCardIds.has(Number(card.id)) })),
+    cards: cards.map(card => ({ ...card, arenaLocked: lockedCardIds.has(Number(card.id)) && card.player?.tier !== 'common' })),
     boosts: boosts.filter(boost => !boost.consumed).map(boost => ({ ...boost, arenaLocked: lockedBoostIds.has(Number(boost.id)) })),
     balance: getUserById(userId)?.balance || 0,
     adminArena: getArenaAdminState(),
