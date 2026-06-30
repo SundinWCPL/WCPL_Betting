@@ -14,7 +14,7 @@
       <% } %>
       <% if (cardsLinkVisible) { %>
         <% if (cardsOpen) { %>
-          <a href="/cards">WUT</a>
+          <a href="/cards" class="nav-wut-link">WUT<% if (typeof wutTurnPending !== 'undefined' && wutTurnPending) { %><span class="wut-turn-badge" title="It is your turn in an active WUT match" aria-label="Your turn in WUT">!</span><% } %></a>
         <% } else { %>
           <span class="nav-link-disabled" title="WUT is currently closed." aria-disabled="true">WUT</span>
         <% } %>

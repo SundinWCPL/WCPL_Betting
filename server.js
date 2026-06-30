@@ -99,6 +99,7 @@ import {
   resetCardsData,
   getArenaStateForUser,
   getArenaAdminState,
+  hasPendingArenaTurn,
   recalculateArenaEloFromHistory,
   enterArenaQueue,
   assignArenaMatchups,
@@ -186,6 +187,7 @@ app.use((req, res, next) => {
   res.locals.casinoLinkVisible = adminSettings.casinoLinkVisible;
   res.locals.cardsOpen = adminSettings.cardsOpen;
   res.locals.cardsLinkVisible = adminSettings.cardsLinkVisible;
+  res.locals.wutTurnPending = res.locals.currentUser ? hasPendingArenaTurn(res.locals.currentUser.id) : false;
   res.locals.maxBet = Number(process.env.MAX_BET || 250);
   res.locals.propMaxBet = Number(process.env.PROP_MAX_BET || 100);
   res.locals.goalTotalLine = Number(process.env.GOAL_TOTAL_LINE || 10.5);

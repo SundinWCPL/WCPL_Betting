@@ -2243,6 +2243,15 @@ function arenaCurrentPlayerId(match) {
   return Number(match.turn_index) % 2 === 0 ? first : second;
 }
 
+export function hasPendingArenaTurn(userId) {
+  ensureArenaState();
+  return state.cards.arena.matches.some(match =>
+    match.status === 'active' &&
+    match.player_ids.map(Number).includes(Number(userId)) &&
+    arenaCurrentPlayerId(match) === Number(userId)
+  );
+}
+
 function publicArenaMatch(match, userId) {
   const players = match.player_ids.map(id => {
     const user = state.users.find(item => Number(item.id) === Number(id));
