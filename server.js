@@ -856,7 +856,8 @@ function sortCardsCatalogForAdmin(catalog) {
   return [...catalog].sort((a, b) =>
     (seasonRank[a.edition] || 99) - (seasonRank[b.edition] || 99) ||
     (rarityRank[b.tier] || 0) - (rarityRank[a.tier] || 0) ||
-    (a.edition === 'S3' || b.edition === 'S3' ? String(a.divisionId || '').localeCompare(String(b.divisionId || '')) : 0) ||
+    Number(b.weightedFpPerGame || 0) - Number(a.weightedFpPerGame || 0) ||
+    String(a.divisionId || '').localeCompare(String(b.divisionId || '')) ||
     String(a.name || '').localeCompare(String(b.name || ''))
   );
 }

@@ -43,6 +43,9 @@ export const DEFAULT_SAVE_PCT_BONUSES = [
 export const DEFAULT_CHEMISTRY_BONUSES = { 2: 10, 3: 15, 4: 25, 5: 50 };
 export const PLAYER_CARD_SEASONS = ['S1', 'S2', 'S3'];
 export const HISTORICAL_SAMPLE_SIZE = 3;
+const S1_GOALIE_SAVE_PCT_MAX_DEVIATION = 0.05;
+const S1_GOALIE_SHOTS_MIN_FACTOR = 0.5;
+const S1_GOALIE_SHOTS_MAX_FACTOR = 1.5;
 const PACK_EXCLUDED_PLAYER_NAMES = new Set(['bleh', 'jurkey']);
 const PACK_EXCLUDED_STEAM_IDS = new Set(['76561198300298208', '76561199027789459']);
 
@@ -93,6 +96,38 @@ function randomPoisson(lambda) {
     product *= Math.random();
   } while (product > limit);
   return count - 1;
+}
+
+function randomCenteredDeviation(maxDeviation) {
+  const centered = (Math.random() + Math.random() + Math.random() + Math.random()) / 4;
+  return (centered - 0.5) * 2 * maxDeviation;
+}
+
+function capSyntheticGoalieSavePct(rows, historicalSavePct) {
+  const adjustableRows = rows.filter(row => n(row.so) < 1);
+  const shotsAgainst = adjustableRows.reduce((sum, row) => sum + n(row.sa), 0);
+  if (shotsAgainst <= 0) return rows;
+  const lower = clamp(historicalSavePct - S1_GOALIE_SAVE_PCT_MAX_DEVIATION, 0, 1);
+  const upper = clamp(historicalSavePct + S1_GOALIE_SAVE_PCT_MAX_DEVIATION, 0, 1);
+  const maximumNonShutoutSaves = shotsAgainst - adjustableRows.filter(row => n(row.sa) > 0).length;
+  const maximumSaves = Math.min(maximumNonShutoutSaves, Math.floor(shotsAgainst * upper));
+  const minimumSaves = Math.min(maximumSaves, Math.ceil(shotsAgainst * lower));
+  const currentGoals = adjustableRows.reduce((sum, row) => sum + n(row.ga), 0);
+  const currentSaves = shotsAgainst - currentGoals;
+  const targetSaves = Math.min(maximumSaves, Math.max(minimumSaves, currentSaves));
+  let goalsAdjustment = shotsAgainst - targetSaves - currentGoals;
+  let cursor = 0;
+  while (goalsAdjustment !== 0) {
+    const candidates = goalsAdjustment > 0
+      ? adjustableRows.filter(row => n(row.ga) < n(row.sa))
+      : adjustableRows.filter(row => n(row.ga) > (n(row.sa) > 0 ? 1 : 0));
+    if (!candidates.length) break;
+    const row = candidates[cursor % candidates.length];
+    row.ga = n(row.ga) + (goalsAdjustment > 0 ? 1 : -1);
+    goalsAdjustment += goalsAdjustment > 0 ? -1 : 1;
+    cursor += 1;
+  }
+  return rows;
 }
 
 function clamp(value, min, max) {
@@ -635,6 +670,11 @@ export async function buildCardPlayerCatalog({
           stats.hits = Math.round(n(s1SyntheticRates.hitsPerGame) * n(stats.games));
           stats.blocks = Math.round(n(s1SyntheticRates.blocksPerGame) * n(stats.games));
         }
+        const scoring = normalizeFantasyScoringConfig(scoringConfig);
+        const weightedFpPerGame = rate.fpPerGame + (s1SyntheticRates
+          ? n(s1SyntheticRates.hitsPerGame) * scoring.statPoints.hit +
+            n(s1SyntheticRates.blocksPerGame) * scoring.statPoints.block
+          : 0);
       const team = teamsById.get(String(player.team_id || '').trim()) || {};
       const displayName = `${historicalSeason} ${player.display_name}`;
       catalog.push({
@@ -673,7 +713,7 @@ export async function buildCardPlayerCatalog({
           seasonStats: { [historicalSeason]: stats, UT: stats },
           editionStats: stats,
           s1SyntheticRates,
-          weightedFpPerGame: rate.fpPerGame,
+          weightedFpPerGame,
           tier: clean(tierOverrides[key]).toLowerCase() || 'common',
           stars: 1,
           teamLogo: `/images/casino/${historicalSeason}/${player.team_id}.png`,
@@ -690,15 +730,21 @@ export async function buildCardPlayerCatalog({
   const pools = new Map();
   for (const player of catalog) {
     if (!player.position || player.cardType === 'mythic') continue;
-    const poolKey = `${player.divisionId}|${player.position === 'G' ? 'G' : 'S'}`;
+    const poolKey = `${player.edition}|${player.position === 'G' ? 'G' : 'S'}`;
     if (!pools.has(poolKey)) pools.set(poolKey, []);
     pools.get(poolKey).push(player);
   }
   for (const pool of pools.values()) {
     const eligible = pool
-      .sort((a, b) => b.weightedFpPerGame - a.weightedFpPerGame);
+      .sort((a, b) => b.weightedFpPerGame - a.weightedFpPerGame || a.catalogKey.localeCompare(b.catalogKey));
+    let previousFp = null;
+    let previousCalculatedTier = null;
     eligible.forEach((player, index) => {
-      if (!tierOverrides[player.catalogKey]) player.tier = tierForRank(index, eligible.length);
+      const tiedWithPrevious = previousFp != null && Math.abs(player.weightedFpPerGame - previousFp) < 1e-9;
+      const calculatedTier = tiedWithPrevious ? previousCalculatedTier : tierForRank(index, eligible.length);
+      if (!tierOverrides[player.catalogKey]) player.tier = calculatedTier;
+      previousFp = player.weightedFpPerGame;
+      previousCalculatedTier = calculatedTier;
     });
   }
   for (const player of catalog) {
@@ -1015,18 +1061,28 @@ function chooseSampleMatchIds(rows, existingIds = [], sampleSize = HISTORICAL_SA
 function generateS1SyntheticGames(player, position, sampleSize = HISTORICAL_SAMPLE_SIZE) {
   const stats = player.editionStats || player.seasonStats?.S1 || {};
   const games = Math.max(1, n(stats.games));
-  return Array.from({ length: sampleSize }, (_, index) => {
-    const matchId = `S1-SYN-${index + 1}`;
-    if (position === 'G') {
-      const shutoutRate = Math.max(0, Math.min(1, n(stats.shutouts) / games));
-      const isShutout = Math.random() < shutoutRate;
-      let shotsAgainst = randomPoisson(n(stats.shotsAgainst) / games);
-      let goalsAgainst = isShutout ? 0 : randomPoisson(n(stats.goalsAgainst) / games);
-      if (!isShutout && shotsAgainst > 0) goalsAgainst = Math.max(1, goalsAgainst);
-      shotsAgainst = Math.max(shotsAgainst, goalsAgainst);
+  if (position === 'G') {
+    const historicalSavePct = n(stats.savePct) || (n(stats.shotsAgainst) > 0
+      ? Math.max(0, n(stats.shotsAgainst) - n(stats.goalsAgainst)) / n(stats.shotsAgainst)
+      : 0);
+    const shotsMean = n(stats.shotsAgainst) / games;
+    const minimumShots = Math.max(0, Math.floor(shotsMean * S1_GOALIE_SHOTS_MIN_FACTOR));
+    const maximumShots = Math.max(minimumShots, Math.ceil(shotsMean * S1_GOALIE_SHOTS_MAX_FACTOR));
+    const shutoutRate = clamp(n(stats.shutouts) / games, 0, 1);
+    const rows = Array.from({ length: sampleSize }, (_, index) => {
+      const shotsAgainst = Math.min(maximumShots, Math.max(minimumShots, randomPoisson(shotsMean)));
+      const targetSavePct = clamp(
+        historicalSavePct + randomCenteredDeviation(S1_GOALIE_SAVE_PCT_MAX_DEVIATION),
+        Math.max(0, historicalSavePct - S1_GOALIE_SAVE_PCT_MAX_DEVIATION),
+        Math.min(1, historicalSavePct + S1_GOALIE_SAVE_PCT_MAX_DEVIATION)
+      );
+      const isShutout = shotsAgainst > 0 && Math.random() < shutoutRate;
+      const goalsAgainst = isShutout
+        ? 0
+        : Math.min(shotsAgainst, Math.max(shotsAgainst > 0 ? 1 : 0, Math.round(shotsAgainst * (1 - targetSavePct))));
       return {
         synthetic: true,
-        match_id: matchId,
+        match_id: `S1-SYN-${index + 1}`,
         player_name: player.baseName || player.name,
         steam_id: player.sourceSteamId || player.steamId || '',
         position: 'G',
@@ -1034,7 +1090,11 @@ function generateS1SyntheticGames(player, position, sampleSize = HISTORICAL_SAMP
         ga: goalsAgainst,
         so: shotsAgainst > 0 && goalsAgainst === 0 ? 1 : 0
       };
-    }
+    });
+    return capSyntheticGoalieSavePct(rows, historicalSavePct);
+  }
+  return Array.from({ length: sampleSize }, (_, index) => {
+    const matchId = `S1-SYN-${index + 1}`;
     const goals = randomPoisson(n(stats.goals) / games);
     const assists = randomPoisson(n(stats.assists) / games);
     const shots = Math.max(goals, randomPoisson(n(stats.shots) / games));
