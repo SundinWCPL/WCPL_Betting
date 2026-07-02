@@ -2463,16 +2463,6 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
     if (!arenaRarityAllowedForSlot(match, userId, slot, player, catalogByIdentity)) {
       throw new Error(`${slot} can be at most one rarity higher than the opponent's committed card. Any lower rarity is allowed.`);
     }
-    const duplicatePlayer = match.placements.some(row => {
-      if (Number(row.user_id) !== Number(userId)) return false;
-      const other = state.cards.ownedCards.find(item => Number(item.id) === Number(row.card_id));
-      return other && (other.source_player_key || other.player_key) === (card.source_player_key || card.player_key) && other.division_id === card.division_id;
-    }) || [...turnCards].some(cardId => {
-      if (Number(cardId) === Number(card.id)) return false;
-      const other = state.cards.ownedCards.find(item => Number(item.id) === Number(cardId));
-      return other && (other.source_player_key || other.player_key) === (card.source_player_key || card.player_key) && other.division_id === card.division_id;
-    });
-    if (duplicatePlayer) throw new Error('The same player cannot appear twice in one lineup.');
     let boost = null;
     if (input.boostId) {
       boost = state.cards.ownedBoosts.find(item => Number(item.id) === Number(input.boostId) && Number(item.user_id) === Number(userId) && !item.consumed);
@@ -2518,8 +2508,7 @@ export function autoAssignExpiredArenaTurns(catalogByIdentity, now = new Date())
         const position = slot === 'G' ? 'G' : slot[0];
         const index = candidates.findIndex(row =>
           row.player.position === position &&
-          arenaRarityAllowedForSlot(match, userId, slot, row.player, catalogByIdentity) &&
-          !picked.some(item => item.player.playerKey === row.player.playerKey && item.player.divisionId === row.player.divisionId)
+          arenaRarityAllowedForSlot(match, userId, slot, row.player, catalogByIdentity)
         );
         if (index < 0) continue;
         const [choice] = candidates.splice(index, 1);
@@ -2670,12 +2659,9 @@ export function setCardsLineupSlot({
         row.slot === cleanSlot ||
         !row.card_id
       ) return false;
-      const other = state.cards.ownedCards.find(item => Number(item.id) === Number(row.card_id));
-      return other &&
-        (other.source_player_key || other.player_key) === (card.source_player_key || card.player_key) &&
-        other.division_id === card.division_id;
+      return Number(row.card_id) === Number(card.id);
     });
-    if (duplicate) throw new Error('The same player cannot appear twice in one lineup.');
+    if (duplicate) throw new Error('The same card cannot appear twice in one lineup.');
   }
 
   const boost = boostId == null || boostId === ''
