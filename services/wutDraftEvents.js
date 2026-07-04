@@ -3,6 +3,7 @@ const POSITIONS = ['F', 'D', 'G'];
 const FORMATS = ['round_robin', 'swiss', 'single_elimination', 'swiss_top_cut'];
 const BENCH_MODES = ['shared_vote', 'random_shared', 'preset_shared', 'disabled'];
 const CURRENCIES = ['wut_coin', 'mushybux', 'free'];
+export const WUT_EVENT_TIME_ZONE = 'America/Los_Angeles';
 
 export const WUT_DRAFT_PHASES = Object.freeze([
   'scheduled', 'signup_open', 'signup_closed', 'starting', 'bench_vote',
@@ -104,11 +105,43 @@ const uniqueChoices = (value, allowed, fallback) => {
 };
 const rarityIndex = value => RARITIES.indexOf(value);
 
-function normalizedIso(value, label) {
+export function wutPacificDateTimeToIso(value, label = 'Date and time') {
   if (value == null || value === '') return null;
-  const date = new Date(value);
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) throw new Error(`${label} must be a valid date and time.`);
+    return value.toISOString();
+  }
+  const clean = String(value).trim();
+  const wallTime = clean.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (wallTime) {
+    const [, year, month, day, hour, minute, second = '0'] = wallTime;
+    const desired = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    let guess = desired;
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: WUT_EVENT_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+    });
+    for (let index = 0; index < 4; index += 1) {
+      const parts = Object.fromEntries(formatter.formatToParts(new Date(guess))
+        .filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+      const actual = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+      guess += desired - actual;
+    }
+    const resolved = Object.fromEntries(formatter.formatToParts(new Date(guess))
+      .filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+    if (resolved.year !== Number(year) || resolved.month !== Number(month) || resolved.day !== Number(day) ||
+        resolved.hour !== Number(hour) || resolved.minute !== Number(minute) || resolved.second !== Number(second)) {
+      throw new Error(`${label} does not exist in Pacific Time because of the daylight-saving clock change.`);
+    }
+    return new Date(guess).toISOString();
+  }
+  const date = new Date(clean);
   if (!Number.isFinite(date.getTime())) throw new Error(`${label} must be a valid date and time.`);
   return date.toISOString();
+}
+
+function normalizedIso(value, label) {
+  return wutPacificDateTimeToIso(value, label);
 }
 
 function normalizedOdds(value, fallback = DEFAULT_ODDS) {

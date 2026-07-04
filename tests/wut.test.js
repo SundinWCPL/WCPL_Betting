@@ -24,6 +24,13 @@ test('Power uses card rarity plus the reduced trinket scale, never boosts', () =
   assert.equal(db.calculateWutPower('mythic'), 6);
 });
 
+test('Draft Event wall times are always interpreted in Pacific Time', () => {
+  assert.equal(draftEvents.wutPacificDateTimeToIso('2026-07-04T19:00'), '2026-07-05T02:00:00.000Z', 'summer uses PDT');
+  assert.equal(draftEvents.wutPacificDateTimeToIso('2026-01-04T19:00'), '2026-01-05T03:00:00.000Z', 'winter uses PST');
+  assert.equal(draftEvents.wutPacificDateTimeToIso('2026-07-05T02:00:00.000Z'), '2026-07-05T02:00:00.000Z', 'absolute timestamps remain unchanged');
+  assert.throws(() => draftEvents.wutPacificDateTimeToIso('2026-03-08T02:30'), /does not exist in Pacific Time/);
+});
+
 test('Grit Boost combines hit and block bonus', () => {
   const boost = { boost_type: 'grit', rarity: 'rare', effect: { per: 1, bonus: 3 } };
   assert.equal(cards.boostFantasyBonus({ hits: 2, blocks: 4 }, boost), 18);
@@ -345,6 +352,26 @@ test('draft event foundation persists configurable events, presets, phases, and 
   assert.ok(starting.logs.some(entry => entry.type === 'event_paused'));
   assert.ok(starting.logs.some(entry => entry.type === 'event_resumed'));
   assert.throws(() => db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'tournament', adminUserId: 1 }), /Cannot move/);
+});
+
+test('admin can close signup and start a Draft Event early in one flow', () => {
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name: 'Early Start Test', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 4, allowOddEntrants: true, allowManualStartBelowMinimum: true, visibility: 'private' },
+      safetyBench: { mode: 'disabled' },
+      boosters: { countPerPlayer: 1, contents: { players: 1, boosts: 0, trinkets: 0 }, rarityOdds: { players: { common: 100 } } }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
+  const cardsPool = [0, 1, 2].map(index => ({ cardIdentity: `S3|EARLY|${index}`, displayName: `Early ${index}`, edition: 'S3', position: index === 2 ? 'D' : 'F', tier: 'common' }));
+  const starting = db.startWutDraftEvent({ eventId: event.id, environment: { cards: cardsPool, rules: {} }, adminUserId: 1, startNow: true });
+  assert.equal(starting.phase, 'starting');
+  assert.ok(starting.logs.some(row => row.type === 'phase_changed' && row.details?.to === 'signup_closed'));
+  const live = db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1 });
+  assert.equal(live.phase, 'draft');
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'cancelled', adminUserId: 1, reason: 'Early-start test complete' });
 });
 
 test('every seat receives the same per-round draft booster composition blueprint', () => {

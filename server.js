@@ -204,7 +204,7 @@ import {
   wutTrinketDescription,
   wutTrinketName
 } from './services/wutTrinketText.js';
-import { WUT_DRAFT_TRANSITIONS } from './services/wutDraftEvents.js';
+import { WUT_DRAFT_TRANSITIONS, WUT_EVENT_TIME_ZONE } from './services/wutDraftEvents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -215,6 +215,26 @@ app.locals.wutTitleCase = wutTitleCase;
 app.locals.wutTrinketDescription = wutTrinketDescription;
 app.locals.wutTrinketName = wutTrinketName;
 app.locals.wutTrinketPower = rarity => Number(getCardsConfig().wut.trinketPowerValues?.[String(rarity || '').toLowerCase()] || 0);
+const wutPacificParts = value => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: WUT_EVENT_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+};
+app.locals.wutPacificInput = value => {
+  const parts = wutPacificParts(value);
+  return parts ? `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}` : '';
+};
+app.locals.wutPacificDateTime = value => {
+  if (!value || !Number.isFinite(new Date(value).getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: WUT_EVENT_TIME_ZONE, year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+  }).format(new Date(value));
+};
 initDb();
 
 // Keep time-based race transitions moving even when nobody has the page open.
@@ -3024,6 +3044,22 @@ app.post('/admin/cards/drafts/:eventId/phase', requireAdmin, async (req, res) =>
       eventId: req.params.eventId, nextPhase, adminUserId: req.session.userId, reason: req.body.reason
     });
     req.session.flash = { type: 'success', message: `Draft Event #${event.id} moved to ${event.phase.replaceAll('_', ' ')}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/start-now', requireAdmin, async (req, res) => {
+  try {
+    const current = getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true })[0];
+    if (!['scheduled', 'signup_open', 'signup_closed'].includes(current.phase)) throw new Error('This Draft Event is not waiting to start.');
+    const environment = draftEnvironmentFromCatalog(current, await getCardsCatalog());
+    startWutDraftEvent({
+      eventId: req.params.eventId, environment, adminUserId: req.session.userId, startNow: true
+    });
+    const event = beginWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    req.session.flash = { type: 'success', message: `Draft Event #${event.id} started early and is now in ${event.phase.replaceAll('_', ' ')}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }

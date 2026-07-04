@@ -10,6 +10,7 @@ import {
 } from './services/wutBalanceRules.js';
 import {
   NIGHTLY_WUT_DRAFT_PRESET,
+  wutPacificDateTimeToIso,
   normalizeWutDraftEventConfig,
   createWutDraftEventRecord,
   transitionWutDraftEventRecord,
@@ -204,7 +205,7 @@ function defaultState() {
         config: {
           entryFee: ARENA_ENTRY_FEE,
           winnerPrize: ARENA_WINNER_PRIZE,
-          timeZone: process.env.ARENA_TIME_ZONE || 'America/Los_Angeles',
+          timeZone: 'America/Los_Angeles',
           maxActiveMatches: Number(process.env.ARENA_MAX_ACTIVE_MATCHES || 3),
           turnHours: Number(process.env.ARENA_TURN_HOURS || 2),
           pauseStartHour: Number(process.env.ARENA_PAUSE_START_HOUR || 0),
@@ -719,9 +720,7 @@ function ensureCardsState() {
     entry.paid_amount = 0;
     entry.free_entry_refunded_at = nowIso();
   }
-  if (!process.env.ARENA_TIME_ZONE && state.cards.arena.config.timeZone === 'America/Edmonton') {
-    state.cards.arena.config.timeZone = 'America/Los_Angeles';
-  }
+  state.cards.arena.config.timeZone = 'America/Los_Angeles';
   if (!state.cards.arena.lastMatchmakingSlot) {
     state.cards.arena.lastMatchmakingSlot = arenaSlotKey(new Date());
   }
@@ -2324,11 +2323,12 @@ export function dropWutDraftEventEntrant({ eventId, userId, adminUserId, reason 
   return wutDraftEventView(event, adminUserId);
 }
 
-export function startWutDraftEvent({ eventId, environment, adminUserId, system = false, now = new Date() }) {
+export function startWutDraftEvent({ eventId, environment, adminUserId, system = false, startNow = false, now = new Date() }) {
   if (!system) requireWutDraftAdmin(adminUserId);
   const event = storedWutDraftEvent(eventId);
   if (event.paused_at) throw new Error('Resume the event before changing phases.');
-  if (event.phase !== 'signup_closed') throw new Error('A Draft Event can only start after signup closes.');
+  const closeSignupNow = startNow && ['scheduled', 'signup_open'].includes(event.phase);
+  if (event.phase !== 'signup_closed' && !closeSignupNow) throw new Error('A Draft Event can only start after signup closes.');
   if (event.environment_snapshot) throw new Error('This Draft Event already has a frozen environment snapshot.');
   const activeEntrants = (event.entrants || []).filter(item => item.status === 'active');
   if (activeEntrants.length < Number(event.config.basic.minimumEntrants) && !event.config.basic.allowManualStartBelowMinimum) {
@@ -2336,6 +2336,7 @@ export function startWutDraftEvent({ eventId, environment, adminUserId, system =
   }
   if (!event.config.basic.allowOddEntrants && activeEntrants.length % 2) throw new Error('This event requires an even number of entrants.');
   if (!environment || !Array.isArray(environment.cards)) throw new Error('A valid frozen WUT environment is required.');
+  if (closeSignupNow) transitionWutDraftEventRecord(event, 'signup_closed', { actorUserId: adminUserId, reason: 'Signup closed for an early admin start', now });
   event.environment_snapshot = JSON.parse(JSON.stringify({ ...environment, captured_at: now.toISOString() }));
   ensureWutDraftInventories(event);
   transitionWutDraftEventRecord(event, 'starting', { actorUserId: adminUserId, reason: 'Environment frozen', now });
@@ -3471,8 +3472,7 @@ export function rescheduleWutDraftEvent({ eventId, adminUserId, signupOpensAt = 
   if (!['scheduled', 'signup_open', 'signup_closed'].includes(event.phase)) throw new Error('Only an upcoming Draft Event can be rescheduled.');
   const parse = (value, label) => {
     if (value == null || String(value).trim() === '') return null;
-    const date = new Date(value); if (!Number.isFinite(date.getTime())) throw new Error(`${label} is not a valid date.`);
-    return date.toISOString();
+    return wutPacificDateTimeToIso(value, label);
   };
   const next = { signupOpensAt: parse(signupOpensAt, 'Signup opening'), signupClosesAt: parse(signupClosesAt, 'Signup closing'), startsAt: parse(startsAt, 'Event start') };
   const ordered = [next.signupOpensAt, next.signupClosesAt, next.startsAt].filter(Boolean).map(value => new Date(value).getTime());
@@ -3851,7 +3851,7 @@ function arenaZonedTimeToDate(dateKey, { hour = 0, minute = 0, second = 0 } = {}
 }
 
 function arenaLocalHour(date = new Date()) {
-  const zone = state.cards?.arena?.config?.timeZone || 'America/Edmonton';
+  const zone = state.cards?.arena?.config?.timeZone || 'America/Los_Angeles';
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, hour: '2-digit', hourCycle: 'h23' }).formatToParts(date);
   return Number(parts.find(part => part.type === 'hour')?.value || 0);
 }
