@@ -1185,11 +1185,23 @@ function playerPackItem(player) {
 export function generatePlayerPack({ packType, catalog, config }) {
   const eligibleCatalog = catalog.filter(isPlayerPackEligible);
   const used = new Set();
-  return rarityRollsForPack(packType, config.playerTierOdds).map(tier => {
+  const tiers = rarityRollsForPack(packType, config.playerTierOdds);
+  const players = tiers.map(tier => {
     const player = pickUniquePlayer(eligibleCatalog, tier, used);
     used.add(player.catalogKey);
     return playerPackItem(player);
   });
+  if (['premium', 'prestige'].includes(packType) && !players.some(player => CARD_STARS[player.rolledTier] >= CARD_STARS.rare)) {
+    used.delete(players.at(-1).catalogKey);
+    const rarePlusPool = eligibleCatalog.filter(player =>
+      CARD_STARS[player.tier] >= CARD_STARS.rare && !used.has(player.catalogKey)
+    );
+    const availableRarePlusTiers = CARD_TIERS.filter(tier => rarePlusPool.some(player => player.tier === tier));
+    if (!availableRarePlusTiers.length) throw new Error(`No Rare-or-better players are eligible for a ${packType} pack.`);
+    const guaranteedTier = rollWeighted(config.playerTierOdds?.[packType] || {}, availableRarePlusTiers);
+    players[players.length - 1] = playerPackItem(pickUniquePlayer(rarePlusPool, guaranteedTier, used));
+  }
+  return players;
 }
 
 // Every WUT 2.0 player pack is a single five-item product: three players and

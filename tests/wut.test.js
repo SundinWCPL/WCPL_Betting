@@ -114,6 +114,32 @@ test('generated starter cards are unique Commons in a 2F / 2D / 1G lineup', asyn
   assert.equal(pack.map(item => item.position).sort().join(''), 'DDFFG');
 });
 
+test('Premium and Prestige packs guarantee a Rare-or-better player', () => {
+  const catalog = [
+    ['common-one', 'common'], ['common-two', 'common'], ['common-three', 'common'],
+    ['rare-one', 'rare'], ['epic-one', 'epic']
+  ].map(([catalogKey, tier], index) => ({
+    catalogKey, cardIdentity: catalogKey, tier, position: index % 2 ? 'D' : 'F',
+    edition: 'S1', divisionId: 'test', playerKey: catalogKey, displayName: catalogKey
+  }));
+  const commonOnlyOdds = { common: 100, uncommon: 0, rare: 0, epic: 0, legendary: 0, mythic: 0 };
+  const config = { playerTierOdds: { standard: commonOnlyOdds, premium: commonOnlyOdds, prestige: commonOnlyOdds } };
+
+  for (const packType of ['premium', 'prestige']) {
+    const players = cards.generatePlayerPack({ packType, catalog, config });
+    assert.equal(players.length, 3);
+    assert.ok(players.some(player => cards.CARD_STARS[player.rolledTier] >= cards.CARD_STARS.rare));
+  }
+
+  const noExactRareCatalog = catalog.filter(player => player.tier !== 'rare');
+  const rareOnlyOdds = { common: 0, uncommon: 0, rare: 100, epic: 0, legendary: 0, mythic: 0 };
+  const fallbackPlayers = cards.generatePlayerPack({
+    packType: 'premium', catalog: noExactRareCatalog,
+    config: { playerTierOdds: { standard: commonOnlyOdds, premium: rareOnlyOdds } }
+  });
+  assert.ok(fallbackPlayers.some(player => cards.CARD_STARS[player.rolledTier] >= cards.CARD_STARS.rare));
+});
+
 test('new WUT users receive the complete starter bundle', () => {
   db.initDb();
   db.joinWut(1);

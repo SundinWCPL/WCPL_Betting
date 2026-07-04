@@ -71,7 +71,7 @@
     </section>
 
     <section class="card arena-queue-card">
-      <div><p class="eyebrow">Always-open Queue · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span></p><h2><%= arena.queuedEntry ? 'You’re In' : 'Choose a Deck & Queue' %></h2><p class="muted"><%= arena.queuedEntry ? `Queued with ${arena.queuedEntry.deck_name}. Its snapshot is locked.` : `Winner ${wut.config.rewards.winner} · loser ${wut.config.rewards.loser} WUT Coins · timeout loser 0` %></p></div>
+      <div><p class="eyebrow">Always-open Queue · <%= arena.queueCount %> <%= arena.queueCount === 1 ? 'person' : 'people' %> waiting · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span></p><h2><%= arena.queuedEntry ? 'You’re In' : 'Choose a Deck & Queue' %></h2><p class="muted"><%= arena.queuedEntry ? `Queued with ${arena.queuedEntry.deck_name}. Its snapshot is locked.` : `Winner ${wut.config.rewards.winner} · loser ${wut.config.rewards.loser} WUT Coins · timeout loser 0` %></p></div>
       <% if (!arena.queuedEntry) { %><form method="post" action="/cards/arena/enter"><select name="deck_id" required><option value="">Select saved deck</option><% wut.decks.forEach(deck => { %><option value="<%= deck.id %>"><%= deck.name %></option><% }) %></select><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches || !wut.decks.length ? 'disabled' : '' %>>Enter Queue Free</button></form><% } else { %><span class="pill">Waiting for matchmaking</span><% } %>
     </section>
 
