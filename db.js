@@ -2654,34 +2654,35 @@ export function enterArenaQueue(userId, deckId, catalogByIdentity, now = new Dat
   return { ...entry };
 }
 
+export function pairArenaQueueEntriesByElo(entries, ratingForEntry = entry => Number(entry.elo || ARENA_DEFAULT_ELO)) {
+  const waiting = [...entries];
+  let unmatched = null;
+  if (waiting.length % 2 === 1) {
+    waiting.sort((a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime() || Number(a.id) - Number(b.id)
+    );
+    unmatched = waiting.pop();
+  }
+  waiting.sort((a, b) =>
+    Number(ratingForEntry(a)) - Number(ratingForEntry(b)) ||
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+    Number(a.id) - Number(b.id)
+  );
+  const pairs = [];
+  for (let index = 0; index < waiting.length; index += 2) pairs.push([waiting[index], waiting[index + 1]]);
+  return { pairs, unmatched };
+}
+
 export function assignArenaMatchups(now = new Date()) {
   ensureArenaState();
   const arena = state.cards.arena;
   const eligible = arena.entries.filter(entry => entry.status === 'queued' && entry.deck_snapshot &&
     activeArenaMatchesForUser(entry.user_id).length < Number(arena.config.maxActiveMatches || 3));
-  const ordered = [...eligible].sort((a, b) =>
-    Number(Boolean(b.priority)) - Number(Boolean(a.priority)) ||
-    new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
-    Number(a.id) - Number(b.id)
-  );
+  const { pairs, unmatched } = pairArenaQueueEntriesByElo(eligible, entry => arenaRating(entry.user_id));
   const created = [];
-  while (ordered.length >= 2) {
-    const firstEntry = ordered.shift();
-    const firstRating = arenaRating(firstEntry.user_id);
-    let closestIndex = 0;
-    for (let index = 1; index < ordered.length; index += 1) {
-      const candidate = ordered[index];
-      const closest = ordered[closestIndex];
-      const candidateGap = Math.abs(arenaRating(candidate.user_id) - firstRating);
-      const closestGap = Math.abs(arenaRating(closest.user_id) - firstRating);
-      if (
-        candidateGap < closestGap ||
-        (candidateGap === closestGap && Number(Boolean(candidate.priority)) > Number(Boolean(closest.priority))) ||
-        (candidateGap === closestGap && Boolean(candidate.priority) === Boolean(closest.priority) && new Date(candidate.created_at) < new Date(closest.created_at))
-      ) closestIndex = index;
-    }
-    const [secondEntry] = ordered.splice(closestIndex, 1);
+  for (const [firstEntry, secondEntry] of pairs) {
     firstEntry.status = 'matched'; secondEntry.status = 'matched';
+    firstEntry.priority = false; secondEntry.priority = false;
     firstEntry.matched_at = now.toISOString(); secondEntry.matched_at = now.toISOString();
     const firstPlayerId = Math.random() < 0.5 ? firstEntry.user_id : secondEntry.user_id;
     const match = {
@@ -2702,8 +2703,7 @@ export function assignArenaMatchups(now = new Date()) {
     };
     arena.matches.push(match); created.push(match.id);
   }
-  if (ordered.length === 1) {
-    const unmatched = ordered[0];
+  if (unmatched) {
     unmatched.priority = true;
     unmatched.carried_at = now.toISOString();
   }
@@ -2712,7 +2712,7 @@ export function assignArenaMatchups(now = new Date()) {
   saveState();
   return {
     createdMatchIds: created,
-    unmatchedUserId: ordered[0]?.user_id || null,
+    unmatchedUserId: unmatched?.user_id || null,
     lastMatchmakingAt: now.toISOString()
   };
 }

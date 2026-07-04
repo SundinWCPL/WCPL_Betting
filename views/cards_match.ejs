@@ -297,6 +297,7 @@
       boostButton.disabled = false;
       boostButton.querySelector('small').textContent = 'Click, then choose a boost';
       card.classList.add('is-staged');
+      card.hidden = true;
       clearSelections();
       matchCollection.hidden = true;
       showStatus(`${card.dataset.cardName} staged in ${slot.dataset.matchSlot}. Add an optional boost or choose the next card.`);
@@ -350,7 +351,9 @@
     }));
     document.querySelectorAll('[data-remove-card]').forEach(button => button.addEventListener('click', () => {
       const slot = button.closest('[data-match-slot]');
-      document.querySelector(`.arena-collection-card[data-card-id="${slot.dataset.cardId}"]`)?.classList.remove('is-staged');
+      const unstagedCard = document.querySelector(`.arena-collection-card[data-card-id="${slot.dataset.cardId}"]`);
+      unstagedCard?.classList.remove('is-staged');
+      if (unstagedCard) unstagedCard.hidden = false;
       if (slot.dataset.boostId) document.querySelector(`.arena-boost-collection [data-boost-id="${slot.dataset.boostId}"]`)?.classList.remove('is-staged');
       delete slot.dataset.cardId; delete slot.dataset.boostId; delete slot.dataset.boostLoad; delete slot.dataset.trinketFamily; delete slot.dataset.trinketIcon; delete slot.dataset.trinketMode; delete slot.dataset.chemistryKey; delete slot.dataset.teamName; delete slot.dataset.teamLogo; delete slot.dataset.teamBg; delete slot.dataset.printedTeamLogo; delete slot.dataset.printedTeamBg; delete slot.dataset.loadBonus; delete slot.dataset.journeymanKey; delete slot.dataset.journeymanNoChoice;
       slot.querySelector('[data-staged-card]').hidden = true; slot.querySelector('[data-staged-card]').innerHTML = '';

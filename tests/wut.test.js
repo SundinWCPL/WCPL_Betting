@@ -140,6 +140,33 @@ test('Premium and Prestige packs guarantee a Rare-or-better player', () => {
   assert.ok(fallbackPlayers.some(player => cards.CARD_STARS[player.rolledTier] >= cards.CARD_STARS.rare));
 });
 
+test('arena matchmaking globally minimizes ELO gaps and skips only the newest odd entrant', () => {
+  const entries = [
+    { id: 1, user_id: 1, elo: 1100, created_at: '2026-01-01T00:00:00.000Z' },
+    { id: 2, user_id: 2, elo: 1000, created_at: '2026-01-01T00:01:00.000Z' },
+    { id: 3, user_id: 3, elo: 1110, created_at: '2026-01-01T00:02:00.000Z' },
+    { id: 4, user_id: 4, elo: 1120, created_at: '2026-01-01T00:03:00.000Z' },
+    { id: 5, user_id: 5, elo: 1090, created_at: '2026-01-01T00:04:00.000Z' }
+  ];
+  const result = db.pairArenaQueueEntriesByElo(entries, entry => entry.elo);
+  assert.equal(result.unmatched.user_id, 5, 'the newest entrant must be the only skipped player');
+  assert.deepEqual(result.pairs.map(pair => pair.map(entry => entry.user_id)), [[2, 1], [3, 4]]);
+  assert.equal(result.pairs.reduce((sum, [a, b]) => sum + Math.abs(a.elo - b.elo), 0), 110);
+
+  const even = db.pairArenaQueueEntriesByElo(entries.slice(0, 4), entry => entry.elo);
+  assert.equal(even.unmatched, null);
+  assert.deepEqual(even.pairs.map(pair => pair.map(entry => entry.user_id)), [[2, 1], [3, 4]]);
+});
+
+test('committed match cards are removed from that player’s available deck', () => {
+  const available = cards.availableWutMatchCards(
+    [{ id: 10 }, { id: 11 }, { id: 12 }],
+    [{ user_id: 1, card_id: 10 }, { user_id: 2, card_id: 11 }],
+    1
+  );
+  assert.deepEqual(available.map(card => card.id), [11, 12]);
+});
+
 test('new WUT users receive the complete starter bundle', () => {
   db.initDb();
   db.joinWut(1);

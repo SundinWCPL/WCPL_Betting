@@ -148,6 +148,7 @@ import {
   generateBoostPack,
   generatePlayerPack,
   generateWutPlayerPack,
+  availableWutMatchCards,
   generateWutStarterPack,
   chemistryMultiplierForCount,
   captainPatchChemistry,
@@ -1837,6 +1838,7 @@ app.get('/cards/arena/matches/:matchId', requireLogin, requireWutReady, async (r
       const snapshots = new Map([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
       payload.cards = payload.cards.filter(card => snapshotIds.has(Number(card.id))).map(card => ({ ...card, power: snapshots.get(Number(card.id))?.power, trinket: snapshots.get(Number(card.id))?.trinket || null }));
     }
+    payload.cards = availableWutMatchCards(payload.cards, match.placements, req.session.userId);
     return res.render('cards_match', { ...payload, match });
   } catch (err) {
     return next(err);

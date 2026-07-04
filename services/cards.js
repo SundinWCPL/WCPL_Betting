@@ -1213,6 +1213,13 @@ export function generateWutPlayerPack({ packType, catalog, config }) {
   return [...players, ...boosts];
 }
 
+export function availableWutMatchCards(cards, placements, userId) {
+  const committedIds = new Set((placements || [])
+    .filter(row => Number(row.user_id) === Number(userId))
+    .map(row => Number(row.card_id)));
+  return (cards || []).filter(card => !committedIds.has(Number(card.id)));
+}
+
 export function generateWutStarterPack(catalog) {
   const used = new Set();
   return ['F', 'F', 'D', 'D', 'G'].map(position => {
