@@ -266,6 +266,9 @@ test('new WUT users receive the complete starter bundle', () => {
   assert.equal(state.trinkets.length, 2);
   assert.ok(state.trinkets.every(trinket => trinket.rarity === 'common' && trinket.source === 'starter_pack'));
   assert.equal(new Set(state.trinkets.map(trinket => trinket.family)).size, 2);
+  assert.equal(db.getWutMembershipState(1).wutCoins, 1000);
+  assert.throws(() => db.openWutStarterPack({ userId: 1, items }), /already been opened/);
+  assert.equal(db.getWutMembershipState(1).wutCoins, 1000, 'the starter coin grant cannot be claimed twice');
   const starterBonus = db.getPendingCardsPack(1);
   assert.equal(starterBonus.pack_type, 'standard');
   assert.equal(starterBonus.source, 'starter_bonus');
@@ -277,10 +280,10 @@ test('new WUT users receive the complete starter bundle', () => {
   db.setWutFreeShopPurchases(true);
   const freeTrinket = db.buyWutTrinket({ userId: 1, slot: state.shop.offers[0].slot });
   assert.ok(freeTrinket.id);
-  assert.equal(db.getWutMembershipState(1).wutCoins, 0);
+  assert.equal(db.getWutMembershipState(1).wutCoins, 1000);
   const freeReroll = db.rerollWutTrinketShop({ userId: 1, currency: 'wut' });
   assert.equal(freeReroll.offers.length, 3);
-  assert.equal(db.getWutMembershipState(1).wutCoins, 0);
+  assert.equal(db.getWutMembershipState(1).wutCoins, 1000);
   const purchase = db.createCardsPackPurchase({ userId: 1, week: 1, packKind: 'player', packType: 'standard', price: 250, items: [
     ...items.slice(0, 3),
     { itemType: 'boost', boostType: 'goal', rarity: 'common' },
@@ -288,7 +291,7 @@ test('new WUT users receive the complete starter bundle', () => {
   ] });
   assert.equal(purchase.price, 0);
   assert.equal(purchase.free_purchase, true);
-  assert.equal(db.getWutMembershipState(1).wutCoins, 0);
+  assert.equal(db.getWutMembershipState(1).wutCoins, 1000);
 
   const cardIds = db.getWutMembershipState(1).starterCardIds;
   const catalogByIdentity = Object.fromEntries(items.map(item => [item.cardIdentity, { position: item.position, tier: 'common', teamId: 'TEST' }]));
@@ -302,7 +305,7 @@ test('new WUT users receive the complete starter bundle', () => {
   const completedDebug = db.getWutDebugMatch(1);
   assert.equal(completedDebug.status, 'completed');
   assert.equal(completedDebug.winner_side, 'A');
-  assert.equal(db.getWutMembershipState(1).wutCoins, 0, 'debug games never award currency');
+  assert.equal(db.getWutMembershipState(1).wutCoins, 1000, 'debug games never award currency');
 });
 
 function createDraftTournamentFixture({ name, entrantCount, tournament, match = {}, deckbuilding = {} }) {

@@ -2115,7 +2115,7 @@ app.post('/cards/wut/starter-pack', requireLogin, async (req, res) => {
     const items = generateWutStarterPack(catalog);
     const bonusPackItems = generateWutPlayerPack({ packType: 'standard', catalog, config });
     openWutStarterPack({ userId: req.session.userId, items, bonusPackItems });
-    req.session.flash = { type: 'success', message: 'Starter pack opened: 2F, 2D, 1G, two Common trinkets, and a free Standard pack waiting in the WUT Shop.' };
+    req.session.flash = { type: 'success', message: 'Starter pack opened: 2F, 2D, 1G, two Common trinkets, 1,000 WUT Coins, and a free Standard pack waiting in the WUT Shop.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }

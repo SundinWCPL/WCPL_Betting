@@ -50,6 +50,7 @@ const WUT_TRINKET_POWER = { common: 0, uncommon: 0.5, rare: 1, epic: 1.5, legend
 const WUT_TRINKET_FAMILIES = Object.keys(WUT_LAUNCH_TRINKET_EFFECTS);
 const WUT_TRINKET_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const WUT_MISSION_REWARD_DEFAULTS = { daily_play_three: 30, daily_first_win: 20, daily_rotating: 30, weekly_profit_500: 100, weekly_category_coverage: 125, weekly_rotating: 125 };
+const WUT_STARTER_COINS = 1000;
 export const WUT_TRINKET_EFFECTS = WUT_LAUNCH_TRINKET_EFFECTS;
 
 function configuredTrinketEffect(family, rarity) {
@@ -5146,6 +5147,8 @@ export function openWutStarterPack({ userId, items, bonusPackItems = null }) {
   membership.starter_trinket_ids = starterTrinkets.map(trinket => trinket.id);
   membership.starter_bonus_pack_id = freePack.id;
   membership.starter_opened_at = nowIso();
+  membership.starter_wut_coin_bonus = WUT_STARTER_COINS;
+  changeWutCoins(membership, WUT_STARTER_COINS, 'starter_pack_bonus', { pack_purchase_id: freePack.id });
   state.cards.decks.push({
     id: state.nextDeckId++, user_id: Number(userId), name: 'Starter Deck',
     active_card_ids: created.map(card => card.id), bench_card_ids: created.map(card => card.id),
