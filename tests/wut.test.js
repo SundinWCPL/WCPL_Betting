@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import qs from 'qs';
 
 const dbPath = path.join(os.tmpdir(), `wcpl-wut-${process.pid}.json`);
@@ -29,6 +31,51 @@ test('Draft Event wall times are always interpreted in Pacific Time', () => {
   assert.equal(draftEvents.wutPacificDateTimeToIso('2026-01-04T19:00'), '2026-01-05T03:00:00.000Z', 'winter uses PST');
   assert.equal(draftEvents.wutPacificDateTimeToIso('2026-07-05T02:00:00.000Z'), '2026-07-05T02:00:00.000Z', 'absolute timestamps remain unchanged');
   assert.throws(() => draftEvents.wutPacificDateTimeToIso('2026-03-08T02:30'), /does not exist in Pacific Time/);
+});
+
+test('Railway startup refuses missing or suspiciously reset production databases', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wcpl-railway-guard-'));
+  const database = path.join(directory, 'betting.json');
+  const moduleUrl = pathToFileURL(path.resolve('db.js')).href;
+  const run = () => spawnSync(process.execPath, ['--input-type=module', '--eval', `import(${JSON.stringify(moduleUrl)}).then(db => db.initDb())`], {
+    cwd: path.resolve('.'), encoding: 'utf8',
+    env: {
+      ...process.env,
+      JSON_DB_PATH: database,
+      BACKUP_DIR: path.join(directory, 'backups'),
+      RAILWAY_PROJECT_ID: 'production-guard-test',
+      RAILWAY_VOLUME_MOUNT_PATH: directory
+    }
+  });
+
+  const missing = run();
+  assert.notEqual(missing.status, 0);
+  assert.match(`${missing.stdout}${missing.stderr}`, /Refusing to initialize an empty production database/);
+  assert.equal(fs.existsSync(database), false, 'a missing production database must never be seeded');
+
+  const suspicious = JSON.stringify({ settings: { currentWeek: 1 }, users: [{ id: 1, username: 'Sundin' }], nextUserId: 2 });
+  fs.writeFileSync(database, suspicious);
+  const reset = run();
+  assert.notEqual(reset.status, 0);
+  assert.match(`${reset.stdout}${reset.stderr}`, /suspiciously empty production database/);
+  assert.equal(fs.readFileSync(database, 'utf8'), suspicious, 'the suspicious file must remain untouched');
+
+  const valid = JSON.stringify({
+    settings: { currentWeek: 1, lockedWeeks: [], bettingLocked: false },
+    users: [
+      { id: 1, username: 'Sundin', display_name: 'Sundin', role: 'admin', password_hash: 'preserved', balance: 0 },
+      { id: 2, username: 'keeper', display_name: 'Keeper', role: 'user', password_hash: 'preserved', balance: 500 }
+    ],
+    nextUserId: 3
+  });
+  fs.writeFileSync(database, valid);
+  const healthy = run();
+  assert.equal(healthy.status, 0, healthy.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(database, 'utf8')).users.length, 2, 'valid production state survives the atomic startup save');
+  const startupBackups = fs.readdirSync(path.join(directory, 'backups')).filter(name => name.startsWith('automatic-startup-'));
+  assert.equal(startupBackups.length, 1);
+  assert.equal(fs.readFileSync(path.join(directory, 'backups', startupBackups[0]), 'utf8'), valid, 'the pre-migration database is preserved byte-for-byte');
+  fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('Grit Boost combines hit and block bonus', () => {

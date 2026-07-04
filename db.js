@@ -37,6 +37,8 @@ import {
 
 const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
+const isRailwayRuntime = Boolean(process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_ENVIRONMENT_ID || process.env.RAILWAY_VOLUME_MOUNT_PATH);
+const allowEmptyProductionDb = String(process.env.ALLOW_EMPTY_PRODUCTION_DB || '').toLowerCase() === 'true';
 const ARENA_ENTRY_FEE = 0;
 const ARENA_WINNER_PRIZE = 60;
 const ARENA_DEFAULT_ELO = 1000;
@@ -240,21 +242,82 @@ function defaultState() {
 }
 
 let state = defaultState();
+let loadedStateFromDisk = false;
 
 function nowIso() {
   return new Date().toISOString();
 }
 
 function loadState() {
-  if (!fs.existsSync(dbPath)) return;
+  if (isRailwayRuntime && !process.env.JSON_DB_PATH) {
+    throw new Error('Refusing to start on Railway without JSON_DB_PATH. Attach the persistent volume and point JSON_DB_PATH at its betting.json file.');
+  }
+  const railwayMount = process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH) : '';
+  if (railwayMount && dbPath !== railwayMount && !dbPath.startsWith(`${railwayMount}${path.sep}`)) {
+    throw new Error(`Refusing to start because JSON_DB_PATH (${dbPath}) is outside the Railway volume (${railwayMount}).`);
+  }
+  if (railwayMount && backupDir !== railwayMount && !backupDir.startsWith(`${railwayMount}${path.sep}`)) {
+    throw new Error(`Refusing to start because BACKUP_DIR (${backupDir}) is outside the Railway volume (${railwayMount}).`);
+  }
+  if (!fs.existsSync(dbPath)) {
+    if (isRailwayRuntime && !allowEmptyProductionDb) throw new Error(`Refusing to initialize an empty production database: ${dbPath} does not exist.`);
+    loadedStateFromDisk = false;
+    return;
+  }
   const raw = fs.readFileSync(dbPath, 'utf8');
-  if (!raw.trim()) return;
-  state = { ...state, ...JSON.parse(raw) };
+  if (!raw.trim()) {
+    if (isRailwayRuntime && !allowEmptyProductionDb) throw new Error(`Refusing to initialize an empty production database: ${dbPath} is blank.`);
+    loadedStateFromDisk = false;
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Refusing to overwrite an unreadable database at ${dbPath}: ${err.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.users) || !parsed.settings) {
+    throw new Error(`Refusing to overwrite ${dbPath}: it is not a valid WCPL betting database.`);
+  }
+  if (isRailwayRuntime && !allowEmptyProductionDb && parsed.users.length <= 1 && Number(parsed.nextUserId || 1) <= 2) {
+    throw new Error(`Refusing to start from a suspiciously empty production database at ${dbPath}. Restore a known-good backup or explicitly set ALLOW_EMPTY_PRODUCTION_DB=true for a deliberate fresh launch.`);
+  }
+  state = { ...state, ...parsed };
+  loadedStateFromDisk = true;
 }
 
 function saveState() {
   ensureDirForFile(dbPath);
-  fs.writeFileSync(dbPath, JSON.stringify(state, null, 2));
+  const temporaryPath = path.join(path.dirname(dbPath), `.${path.basename(dbPath)}.${process.pid}.${Date.now()}.tmp`);
+  const serialized = JSON.stringify(state, null, 2);
+  let descriptor;
+  try {
+    descriptor = fs.openSync(temporaryPath, 'wx');
+    fs.writeFileSync(descriptor, serialized, 'utf8');
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporaryPath, dbPath);
+  } catch (err) {
+    if (descriptor != null) try { fs.closeSync(descriptor); } catch {}
+    try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch {}
+    throw new Error(`Could not atomically save the betting database: ${err.message}`);
+  }
+}
+
+function createAutomaticStartupBackup() {
+  if (!loadedStateFromDisk || !fs.existsSync(dbPath)) return null;
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+  const safeIso = nowIso().replace(/[:.]/g, '-');
+  const filename = `automatic-startup-${safeIso}.json`;
+  const fullPath = path.join(backupDir, filename);
+  fs.copyFileSync(dbPath, fullPath, fs.constants.COPYFILE_EXCL);
+  const automatic = fs.readdirSync(backupDir)
+    .filter(name => /^automatic-startup-.*\.json$/i.test(name))
+    .map(name => ({ name, modified: fs.statSync(path.join(backupDir, name)).mtimeMs }))
+    .sort((a, b) => b.modified - a.modified);
+  for (const stale of automatic.slice(20)) fs.unlinkSync(path.join(backupDir, stale.name));
+  return fullPath;
 }
 
 function isWeekLockedInternal(week) {
@@ -789,6 +852,7 @@ export function createJsonBackup() {
 
 export function initDb() {
   loadState();
+  createAutomaticStartupBackup();
   ensureSettings();
   ensureCasinoState();
   ensureCardsState();
