@@ -2401,6 +2401,20 @@ export function startWutDraftEvent({ eventId, environment, adminUserId, system =
   }
   if (!event.config.basic.allowOddEntrants && activeEntrants.length % 2) throw new Error('This event requires an even number of entrants.');
   if (!environment || !Array.isArray(environment.cards)) throw new Error('A valid frozen WUT environment is required.');
+  if (event.config.safetyBench.mode !== 'disabled') {
+    const frozenBenchCards = Array.isArray(environment.bench_cards)
+      ? environment.bench_cards
+      : environment.cards.filter(card => card.tier === 'common');
+    environment.bench_cards = frozenBenchCards;
+    if (event.config.safetyBench.mode === 'preset_shared') {
+      const identities = new Set(event.config.safetyBench.presetCards.map(String));
+      for (const position of ['F', 'D', 'G']) {
+        const available = frozenBenchCards.filter(card => card.position === position && identities.has(String(card.cardIdentity))).length;
+        const needed = event.config.safetyBench.positions[position].winners;
+        if (available < needed) throw new Error(`Preset Safety Bench needs ${needed} eligible Common ${position} card${needed === 1 ? '' : 's'} from the selected seasons.`);
+      }
+    } else selectWutDraftBenchPool(event.config, frozenBenchCards, () => 0.5);
+  }
   if (closeSignupNow) transitionWutDraftEventRecord(event, 'signup_closed', { actorUserId: adminUserId, reason: 'Signup closed for an early admin start', now });
   event.environment_snapshot = JSON.parse(JSON.stringify({ ...environment, captured_at: now.toISOString() }));
   ensureWutDraftInventories(event);
@@ -3330,13 +3344,20 @@ function finalizeWutDraftBench(event, { adminUserId = null, now = new Date(), ra
   return event;
 }
 
-export function beginWutDraftSafetyBench({ eventId, adminUserId, system = false, now = new Date(), random = Math.random }) {
+export function beginWutDraftSafetyBench({ eventId, adminUserId, system = false, benchCards = null, now = new Date(), random = Math.random }) {
   if (!system) requireWutDraftAdmin(adminUserId);
   const event = storedWutDraftEvent(eventId);
   if (event.paused_at) throw new Error('Resume the event before beginning the Safety Bench.');
   if (event.phase !== 'starting') throw new Error('The Safety Bench can only begin while the event is starting.');
   if (!event.environment_snapshot?.cards) throw new Error('Freeze the event environment before creating the Safety Bench.');
   ensureWutDraftInventories(event);
+  if (Array.isArray(benchCards) && benchCards.length) {
+    event.environment_snapshot.bench_cards = JSON.parse(JSON.stringify(benchCards));
+    appendWutDraftEventLog(event, 'bench_environment_refreshed', { card_count: benchCards.length }, { actorUserId: adminUserId, now });
+  }
+  const benchEnvironmentCards = Array.isArray(event.environment_snapshot.bench_cards) && event.environment_snapshot.bench_cards.length
+    ? event.environment_snapshot.bench_cards
+    : event.environment_snapshot.cards;
   const mode = event.config.safetyBench.mode;
   if (mode === 'disabled') {
     const preparedDraft = preparedWutDraftOpening(event, random);
@@ -3348,12 +3369,12 @@ export function beginWutDraftSafetyBench({ eventId, adminUserId, system = false,
   let candidates;
   if (mode === 'preset_shared') {
     const identities = new Set(event.config.safetyBench.presetCards.map(String));
-    candidates = event.environment_snapshot.cards.filter(card => identities.has(String(card.cardIdentity))).map(card => ({ position: card.position, card: JSON.parse(JSON.stringify(card)) }));
+    candidates = benchEnvironmentCards.filter(card => identities.has(String(card.cardIdentity))).map(card => ({ position: card.position, card: JSON.parse(JSON.stringify(card)) }));
     for (const position of ['F', 'D', 'G']) {
       const needed = event.config.safetyBench.positions[position].winners;
       if (candidates.filter(candidate => candidate.position === position).length < needed) throw new Error(`Preset Safety Bench needs ${needed} eligible ${position} card${needed === 1 ? '' : 's'}.`);
     }
-  } else candidates = selectWutDraftBenchPool(event.config, event.environment_snapshot.cards, random);
+  } else candidates = selectWutDraftBenchPool(event.config, benchEnvironmentCards, random);
   event.bench = { candidates, votes: [], winners: [], deadline_at: null, completed_at: null, started_at: now.toISOString() };
   transitionWutDraftEventRecord(event, 'bench_vote', { actorUserId: adminUserId, reason: `${mode} Safety Bench`, now });
   appendWutDraftEventLog(event, 'bench_candidates_generated', { mode, candidates: candidates.map(candidate => candidate.card.cardIdentity) }, { actorUserId: adminUserId, now });

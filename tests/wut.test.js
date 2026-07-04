@@ -8,12 +8,14 @@ import { pathToFileURL } from 'node:url';
 import qs from 'qs';
 
 const dbPath = path.join(os.tmpdir(), `wcpl-wut-${process.pid}.json`);
+const backupPath = path.join(os.tmpdir(), `wcpl-wut-backups-${process.pid}`);
 process.env.JSON_DB_PATH = dbPath;
+process.env.BACKUP_DIR = backupPath;
 const db = await import('../db.js');
 const cards = await import('../services/cards.js');
 const draftEvents = await import('../services/wutDraftEvents.js');
 
-test.after(() => { try { fs.unlinkSync(dbPath); } catch {} });
+test.after(() => { try { fs.unlinkSync(dbPath); } catch {} try { fs.rmSync(backupPath, { recursive: true, force: true }); } catch {} });
 
 test('Power uses card rarity plus the reduced trinket scale, never boosts', () => {
   assert.equal(db.calculateWutPower('common'), 1);
@@ -396,7 +398,8 @@ test('draft event foundation persists configurable events, presets, phases, and 
   assert.throws(() => db.startWutDraftEvent({ eventId: event.id, environment: { cards: [] }, adminUserId: 1 }), /Resume/);
   const resumed = db.resumeWutDraftEvent({ eventId: event.id, adminUserId: 1 });
   assert.equal(resumed.paused_at, null);
-  const starting = db.startWutDraftEvent({ eventId: event.id, environment: { cards: [{ cardIdentity: 'S3|TEST|one', tier: 'common' }], rules: { marker: 'frozen' } }, adminUserId: 1 });
+  const benchCards = ['F','F','F','F','D','D','D','D','G','G'].map((position, index) => ({ cardIdentity: `S3|BENCH|${index}`, tier: 'common', position }));
+  const starting = db.startWutDraftEvent({ eventId: event.id, environment: { cards: [{ cardIdentity: 'S3|TEST|one', tier: 'common' }], bench_cards: benchCards, rules: { marker: 'frozen' } }, adminUserId: 1 });
   assert.equal(starting.phase, 'starting');
   assert.equal(starting.environment_snapshot.rules.marker, 'frozen');
   assert.ok(starting.logs.some(entry => entry.type === 'event_paused'));
@@ -454,6 +457,27 @@ test('every seat receives the same per-round draft booster composition blueprint
   assert.deepEqual(templates.map(template => template.passDirection), ['left', 'right']);
 });
 
+test('Draft Event Safety Bench always uses Common cards from eligible seasons independently of booster rarities', () => {
+  const config = draftEvents.normalizeWutDraftEventConfig({
+    safetyBench: { rarityMin: 'legendary', rarityMax: 'legendary' },
+    boosters: {
+      pool: { seasons: ['S1', 'S2'], positions: ['F', 'D', 'G'], rarities: ['uncommon', 'rare', 'epic', 'legendary'] },
+      rarityLimits: { players: { minimum: 'uncommon', maximum: 'legendary' } }
+    }
+  });
+  assert.equal(config.safetyBench.rarityMin, 'common');
+  assert.equal(config.safetyBench.rarityMax, 'common');
+  const catalog = [
+    { cardIdentity: 'S1|A|common', edition: 'S1', position: 'F', tier: 'common' },
+    { cardIdentity: 'S2|A|common', edition: 'S2', position: 'D', tier: 'common' },
+    { cardIdentity: 'S1|A|rare', edition: 'S1', position: 'G', tier: 'rare' },
+    { cardIdentity: 'S3|A|common', edition: 'S3', position: 'G', tier: 'common' }
+  ];
+  const pools = draftEvents.splitWutDraftCardPools(config, catalog);
+  assert.deepEqual(pools.boosterCards.map(card => card.cardIdentity), ['S1|A|rare']);
+  assert.deepEqual(pools.benchCards.map(card => card.cardIdentity), ['S1|A|common', 'S2|A|common']);
+});
+
 test('draft signup charges once, withdrawal and cancellation refund once, and start freezes the environment', () => {
   const startingCoins = db.getWutMembershipState(1).wutCoins;
   db.adjustWutCoinBalance({ userId: 1, amount: 1000, note: 'Draft flow test', adminUserId: 1 });
@@ -478,7 +502,11 @@ test('draft signup charges once, withdrawal and cancellation refund once, and st
   assert.equal(db.getWutMembershipState(1).wutCoins, startingCoins + 800);
   db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
 
-  const environment = { cards: [{ cardIdentity: 'S3|D1|frozen', tier: 'rare' }], rules: { scoring: { goal: 10 } } };
+  const environment = {
+    cards: [{ cardIdentity: 'S3|D1|frozen', tier: 'rare' }],
+    bench_cards: ['F','F','F','F','D','D','D','D','G','G'].map((position, index) => ({ cardIdentity: `S3|REFUNDBENCH|${index}`, tier: 'common', position })),
+    rules: { scoring: { goal: 10 } }
+  };
   const started = db.startWutDraftEvent({ eventId: event.id, environment, adminUserId: 1, now: new Date('2026-07-04T18:03:00Z') });
   environment.cards[0].tier = 'common';
   assert.equal(started.environment_snapshot.cards[0].tier, 'rare');

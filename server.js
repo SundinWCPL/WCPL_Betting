@@ -204,7 +204,7 @@ import {
   wutTrinketDescription,
   wutTrinketName
 } from './services/wutTrinketText.js';
-import { WUT_DRAFT_TRANSITIONS, WUT_EVENT_TIME_ZONE } from './services/wutDraftEvents.js';
+import { WUT_DRAFT_TRANSITIONS, WUT_EVENT_TIME_ZONE, splitWutDraftCardPools } from './services/wutDraftEvents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2990,19 +2990,7 @@ app.post('/admin/cards/drafts/presets', requireAdmin, (req, res) => {
 });
 
 function draftEnvironmentFromCatalog(event, catalog) {
-  const pool = event.config.boosters.pool;
-  const playerRange = event.config.boosters.rarityLimits.players;
-  const rarityOrder = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
-  const minimum = rarityOrder.indexOf(playerRange.minimum);
-  const maximum = rarityOrder.indexOf(playerRange.maximum);
-  const cards = catalog.filter(card =>
-    card.rarityEligible !== false &&
-    pool.seasons.includes(card.edition === 'MYTHIC' ? 'MYTHIC' : card.edition) &&
-    pool.positions.includes(card.position) &&
-    pool.rarities.includes(card.tier) &&
-    rarityOrder.indexOf(card.tier) >= minimum && rarityOrder.indexOf(card.tier) <= maximum &&
-    (!pool.divisions.length || pool.divisions.includes(String(card.divisionId)))
-  ).map(card => ({
+  const snapshotCard = card => ({
     cardIdentity: card.cardIdentity, catalogKey: card.catalogKey, cardType: card.cardType,
     edition: card.edition, sourceSeason: card.sourceSeason, sourceStage: card.sourceStage,
     divisionId: card.divisionId, playerKey: card.playerKey, displayName: card.displayName,
@@ -3012,11 +3000,14 @@ function draftEnvironmentFromCatalog(event, catalog) {
     weightedFpPerGame: card.weightedFpPerGame, expectedWutFpPerMatch: card.expectedWutFpPerMatch,
     editionStats: card.editionStats, scoringPool: card.scoringPool || null,
     unavailableStats: card.unavailableStats || []
-  }));
+  });
+  const { boosterCards, benchCards } = splitWutDraftCardPools(event.config, catalog);
+  const cards = boosterCards.map(snapshotCard);
   const global = getCardsConfig();
   return {
     season_id: getAdminSettings().seasonId,
     cards,
+    bench_cards: benchCards.map(snapshotCard),
     rules: {
       scoring: global.scoring,
       boostEffects: global.boostEffects,
@@ -3037,7 +3028,9 @@ app.post('/admin/cards/drafts/:eventId/phase', requireAdmin, async (req, res) =>
       const environment = draftEnvironmentFromCatalog(current, await getCardsCatalog());
       event = startWutDraftEvent({ eventId: req.params.eventId, environment, adminUserId: req.session.userId });
     } else if (nextPhase === 'bench_vote') {
-      event = beginWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId });
+      const current = getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true })[0];
+      const environment = draftEnvironmentFromCatalog(current, await getCardsCatalog());
+      event = beginWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId, benchCards: environment.bench_cards });
     } else if (nextPhase === 'draft') {
       event = beginWutDraftEvent({ eventId: req.params.eventId, adminUserId: req.session.userId });
     } else event = transitionWutDraftEvent({

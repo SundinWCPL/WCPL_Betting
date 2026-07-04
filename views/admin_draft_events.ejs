@@ -78,7 +78,7 @@
 
       <section class="card admin-card"><p class="eyebrow">C · Guaranteed legal lineup</p><h2>Shared Safety Bench</h2><div class="draft-field-grid">
         <label>Mode<select data-path="safetyBench.mode" id="draftBenchMode"><option value="shared_vote">Shared vote</option><option value="random_shared">Random shared</option><option value="preset_shared">Preset shared</option><option value="disabled">Disabled</option></select></label>
-        <label data-bench-vote>Voting seconds<input type="number" min="5" data-path="safetyBench.votingSeconds"></label><label>Minimum rarity<select data-path="safetyBench.rarityMin" data-rarity-select></select></label><label>Maximum rarity<select data-path="safetyBench.rarityMax" data-rarity-select></select></label>
+        <label data-bench-vote>Voting seconds<input type="number" min="5" data-path="safetyBench.votingSeconds"></label><p class="muted wide">Safety Bench cards are always Common and use the eligible seasons, divisions, and positions from the Booster Pool.</p>
         <% ['F','D','G'].forEach(position => { %><fieldset data-bench-active><legend><%= position %> pool</legend><label>Candidates<input type="number" min="1" data-path="safetyBench.positions.<%= position %>.candidates"></label><label>Winners<input type="number" min="1" data-path="safetyBench.positions.<%= position %>.winners"></label></fieldset><% }) %>
         <label class="wide" data-bench-preset>Preset card IDs (comma-separated)<input data-path="safetyBench.presetCards" data-csv></label>
       </div></section>

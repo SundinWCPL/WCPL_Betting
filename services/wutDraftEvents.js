@@ -219,10 +219,6 @@ export function normalizeWutDraftEventConfig(input = {}) {
     const winners = integer(positionSource.winners, fallback.winners, 1, candidates);
     return [position, { candidates, winners }];
   }));
-  const benchRarityMin = choice(safetyBench.rarityMin, RARITIES, defaults.safetyBench.rarityMin);
-  const benchRarityMax = choice(safetyBench.rarityMax, RARITIES, defaults.safetyBench.rarityMax);
-  if (rarityIndex(benchRarityMin) > rarityIndex(benchRarityMax)) throw new Error('Safety Bench minimum rarity cannot exceed its maximum.');
-
   const format = choice(tournament.format, FORMATS, defaults.tournament.format);
   const signupOpensAt = normalizedIso(scheduling.signupOpensAt, 'Signup opening');
   const signupClosesAt = normalizedIso(scheduling.signupClosesAt, 'Signup closing');
@@ -260,7 +256,7 @@ export function normalizeWutDraftEventConfig(input = {}) {
     safetyBench: {
       mode: choice(safetyBench.mode, BENCH_MODES, defaults.safetyBench.mode),
       votingSeconds: integer(safetyBench.votingSeconds, defaults.safetyBench.votingSeconds, 5, 86400),
-      rarityMin: benchRarityMin, rarityMax: benchRarityMax, positions: benchPositions,
+      rarityMin: 'common', rarityMax: 'common', positions: benchPositions,
       presetCards: Array.isArray(safetyBench.presetCards) ? [...new Set(safetyBench.presetCards.map(String))] : []
     },
     boosters: {
@@ -519,6 +515,27 @@ export function selectWutDraftBenchPool(config, environmentCards, random = Math.
     selected.push(...shuffle(pool).slice(0, count).map(card => ({ position, card: clone(card) })));
   }
   return selected;
+}
+
+export function splitWutDraftCardPools(config, catalog) {
+  const normalized = normalizeWutDraftEventConfig(config);
+  const pool = normalized.boosters.pool;
+  const shared = (catalog || []).filter(card =>
+    card?.rarityEligible !== false &&
+    pool.seasons.includes(card.edition === 'MYTHIC' ? 'MYTHIC' : card.edition) &&
+    pool.positions.includes(card.position) &&
+    (!pool.divisions.length || pool.divisions.includes(String(card.divisionId)))
+  );
+  const playerRange = normalized.boosters.rarityLimits.players;
+  const playerMinimum = rarityIndex(playerRange.minimum);
+  const playerMaximum = rarityIndex(playerRange.maximum);
+  return {
+    boosterCards: shared.filter(card =>
+      pool.rarities.includes(card.tier) &&
+      rarityIndex(card.tier) >= playerMinimum && rarityIndex(card.tier) <= playerMaximum
+    ),
+    benchCards: shared.filter(card => card.tier === 'common')
+  };
 }
 
 export function resolveWutDraftBenchWinners(config, candidates, votes, random = Math.random) {
