@@ -2080,12 +2080,25 @@ export function joinWut(userId) {
 
 export function getCardsAdminState() {
   ensureCardsState();
+  const userById = new Map(state.users.map(user => [Number(user.id), user]));
   return {
     config: getCardsConfig(),
     positionOverrides: { ...state.cards.positionOverrides },
     tierOverrides: { ...state.cards.tierOverrides },
     calculatedTiers: { ...state.cards.calculatedTiers },
     arenaConfig: JSON.parse(JSON.stringify(state.cards.arena.config)),
+    wutUsers: state.cards.wutMemberships.map(membership => ({
+      userId: Number(membership.user_id),
+      displayName: userById.get(Number(membership.user_id))?.display_name || `User #${membership.user_id}`,
+      wutCoins: Number(membership.wut_coins || 0),
+      starterOpened: Boolean(membership.starter_opened_at)
+    })).sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    recentWutAdjustments: state.cards.wutTransactions
+      .filter(transaction => transaction.kind === 'admin_wut_coin_adjustment')
+      .slice(-20).reverse().map(transaction => ({
+        ...JSON.parse(JSON.stringify(transaction)),
+        displayName: userById.get(Number(transaction.user_id))?.display_name || `User #${transaction.user_id}`
+      })),
     totals: {
       ownedCards: state.cards.ownedCards.length,
       ownedBoosts: state.cards.ownedBoosts.length,
@@ -3550,6 +3563,22 @@ function changeWutCoins(membership, amount, kind, details = {}) {
   membership.wut_coins = next;
   state.cards.wutTransactions.push({ id: state.nextWutTransactionId++, user_id: Number(membership.user_id), amount: Number(amount || 0), balance_after: next, kind, ...details, created_at: nowIso() });
   return next;
+}
+
+export function adjustWutCoinBalance({ userId, amount, note, adminUserId = null }) {
+  ensureCardsState();
+  const value = Number(amount);
+  if (!Number.isInteger(value) || value === 0) throw new Error('WUT Coin adjustment must be a non-zero whole number.');
+  const cleanNote = String(note || '').trim().slice(0, 160);
+  if (!cleanNote) throw new Error('A reason is required for WUT Coin adjustments.');
+  const membership = state.cards.wutMemberships.find(item => Number(item.user_id) === Number(userId));
+  if (!membership) throw new Error('That user has not joined WUT yet.');
+  const balance = changeWutCoins(membership, value, 'admin_wut_coin_adjustment', {
+    note: cleanNote,
+    admin_user_id: adminUserId == null ? null : Number(adminUserId)
+  });
+  saveState();
+  return { userId: Number(userId), amount: value, balance, note: cleanNote };
 }
 
 export function calculateWutPower(cardRarity, trinketRarity = '', config = null) {

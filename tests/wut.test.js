@@ -402,3 +402,18 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
   assert.equal(shop.offers.find(offer => offer.slot === 1).rarity, 'legendary');
   assert.equal(db.getWutMissionsForUser(1).daily.find(mission => mission.id === 'play_three').reward, 41);
 });
+
+test('admin WUT Coin adjustments are signed, audited, and cannot overdraw', () => {
+  const before = db.getWutMembershipState(1).wutCoins;
+  const granted = db.adjustWutCoinBalance({ userId: 1, amount: 125, note: 'Launch support grant', adminUserId: 1 });
+  assert.equal(granted.balance, before + 125);
+  const removed = db.adjustWutCoinBalance({ userId: 1, amount: -25, note: 'Correct duplicate grant', adminUserId: 1 });
+  assert.equal(removed.balance, before + 100);
+  assert.throws(() => db.adjustWutCoinBalance({ userId: 1, amount: -(before + 101), note: 'Too much', adminUserId: 1 }), /insufficient/i);
+  assert.throws(() => db.adjustWutCoinBalance({ userId: 1, amount: 1, note: '', adminUserId: 1 }), /reason is required/i);
+  const recent = db.getCardsAdminState().recentWutAdjustments;
+  assert.equal(recent[0].amount, -25);
+  assert.equal(recent[0].balance_after, before + 100);
+  assert.equal(recent[0].note, 'Correct duplicate grant');
+  assert.equal(recent[0].admin_user_id, 1);
+});

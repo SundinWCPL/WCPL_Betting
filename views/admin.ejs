@@ -227,6 +227,21 @@
       </div>
       <p class="muted small-note">Closing WUT pauses all pages, purchases, matches, queue entries, and matchmaking. Link visibility is controlled separately.</p>
 
+      <section class="admin-wut-coin-adjuster">
+        <div><strong>Adjust User WUT Coins</strong><p class="muted small-note">Use a positive amount to grant coins or a negative amount to remove them. Every change is recorded in the WUT ledger.</p></div>
+        <% if (cardsAdmin.wutUsers.length) { %>
+          <form method="post" action="/admin/cards/wut-coins" class="admin-action-row" onsubmit="return confirm(`Adjust this user's WUT Coin balance by ${this.amount.value}?`);">
+            <select name="user_id" required><% cardsAdmin.wutUsers.forEach(user => { %><option value="<%= user.userId %>"><%= user.displayName %> · <%= user.wutCoins %> WUT Coins<%= user.starterOpened ? '' : ' · Starter unopened' %></option><% }) %></select>
+            <input type="number" name="amount" step="1" placeholder="+/- WUT Coins" required>
+            <input type="text" name="note" maxlength="160" placeholder="Reason (required)" required>
+            <button type="submit">Adjust WUT Balance</button>
+          </form>
+        <% } else { %><p class="muted">No users have joined WUT yet.</p><% } %>
+        <% if (cardsAdmin.recentWutAdjustments.length) { %>
+          <details><summary>Recent WUT Coin adjustments</summary><div class="table-scroll"><table><thead><tr><th>User</th><th>Change</th><th>Balance After</th><th>Reason</th><th>Time</th></tr></thead><tbody><% cardsAdmin.recentWutAdjustments.forEach(row => { %><tr><td><%= row.displayName %></td><td><strong><%= row.amount > 0 ? '+' : '' %><%= row.amount %></strong></td><td><%= row.balance_after %></td><td><%= row.note %></td><td><%= new Date(row.created_at).toLocaleString() %></td></tr><% }) %></tbody></table></div></details>
+        <% } %>
+      </section>
+
       <form method="post" action="/admin/cards/config" class="cards-admin-config">
         <% const wutRarities = ['common','uncommon','rare','epic','legendary']; %>
         <fieldset>

@@ -105,7 +105,7 @@ WUT missions provide two fixed dailies, one eligibility-filtered rotating daily,
 
 Admins can inspect every active/scoring WUT match and filter completed, ready, or voided history by user at `/admin/cards/matches`. Admin voids are restricted to unfinished matches, release committed boosts, cancel the source queue entries, record an audit reason, and award no WUT Coins or ELO.
 
-The WUT admin controls expose pack and trinket economy, shop rarity weights, match limits and rewards, deck-slot costs, mission rewards, scoring and boost values, plus rarity-specific numeric trinket effects. Mode-only trinket behavior such as Journeyman remains read-only. Saved trinket values update owned inventory and unsold offers; already-snapshotted matches retain their original rules.
+The WUT admin controls expose pack and trinket economy, shop rarity weights, match limits and rewards, deck-slot costs, mission rewards, scoring and boost values, plus rarity-specific numeric trinket effects. Mode-only trinket behavior such as Journeyman remains read-only. Admins can also apply reason-required signed WUT Coin adjustments to individual members; each change is written to the WUT ledger. Saved trinket values update owned inventory and unsold offers; already-snapshotted matches retain their original rules.
 
 Active matches that existed before this overhaul are marked `rules_version: 1` and finish with legacy placement/scoring rules. Newly matched games use `rules_version: 2`, WUT Coins, immutable deck/trinket snapshots, Power locks, Boost Load, timeout forfeits, and the paused overnight clock. Booster Draft is intentionally not implemented.
 

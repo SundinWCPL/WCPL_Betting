@@ -601,6 +601,7 @@ ul { color: var(--muted); line-height: 1.7; }
 .tier-text-legendary { color: #ffb52e; }
 .tier-text-mythic { color: #ff3f46; }
 .cards-admin-config { display: grid; grid-template-columns: repeat(2, minmax(190px, 1fr)); gap: 12px; margin: 18px 0; }
+.admin-wut-coin-adjuster{display:grid;gap:12px;margin:16px 0;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--card2)}.admin-wut-coin-adjuster form{display:grid;grid-template-columns:minmax(180px,1.2fr) minmax(130px,.6fr) minmax(190px,1fr) auto}.admin-wut-coin-adjuster details{border-top:1px solid var(--border);padding-top:10px}.admin-wut-coin-adjuster summary{cursor:pointer;font-weight:800}.admin-wut-coin-adjuster table{margin-top:10px}@media(max-width:850px){.admin-wut-coin-adjuster form{grid-template-columns:1fr}.admin-wut-coin-adjuster form>*{width:100%}}
 .cards-admin-config fieldset { min-width: 0; display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 12px; }
 .cards-admin-config legend { color: var(--text); font-weight: 800; }
 .cards-rarity-fieldset { grid-column: 1 / -1; }

@@ -92,6 +92,7 @@ import {
   getWutMembershipState,
   joinWut,
   openWutStarterPack,
+  adjustWutCoinBalance,
   grantCardsTestItem,
   getCardsWeekReviews,
   acknowledgeCardsWeekReview,
@@ -2747,6 +2748,21 @@ app.post('/admin/cards/free-shop', requireAdmin, (req, res) => {
   const enabled = String(req.body.enabled || '') === 'true';
   setWutFreeShopPurchases(enabled);
   req.session.flash = { type: 'success', message: enabled ? 'Free WUT shop purchases enabled for testing.' : 'Normal WUT shop pricing restored.' };
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/wut-coins', requireAdmin, (req, res) => {
+  try {
+    const result = adjustWutCoinBalance({
+      userId: req.body.user_id,
+      amount: req.body.amount,
+      note: req.body.note,
+      adminUserId: req.session.userId
+    });
+    req.session.flash = { type: 'success', message: `Adjusted WUT balance by ${result.amount > 0 ? '+' : ''}${result.amount}. New balance: ${result.balance} WUT Coins.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
   res.redirect('/admin#cards-controls');
 });
 
