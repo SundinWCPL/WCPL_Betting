@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import qs from 'qs';
 
 const dbPath = path.join(os.tmpdir(), `wcpl-wut-${process.pid}.json`);
 process.env.JSON_DB_PATH = dbPath;
@@ -120,6 +121,15 @@ test('new WUT users receive the complete starter bundle', () => {
   const items = positions.map((position, index) => ({ itemType: 'player', rolledTier: 'common', position, cardIdentity: `S3|D1|starter-${index}`, catalogKey: `S3|D1|starter-${index}`, edition: 'S3', divisionId: 'D1', playerKey: `starter-${index}` }));
   db.openWutStarterPack({ userId: 1, items });
   const state = db.getWutSystemsState(1);
+  assert.deepEqual(db.getCardsConfig().playerPackPrices, { standard: 250, premium: 500, prestige: 1000 });
+  assert.deepEqual(db.getCardsConfig().wut.trinketPrices, { common: 100, uncommon: 250, rare: 500, epic: 1000, legendary: 2000 });
+  assert.deepEqual(db.getCardsConfig().wut.trinketRemovalWut, { common: 25, uncommon: 75, rare: 150, epic: 300, legendary: 500 });
+  assert.deepEqual(db.getCardsConfig().wut.shopReroll, { wut: 200, mushy: 500 });
+  assert.deepEqual(db.getCardsConfig().wut.trinketShopOdds, {
+    1: { common: 100, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+    2: { common: 0, uncommon: 75, rare: 25, epic: 0, legendary: 0 },
+    3: { common: 0, uncommon: 0, rare: 0, epic: 85, legendary: 15 }
+  });
   assert.deepEqual(db.getCardsAdminState().config.scoring.chemistryBonuses, { 2: 10, 3: 15, 4: 20, 5: 25 });
   assert.equal(state.deckSlots, 3);
   assert.equal(state.decks.length, 1);
@@ -400,6 +410,7 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
   db.setWutFreeShopPurchases(true);
   const shop = db.rerollWutTrinketShop({ userId: 1, currency: 'wut' });
   assert.equal(shop.offers.find(offer => offer.slot === 1).rarity, 'legendary');
+  assert.equal(shop.offers.find(offer => offer.slot === 1).price, 4001);
   assert.equal(db.getWutMissionsForUser(1).daily.find(mission => mission.id === 'play_three').reward, 41);
 });
 
@@ -416,4 +427,43 @@ test('admin WUT Coin adjustments are signed, audited, and cannot overdraw', () =
   assert.equal(recent[0].balance_after, before + 100);
   assert.equal(recent[0].note, 'Correct duplicate grant');
   assert.equal(recent[0].admin_user_id, 1);
+});
+
+test('URL-encoded Admin numeric keys save without array-index shifting', () => {
+  const current = db.getCardsConfig();
+  const submitted = qs.parse([
+    'wut[trinketShopOdds][slot1][common]=91',
+    'wut[trinketShopOdds][slot1][uncommon]=9',
+    'wut[trinketShopOdds][slot1][rare]=0',
+    'wut[trinketShopOdds][slot1][epic]=0',
+    'wut[trinketShopOdds][slot1][legendary]=0',
+    'wut[trinketShopOdds][slot2][common]=0',
+    'wut[trinketShopOdds][slot2][uncommon]=64',
+    'wut[trinketShopOdds][slot2][rare]=36',
+    'wut[trinketShopOdds][slot2][epic]=0',
+    'wut[trinketShopOdds][slot2][legendary]=0',
+    'wut[trinketShopOdds][slot3][common]=0',
+    'wut[trinketShopOdds][slot3][uncommon]=0',
+    'wut[trinketShopOdds][slot3][rare]=0',
+    'wut[trinketShopOdds][slot3][epic]=80',
+    'wut[trinketShopOdds][slot3][legendary]=20',
+    'wut[deckSlotCosts][slot4]=444',
+    'wut[trinketEffects][generalist][common][value3]=9',
+    'wut[trinketEffects][generalist][common][value4]=12',
+    'wut[trinketEffects][generalist][common][value5]=15'
+  ].join('&'));
+  db.saveCardsConfig({
+    playerPackPrices: current.playerPackPrices,
+    playerTierOdds: current.playerTierOdds,
+    boostRarityOdds: current.boostRarityOdds,
+    boostEffects: current.boostEffects,
+    scoring: current.scoring,
+    wut: submitted.wut
+  });
+  const saved = db.getCardsConfig().wut;
+  assert.deepEqual(saved.trinketShopOdds['1'], { common: 91, uncommon: 9, rare: 0, epic: 0, legendary: 0 });
+  assert.deepEqual(saved.trinketShopOdds['2'], { common: 0, uncommon: 64, rare: 36, epic: 0, legendary: 0 });
+  assert.deepEqual(saved.trinketShopOdds['3'], { common: 0, uncommon: 0, rare: 0, epic: 80, legendary: 20 });
+  assert.equal(saved.deckSlotCosts['4'], 444);
+  assert.deepEqual(saved.trinketEffects.generalist.common, { 3: .09, 4: .12, 5: .15 });
 });

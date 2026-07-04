@@ -4,6 +4,7 @@ node_modules/
 # local runtime data / secrets
 .env
 betting.json
+.codex-wut-ui-test.json
 
 # logs
 npm-debug.log*

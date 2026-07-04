@@ -145,10 +145,10 @@ function defaultState() {
           rewards: { winner: Number(process.env.WUT_WIN_REWARD || 60), loser: Number(process.env.WUT_LOSS_REWARD || 25), forfeitLoser: 0 },
           deckSlotsFree: 3,
           deckSlotCosts: { 4: 500, 5: 1000, 6: 2000, 7: 3500, 8: 5000 },
-          trinketPrices: { common: 100, uncommon: 250, rare: 600, epic: 1500, legendary: 4000 },
-          trinketRemovalWut: { common: 25, uncommon: 75, rare: 150, epic: 300, legendary: 750 },
+          trinketPrices: { common: 100, uncommon: 250, rare: 500, epic: 1000, legendary: 2000 },
+          trinketRemovalWut: { common: 25, uncommon: 75, rare: 150, epic: 300, legendary: 500 },
           trinketRemovalMushy: { common: 100, uncommon: 250, rare: 500, epic: 1000, legendary: 2500 },
-          shopReroll: { wut: 250, mushy: 750 },
+          shopReroll: { wut: 200, mushy: 500 },
           trinketShopOdds: {
             1: { common: 100, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
             2: { common: 0, uncommon: 75, rare: 25, epic: 0, legendary: 0 },
@@ -494,6 +494,20 @@ function ensureCardsState() {
     }
   };
   delete state.cards.config.boostPackPrices;
+  if (Number(state.cards.wutEconomyDefaultsVersion || 0) < 1) {
+    state.cards.config.playerPackPrices = { standard: 250, premium: 500, prestige: 1000 };
+    state.cards.config.wut.trinketPrices = { common: 100, uncommon: 250, rare: 500, epic: 1000, legendary: 2000 };
+    state.cards.config.wut.trinketRemovalWut = { common: 25, uncommon: 75, rare: 150, epic: 300, legendary: 500 };
+    state.cards.config.wut.trinketRemovalMushy = { common: 100, uncommon: 250, rare: 500, epic: 1000, legendary: 2500 };
+    state.cards.config.wut.shopReroll = { wut: 200, mushy: 500 };
+    state.cards.config.wut.deckSlotCosts = { 4: 500, 5: 1000, 6: 2000, 7: 3500, 8: 5000 };
+    state.cards.config.wut.trinketShopOdds = {
+      1: { common: 100, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+      2: { common: 0, uncommon: 75, rare: 25, epic: 0, legendary: 0 },
+      3: { common: 0, uncommon: 0, rare: 0, epic: 85, legendary: 15 }
+    };
+    state.cards.wutEconomyDefaultsVersion = 1;
+  }
   state.cards.positionOverrides = { ...(state.cards.positionOverrides || {}) };
   if (chemistryRulesVersion < 2) {
     state.cards.config.scoring.chemistryBonuses = { 2: 10, 3: 15, 4: 20, 5: 25 };
@@ -2194,13 +2208,13 @@ export function saveCardsConfig(config) {
   const currentWut = state.cards.config.wut;
   const cleanWutMap = (group, keys) => Object.fromEntries(keys.map(key => [
     key,
-    cleanPositiveConfigNumber(config?.wut?.[group]?.[key] ?? currentWut[group]?.[key], `${group} ${key}`)
+    cleanPositiveConfigNumber(config?.wut?.[group]?.[key] ?? config?.wut?.[group]?.[`slot${key}`] ?? currentWut[group]?.[key], `${group} ${key}`)
   ]));
   const trinketRarities = WUT_TRINKET_RARITIES;
   const trinketShopOdds = Object.fromEntries(['1', '2', '3'].map(slot => {
     const weights = Object.fromEntries(trinketRarities.map(rarity => [
       rarity,
-      cleanPositiveConfigNumber(config?.wut?.trinketShopOdds?.[slot]?.[rarity] ?? currentWut.trinketShopOdds?.[slot]?.[rarity], `Trinket Shop slot ${slot} ${rarity} weight`)
+      cleanPositiveConfigNumber(config?.wut?.trinketShopOdds?.[`slot${slot}`]?.[rarity] ?? config?.wut?.trinketShopOdds?.[slot]?.[rarity] ?? currentWut.trinketShopOdds?.[slot]?.[rarity], `Trinket Shop slot ${slot} ${rarity} weight`)
     ]));
     if (Object.values(weights).reduce((sum, value) => sum + value, 0) <= 0) throw new Error(`Trinket Shop slot ${slot} needs at least one positive rarity weight.`);
     return [slot, weights];
@@ -2212,7 +2226,8 @@ export function saveCardsConfig(config) {
       let effect = JSON.parse(JSON.stringify(trinketEffects[family][rarity]));
       for (const field of fields) {
         const currentValue = field.key === 'value' ? effect : effect?.[field.key];
-        const submitted = config?.wut?.trinketEffects?.[family]?.[rarity]?.[field.key];
+        const submittedFields = config?.wut?.trinketEffects?.[family]?.[rarity];
+        const submitted = submittedFields?.[/^\d+$/.test(field.key) ? `value${field.key}` : field.key] ?? submittedFields?.[field.key];
         let value = cleanPositiveConfigNumber(submitted ?? (field.kind === 'percent' ? Number(currentValue) * 100 : currentValue), `${family} ${rarity} ${field.label}`);
         if (field.kind === 'percent') value /= 100;
         if (field.kind === 'integer') value = Math.round(value);
@@ -2267,7 +2282,10 @@ export function saveCardsConfig(config) {
   state.cards.arena.config.winnerPrize = Number(wut.rewards.winner);
   for (const trinket of state.cards.trinkets) trinket.effect = configuredTrinketEffect(trinket.family, trinket.rarity);
   for (const shop of state.cards.trinketShops) {
-    for (const offer of shop.offers || []) if (!offer.sold_at) offer.effect = configuredTrinketEffect(offer.family, offer.rarity);
+    for (const offer of shop.offers || []) if (!offer.sold_at) {
+      offer.effect = configuredTrinketEffect(offer.family, offer.rarity);
+      offer.price = Number(wut.trinketPrices[offer.rarity]);
+    }
   }
   saveState();
   return getCardsConfig();
@@ -4064,6 +4082,7 @@ function ensureTrinketShop(userId, now = new Date(), force = false) {
   }
   for (const offer of shop.offers || []) {
     if (offer.effect == null) offer.effect = configuredTrinketEffect(offer.family, offer.rarity);
+    if (!offer.sold_at) offer.price = Number(state.cards.config.wut.trinketPrices[offer.rarity]);
   }
   shop.next_refresh_at = arenaZonedTimeToDate(nextDateKey(dateKey), {}, timeZone).toISOString();
   shop.refresh_timezone = timeZone;
