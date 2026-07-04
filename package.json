@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "test": "node --test tests/*.test.js",
+    "wut:s1-games": "node scripts/generate-s1-wut-games.js",
+    "wut:trinket-balance": "node scripts/wut-trinket-balance.js",
+    "wut:boost-balance": "node scripts/wut-boost-balance.js",
+    "wut:audit": "node scripts/wut-state-audit.js",
     "odds:lab": "node scripts/odds-lab.js",
     "odds:backtest": "node scripts/odds-backtest.js",
     "odds:calibrate": "node scripts/odds-calibrate.js",

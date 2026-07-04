@@ -2,6 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
 import {
+  WUT_TRINKET_ADMIN_FIELDS,
+  WUT_LAUNCH_TRINKET_EFFECTS,
+  journeymanCandidates,
+  resolveZebraStripes,
+  trinketFitsWutPosition
+} from './services/wutBalanceRules.js';
+import {
   HORSE_RACING_CONFIG,
   getHorseRaceCardDateKey,
   getHorseRaceDateKey,
@@ -15,11 +22,22 @@ import {
 const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
 const ARENA_ENTRY_FEE = 0;
-const ARENA_WINNER_PRIZE = 50;
+const ARENA_WINNER_PRIZE = 60;
 const ARENA_DEFAULT_ELO = 1000;
 const ARENA_ELO_K_FACTOR = 32;
 const ARENA_MATCHMAKING_MINUTES = 30;
 const ARENA_QUEUE_TRIGGER = 10;
+const WUT_RARITY_COST = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
+const WUT_TRINKET_FAMILIES = Object.keys(WUT_LAUNCH_TRINKET_EFFECTS);
+const WUT_TRINKET_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+const WUT_MISSION_REWARD_DEFAULTS = { daily_play_three: 30, daily_first_win: 20, daily_rotating: 30, weekly_profit_500: 100, weekly_category_coverage: 125, weekly_rotating: 125 };
+export const WUT_TRINKET_EFFECTS = WUT_LAUNCH_TRINKET_EFFECTS;
+
+function configuredTrinketEffect(family, rarity) {
+  const effect = state.cards?.config?.wut?.trinketEffects?.[family]?.[rarity]
+    ?? WUT_LAUNCH_TRINKET_EFFECTS[family]?.[rarity];
+  return effect == null ? null : JSON.parse(JSON.stringify(effect));
+}
 
 function ensureDirForFile(filePath) {
   const dir = path.dirname(filePath);
@@ -86,8 +104,7 @@ function defaultState() {
     },
     cards: {
       config: {
-        playerPackPrices: { standard: 75, premium: 150, prestige: 350 },
-        boostPackPrices: { standard: 50, premium: 100, prestige: 250 },
+        playerPackPrices: { standard: 250, premium: 500, prestige: 1000 },
         playerTierOdds: {
           standard: { common: 55, uncommon: 25, rare: 13, epic: 6, legendary: 1, mythic: 0 },
           premium: { common: 25, uncommon: 30, rare: 25, epic: 15, legendary: 5, mythic: 0 },
@@ -102,6 +119,7 @@ function defaultState() {
           goal: { common: { per: 1, bonus: 2 }, uncommon: { per: 1, bonus: 3 }, rare: { per: 1, bonus: 5 }, epic: { per: 1, bonus: 7 }, legendary: { per: 1, bonus: 10 } },
           assist: { common: { per: 1, bonus: 1 }, uncommon: { per: 1, bonus: 2 }, rare: { per: 1, bonus: 3 }, epic: { per: 1, bonus: 5 }, legendary: { per: 1, bonus: 7 } },
           shot: { common: { per: 4, bonus: 1 }, uncommon: { per: 3, bonus: 1 }, rare: { per: 2, bonus: 1 }, epic: { per: 1, bonus: 1 }, legendary: { per: 1, bonus: 2 } },
+          grit: { common: { per: 1, bonus: 1 }, uncommon: { per: 1, bonus: 2 }, rare: { per: 1, bonus: 3 }, epic: { per: 1, bonus: 5 }, legendary: { per: 1, bonus: 7 } },
           hit: { common: { per: 1, bonus: 1 }, uncommon: { per: 1, bonus: 2 }, rare: { per: 1, bonus: 3 }, epic: { per: 1, bonus: 4 }, legendary: { per: 1, bonus: 6 } },
           block: { common: { per: 1, bonus: 2 }, uncommon: { per: 1, bonus: 3 }, rare: { per: 1, bonus: 4 }, epic: { per: 1, bonus: 6 }, legendary: { per: 1, bonus: 8 } },
           save: { common: { per: 8, bonus: 1 }, uncommon: { per: 5, bonus: 1 }, rare: { per: 3, bonus: 1 }, epic: { per: 2, bonus: 1 }, legendary: { per: 1, bonus: 1 } },
@@ -117,7 +135,27 @@ function defaultState() {
             { threshold: 0.95, multiplier: 1.35 },
             { threshold: 0.975, multiplier: 1.5 }
           ],
-          chemistryBonuses: { 2: 10, 3: 15, 4: 25, 5: 50 }
+          chemistryBonuses: { 2: 10, 3: 15, 4: 20, 5: 25 }
+        },
+        wut: {
+          freeShopPurchases: false,
+          rarityCosts: WUT_RARITY_COST,
+          slotPowerAllowance: Number(process.env.WUT_SLOT_POWER_ALLOWANCE || 1),
+          boostLoadCap: Number(process.env.WUT_BOOST_LOAD_CAP || 5),
+          rewards: { winner: Number(process.env.WUT_WIN_REWARD || 60), loser: Number(process.env.WUT_LOSS_REWARD || 25), forfeitLoser: 0 },
+          deckSlotsFree: 3,
+          deckSlotCosts: { 4: 500, 5: 1000, 6: 2000, 7: 3500, 8: 5000 },
+          trinketPrices: { common: 100, uncommon: 250, rare: 600, epic: 1500, legendary: 4000 },
+          trinketRemovalWut: { common: 25, uncommon: 75, rare: 150, epic: 300, legendary: 750 },
+          trinketRemovalMushy: { common: 100, uncommon: 250, rare: 500, epic: 1000, legendary: 2500 },
+          shopReroll: { wut: 250, mushy: 750 },
+          trinketShopOdds: {
+            1: { common: 100, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+            2: { common: 0, uncommon: 75, rare: 25, epic: 0, legendary: 0 },
+            3: { common: 0, uncommon: 0, rare: 0, epic: 85, legendary: 15 }
+          },
+          trinketEffects: JSON.parse(JSON.stringify(WUT_LAUNCH_TRINKET_EFFECTS)),
+          missionRewards: { ...WUT_MISSION_REWARD_DEFAULTS }
         }
       },
       positionOverrides: {},
@@ -129,13 +167,21 @@ function defaultState() {
       packPurchases: [],
       weekReviews: [],
       wutMemberships: [],
+      trinkets: [],
+      decks: [],
+      trinketShops: [],
+      wutTransactions: [],
+      missionPeriods: [],
+      missionBetOpportunities: [],
       arena: {
         config: {
           entryFee: ARENA_ENTRY_FEE,
           winnerPrize: ARENA_WINNER_PRIZE,
           timeZone: process.env.ARENA_TIME_ZONE || 'America/Los_Angeles',
           maxActiveMatches: Number(process.env.ARENA_MAX_ACTIVE_MATCHES || 3),
-          turnHours: Number(process.env.ARENA_TURN_HOURS || 24),
+          turnHours: Number(process.env.ARENA_TURN_HOURS || 2),
+          pauseStartHour: Number(process.env.ARENA_PAUSE_START_HOUR || 0),
+          pauseEndHour: Number(process.env.ARENA_PAUSE_END_HOUR || 8),
           matchmakingMinutes: ARENA_MATCHMAKING_MINUTES,
           queueTrigger: ARENA_QUEUE_TRIGGER,
           defaultElo: ARENA_DEFAULT_ELO,
@@ -145,8 +191,10 @@ function defaultState() {
         ratings: {},
         entries: [],
         matches: [],
+        debugMatches: [],
         nextEntryId: 1,
-        nextMatchId: 1
+        nextMatchId: 1,
+        nextDebugMatchId: 1
       }
     },
     nextUserId: 1,
@@ -156,6 +204,9 @@ function defaultState() {
     nextShotDoctorRunId: 1,
     nextOwnedCardId: 1,
     nextOwnedBoostId: 1,
+    nextOwnedTrinketId: 1,
+    nextDeckId: 1,
+    nextWutTransactionId: 1,
     nextPackPurchaseId: 1
   };
 }
@@ -378,7 +429,19 @@ function migrateCardsOddsGroup(saved, defaults) {
   ]));
 }
 
+function mergeTrinketEffects(saved, defaults = WUT_LAUNCH_TRINKET_EFFECTS) {
+  return Object.fromEntries(WUT_TRINKET_FAMILIES.map(family => [
+    family,
+    Object.fromEntries(WUT_TRINKET_RARITIES.map(rarity => [
+      rarity,
+      JSON.parse(JSON.stringify(saved?.[family]?.[rarity] ?? defaults[family][rarity]))
+    ]))
+  ]));
+}
+
 function ensureCardsState() {
+  const chemistryRulesVersion = Number(state.cards?.chemistryRulesVersion || 0);
+  const trinketRulesVersion = Number(state.cards?.trinketRulesVersion || 0);
   const defaults = defaultState().cards;
   state.cards = {
     ...defaults,
@@ -390,12 +453,12 @@ function ensureCardsState() {
         ...defaults.config.playerPackPrices,
         ...(state.cards?.config?.playerPackPrices || {})
       },
-      boostPackPrices: {
-        ...defaults.config.boostPackPrices,
-        ...(state.cards?.config?.boostPackPrices || {})
-      },
       playerTierOdds: migrateCardsOddsGroup(state.cards?.config?.playerTierOdds, defaults.config.playerTierOdds),
       boostRarityOdds: migrateCardsOddsGroup(state.cards?.config?.boostRarityOdds, defaults.config.boostRarityOdds),
+      boostEffects: {
+        ...defaults.config.boostEffects,
+        ...(state.cards?.config?.boostEffects || {})
+      },
       scoring: {
         ...defaults.config.scoring,
         ...(state.cards?.config?.scoring || {}),
@@ -410,10 +473,32 @@ function ensureCardsState() {
         savePctBonuses: Array.isArray(state.cards?.config?.scoring?.savePctBonuses)
           ? state.cards.config.scoring.savePctBonuses
           : defaults.config.scoring.savePctBonuses
+      },
+      wut: {
+        ...defaults.config.wut,
+        ...(state.cards?.config?.wut || {}),
+        rarityCosts: { ...defaults.config.wut.rarityCosts, ...(state.cards?.config?.wut?.rarityCosts || {}) },
+        rewards: { ...defaults.config.wut.rewards, ...(state.cards?.config?.wut?.rewards || {}) },
+        deckSlotCosts: { ...defaults.config.wut.deckSlotCosts, ...(state.cards?.config?.wut?.deckSlotCosts || {}) },
+        trinketPrices: { ...defaults.config.wut.trinketPrices, ...(state.cards?.config?.wut?.trinketPrices || {}) },
+        trinketRemovalWut: { ...defaults.config.wut.trinketRemovalWut, ...(state.cards?.config?.wut?.trinketRemovalWut || {}) },
+        trinketRemovalMushy: { ...defaults.config.wut.trinketRemovalMushy, ...(state.cards?.config?.wut?.trinketRemovalMushy || {}) },
+        shopReroll: { ...defaults.config.wut.shopReroll, ...(state.cards?.config?.wut?.shopReroll || {}) },
+        trinketShopOdds: Object.fromEntries(['1', '2', '3'].map(slot => [slot, {
+          ...defaults.config.wut.trinketShopOdds[slot],
+          ...(state.cards?.config?.wut?.trinketShopOdds?.[slot] || {})
+        }])),
+        trinketEffects: mergeTrinketEffects(state.cards?.config?.wut?.trinketEffects, defaults.config.wut.trinketEffects),
+        missionRewards: { ...defaults.config.wut.missionRewards, ...(state.cards?.config?.wut?.missionRewards || {}) }
       }
     }
   };
+  delete state.cards.config.boostPackPrices;
   state.cards.positionOverrides = { ...(state.cards.positionOverrides || {}) };
+  if (chemistryRulesVersion < 2) {
+    state.cards.config.scoring.chemistryBonuses = { 2: 10, 3: 15, 4: 20, 5: 25 };
+    state.cards.chemistryRulesVersion = 2;
+  }
   state.cards.tierOverrides = { ...(state.cards.tierOverrides || {}) };
   state.cards.calculatedTiers = { ...(state.cards.calculatedTiers || {}) };
   state.cards.ownedCards = Array.isArray(state.cards.ownedCards) ? state.cards.ownedCards : [];
@@ -430,18 +515,72 @@ function ensureCardsState() {
     card.display_name = card.display_name || '';
     card.card_identity = card.card_identity || `${card.edition}|${card.division_id}|${card.player_key}`;
     card.fantasy_stats = card.fantasy_stats && typeof card.fantasy_stats === 'object' ? card.fantasy_stats : {};
-    card.cooldown_remaining = Math.max(0, Number(card.cooldown_remaining || 0));
+    card.cooldown_remaining = 0;
+    card.trinket_id = card.trinket_id == null ? null : Number(card.trinket_id);
     // Contracts were removed by WUT. Previously retired cards return to the usable collection.
     card.retired = false;
   }
   state.cards.ownedBoosts = Array.isArray(state.cards.ownedBoosts) ? state.cards.ownedBoosts : [];
   for (const boost of state.cards.ownedBoosts) {
     if (String(boost.rarity).toLowerCase() === 'mythic') boost.rarity = 'legendary';
+    // Hit and Block inventories become Grit without destroying owned instances.
+    if (['hit', 'block'].includes(String(boost.boost_type).toLowerCase())) boost.boost_type = 'grit';
   }
   state.cards.lineups = Array.isArray(state.cards.lineups) ? state.cards.lineups : [];
   state.cards.packPurchases = Array.isArray(state.cards.packPurchases) ? state.cards.packPurchases : [];
   state.cards.weekReviews = Array.isArray(state.cards.weekReviews) ? state.cards.weekReviews : [];
   state.cards.wutMemberships = Array.isArray(state.cards.wutMemberships) ? state.cards.wutMemberships : [];
+  for (const membership of state.cards.wutMemberships) {
+    membership.wut_coins = Math.max(0, Math.floor(Number(membership.wut_coins || 0)));
+    membership.deck_slots = Math.max(3, Math.floor(Number(membership.deck_slots || 3)));
+  }
+  state.cards.trinkets = Array.isArray(state.cards.trinkets) ? state.cards.trinkets : [];
+  state.cards.trinketShops = Array.isArray(state.cards.trinketShops) ? state.cards.trinketShops : [];
+  state.cards.missionPeriods = Array.isArray(state.cards.missionPeriods) ? state.cards.missionPeriods : [];
+  state.cards.missionBetOpportunities = Array.isArray(state.cards.missionBetOpportunities) ? state.cards.missionBetOpportunities : [];
+  if (chemistryRulesVersion < 2) {
+    for (const trinket of state.cards.trinkets.filter(item => item.family === 'team_crest')) {
+      trinket.effect = configuredTrinketEffect('team_crest', trinket.rarity);
+    }
+    for (const shop of state.cards.trinketShops || []) {
+      for (const offer of (shop.offers || []).filter(item => item.family === 'team_crest' && !item.sold_at)) {
+        offer.effect = configuredTrinketEffect('team_crest', offer.rarity);
+      }
+    }
+  }
+  if (trinketRulesVersion < 2) {
+    for (const trinket of state.cards.trinkets) {
+      const effect = configuredTrinketEffect(trinket.family, trinket.rarity);
+      if (effect != null) trinket.effect = effect;
+    }
+    for (const shop of state.cards.trinketShops) {
+      for (const offer of shop.offers || []) {
+        const effect = configuredTrinketEffect(offer.family, offer.rarity);
+        if (!offer.sold_at && effect != null) offer.effect = effect;
+      }
+    }
+    const snapshots = [];
+    for (const entry of state.cards.arena?.entries || []) snapshots.push(...(entry.deck_snapshot?.active || []), ...(entry.deck_snapshot?.bench || []));
+    for (const match of [...(state.cards.arena?.matches || []), ...(state.cards.arena?.debugMatches || [])]) {
+      for (const deck of Object.values(match.deck_snapshots || {})) snapshots.push(...(deck?.active || []), ...(deck?.bench || []));
+      snapshots.push(...(match.placements || []).map(row => row.card_snapshot).filter(Boolean));
+    }
+    for (const snapshot of snapshots) {
+      const trinket = snapshot?.trinket;
+      const effect = trinket ? configuredTrinketEffect(trinket.family, trinket.rarity) : null;
+      if (trinket && effect != null) trinket.effect = effect;
+    }
+    state.cards.trinketRulesVersion = 2;
+  }
+  state.cards.decks = Array.isArray(state.cards.decks) ? state.cards.decks : [];
+  state.nextDeckId = Number(state.nextDeckId || 1);
+  state.cards.wutTransactions = Array.isArray(state.cards.wutTransactions) ? state.cards.wutTransactions : [];
+  for (const membership of state.cards.wutMemberships.filter(item => item.starter_opened_at)) {
+    const starterIds = [...new Set((membership.starter_card_ids || []).map(Number).filter(id => state.cards.ownedCards.some(card => Number(card.id) === id && Number(card.user_id) === Number(membership.user_id))))];
+    if (starterIds.length === 5 && !state.cards.decks.some(deck => Number(deck.user_id) === Number(membership.user_id))) {
+      state.cards.decks.push({ id: state.nextDeckId++, user_id: Number(membership.user_id), name: 'Starter Deck', active_card_ids: starterIds, bench_card_ids: starterIds, created_at: nowIso(), updated_at: nowIso(), migrated: true });
+    }
+  }
   state.cards.arena = {
     ...defaults.arena,
     ...(state.cards.arena || {}),
@@ -449,13 +588,30 @@ function ensureCardsState() {
   };
   state.cards.arena.entries = Array.isArray(state.cards.arena.entries) ? state.cards.arena.entries : [];
   state.cards.arena.matches = Array.isArray(state.cards.arena.matches) ? state.cards.arena.matches : [];
+  state.cards.arena.debugMatches = Array.isArray(state.cards.arena.debugMatches) ? state.cards.arena.debugMatches : [];
   state.cards.arena.ratings = state.cards.arena.ratings && typeof state.cards.arena.ratings === 'object'
     ? state.cards.arena.ratings
     : {};
   state.cards.arena.nextEntryId = Number(state.cards.arena.nextEntryId || 1);
   state.cards.arena.nextMatchId = Number(state.cards.arena.nextMatchId || 1);
+  state.cards.arena.nextDebugMatchId = Number(state.cards.arena.nextDebugMatchId || 1);
+  if (Number(state.cards.wutRulesVersion || 0) < 2) {
+    // Existing active games retain legacy placement/scoring behavior. New
+    // matches receive rules_version=2 and immutable deck/trinket snapshots.
+    for (const match of state.cards.arena.matches.filter(item => ['active', 'scoring', 'ready'].includes(item.status))) {
+      match.rules_version = Number(match.rules_version || 1);
+    }
+    for (const entry of state.cards.arena.entries.filter(item => item.status === 'queued' && !item.deck_snapshot)) {
+      entry.status = 'cancelled'; entry.cancel_reason = 'wut_2_deck_selection_required'; entry.cancelled_at = nowIso();
+    }
+    state.cards.config.playerPackPrices = { standard: 250, premium: 500, prestige: 1000 };
+    state.cards.arena.config.turnHours = 2;
+    state.cards.arena.config.pauseStartHour = 0;
+    state.cards.arena.config.pauseEndHour = 8;
+    state.cards.wutRulesVersion = 2;
+  }
   state.cards.arena.config.entryFee = ARENA_ENTRY_FEE;
-  state.cards.arena.config.winnerPrize = ARENA_WINNER_PRIZE;
+  state.cards.arena.config.winnerPrize = Number(state.cards.config.wut.rewards.winner);
   state.cards.arena.config.matchmakingMinutes = ARENA_MATCHMAKING_MINUTES;
   state.cards.arena.config.queueTrigger = ARENA_QUEUE_TRIGGER;
   state.cards.arena.config.defaultElo = ARENA_DEFAULT_ELO;
@@ -491,6 +647,9 @@ function ensureCardsState() {
   }
   state.nextOwnedCardId = Number(state.nextOwnedCardId || 1);
   state.nextOwnedBoostId = Number(state.nextOwnedBoostId || 1);
+  state.nextOwnedTrinketId = Number(state.nextOwnedTrinketId || 1);
+  state.nextDeckId = Number(state.nextDeckId || 1);
+  state.nextWutTransactionId = Number(state.nextWutTransactionId || 1);
   state.nextPackPurchaseId = Number(state.nextPackPurchaseId || 1);
 }
 
@@ -1492,6 +1651,13 @@ export function isWeekLocked(week) {
 
 export function setWeekLocked(week, locked) {
   setWeekLockedInternal(week, locked);
+  if (!locked) {
+    const opportunityRecord = missionBetOpportunityRecord(week);
+    if (opportunityRecord) {
+      opportunityRecord.locked_at = null;
+      opportunityRecord.updated_at = new Date().toISOString();
+    }
+  }
   saveState();
   return getAdminSettings();
 }
@@ -1870,10 +2036,10 @@ export function getCardsConfig() {
   return JSON.parse(JSON.stringify(state.cards.config));
 }
 
-const configuredWutJoinFee = Number(process.env.WUT_JOIN_FEE || 100);
+const configuredWutJoinFee = Number(process.env.WUT_JOIN_FEE || 0);
 const WUT_JOIN_FEE = Number.isFinite(configuredWutJoinFee)
-  ? Math.max(1, Math.ceil(configuredWutJoinFee))
-  : 100;
+  ? Math.max(0, Math.ceil(configuredWutJoinFee))
+  : 0;
 
 export function getWutMembershipState(userId) {
   ensureCardsState();
@@ -1884,7 +2050,9 @@ export function getWutMembershipState(userId) {
     joinFee: Number(membership?.join_fee || WUT_JOIN_FEE),
     joinedAt: membership?.joined_at || null,
     starterOpenedAt: membership?.starter_opened_at || null,
-    starterCardIds: [...(membership?.starter_card_ids || [])]
+    starterCardIds: [...(membership?.starter_card_ids || [])],
+    wutCoins: Number(membership?.wut_coins || 0),
+    deckSlots: Number(membership?.deck_slots || 3)
   };
 }
 
@@ -1895,27 +2063,17 @@ export function joinWut(userId) {
   }
   const user = state.users.find(item => Number(item.id) === Number(userId));
   if (!user) throw new Error('User not found.');
-  if (Number(user.balance || 0) < WUT_JOIN_FEE) throw new Error('Insufficient balance.');
-
-  user.balance = Number(user.balance || 0) - WUT_JOIN_FEE;
+  if (WUT_JOIN_FEE > 0) throw new Error('WUT membership cannot be purchased with Mushybux.');
   const membership = {
     user_id: Number(userId),
     join_fee: WUT_JOIN_FEE,
     joined_at: nowIso(),
     starter_opened_at: null,
-    starter_card_ids: []
+    starter_card_ids: [],
+    wut_coins: 0,
+    deck_slots: 3
   };
   state.cards.wutMemberships.push(membership);
-  state.transactions.push({
-    id: state.nextTransactionId++,
-    user_id: Number(userId),
-    week: Number(state.settings.currentWeek || 1),
-    amount: -WUT_JOIN_FEE,
-    kind: 'wut_membership',
-    category: 'cards',
-    note: 'Joined WUT',
-    created_at: nowIso()
-  });
   saveState();
   return getWutMembershipState(userId);
 }
@@ -1927,14 +2085,25 @@ export function getCardsAdminState() {
     positionOverrides: { ...state.cards.positionOverrides },
     tierOverrides: { ...state.cards.tierOverrides },
     calculatedTiers: { ...state.cards.calculatedTiers },
+    arenaConfig: JSON.parse(JSON.stringify(state.cards.arena.config)),
     totals: {
       ownedCards: state.cards.ownedCards.length,
       ownedBoosts: state.cards.ownedBoosts.length,
+      ownedTrinkets: state.cards.trinkets.length,
+      savedDecks: state.cards.decks.length,
+      wutMembers: state.cards.wutMemberships.length,
       packs: state.cards.packPurchases.length,
       queuedArenaEntries: state.cards.arena.entries.filter(entry => entry.status === 'queued').length,
       activeArenaMatches: state.cards.arena.matches.filter(match => match.status === 'active').length
     }
   };
+}
+
+export function setWutFreeShopPurchases(enabled) {
+  ensureCardsState();
+  state.cards.config.wut.freeShopPurchases = Boolean(enabled);
+  saveState();
+  return state.cards.config.wut.freeShopPurchases;
 }
 
 function cleanPositiveConfigNumber(value, label) {
@@ -1963,7 +2132,7 @@ export function saveCardsConfig(config) {
       )
     ]))
   ]));
-  const boostTypes = ['goal', 'assist', 'shot', 'hit', 'block', 'save', 'shutout'];
+  const boostTypes = ['goal', 'assist', 'shot', 'grit', 'save', 'shutout'];
   const boostRarities = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
   const boostEffects = Object.fromEntries(boostTypes.map(type => [type, Object.fromEntries(boostRarities.map(rarity => [
     rarity,
@@ -2009,13 +2178,59 @@ export function saveCardsConfig(config) {
       )
     ];
   }));
+  const currentWut = state.cards.config.wut;
+  const cleanWutMap = (group, keys) => Object.fromEntries(keys.map(key => [
+    key,
+    cleanPositiveConfigNumber(config?.wut?.[group]?.[key] ?? currentWut[group]?.[key], `${group} ${key}`)
+  ]));
+  const trinketRarities = WUT_TRINKET_RARITIES;
+  const trinketShopOdds = Object.fromEntries(['1', '2', '3'].map(slot => {
+    const weights = Object.fromEntries(trinketRarities.map(rarity => [
+      rarity,
+      cleanPositiveConfigNumber(config?.wut?.trinketShopOdds?.[slot]?.[rarity] ?? currentWut.trinketShopOdds?.[slot]?.[rarity], `Trinket Shop slot ${slot} ${rarity} weight`)
+    ]));
+    if (Object.values(weights).reduce((sum, value) => sum + value, 0) <= 0) throw new Error(`Trinket Shop slot ${slot} needs at least one positive rarity weight.`);
+    return [slot, weights];
+  }));
+  const trinketEffects = mergeTrinketEffects(currentWut.trinketEffects);
+  for (const family of WUT_TRINKET_FAMILIES) {
+    const fields = WUT_TRINKET_ADMIN_FIELDS[family] || [];
+    for (const rarity of trinketRarities) {
+      let effect = JSON.parse(JSON.stringify(trinketEffects[family][rarity]));
+      for (const field of fields) {
+        const currentValue = field.key === 'value' ? effect : effect?.[field.key];
+        const submitted = config?.wut?.trinketEffects?.[family]?.[rarity]?.[field.key];
+        let value = cleanPositiveConfigNumber(submitted ?? (field.kind === 'percent' ? Number(currentValue) * 100 : currentValue), `${family} ${rarity} ${field.label}`);
+        if (field.kind === 'percent') value /= 100;
+        if (field.kind === 'integer') value = Math.round(value);
+        if (value < Number(field.min || 0)) throw new Error(`${family} ${rarity} ${field.label} must be at least ${field.min}.`);
+        if (field.key === 'value') effect = value;
+        else effect[field.key] = value;
+      }
+      trinketEffects[family][rarity] = effect;
+    }
+  }
+  const wut = {
+    ...JSON.parse(JSON.stringify(currentWut)),
+    slotPowerAllowance: Math.round(cleanPositiveConfigNumber(config?.wut?.slotPowerAllowance ?? currentWut.slotPowerAllowance, 'Slot Power allowance')),
+    boostLoadCap: Math.round(cleanPositiveConfigNumber(config?.wut?.boostLoadCap ?? currentWut.boostLoadCap, 'Base Boost Load')),
+    rewards: cleanWutMap('rewards', ['winner', 'loser', 'forfeitLoser']),
+    deckSlotCosts: cleanWutMap('deckSlotCosts', ['4', '5', '6', '7', '8']),
+    trinketPrices: cleanWutMap('trinketPrices', trinketRarities),
+    trinketRemovalWut: cleanWutMap('trinketRemovalWut', trinketRarities),
+    trinketRemovalMushy: cleanWutMap('trinketRemovalMushy', trinketRarities),
+    shopReroll: cleanWutMap('shopReroll', ['wut', 'mushy']),
+    trinketShopOdds,
+    trinketEffects,
+    missionRewards: cleanWutMap('missionRewards', Object.keys(WUT_MISSION_REWARD_DEFAULTS))
+  };
   const next = {
     playerPackPrices: cleanGroup('playerPackPrices', packTypes),
-    boostPackPrices: cleanGroup('boostPackPrices', packTypes),
     playerTierOdds: cleanOddsByPack('playerTierOdds'),
     boostRarityOdds: cleanOddsByPack('boostRarityOdds'),
     boostEffects,
-    scoring: { statPoints, savePctBonuses, chemistryBonuses }
+    scoring: { statPoints, savePctBonuses, chemistryBonuses },
+    wut
   };
   for (const group of ['playerTierOdds', 'boostRarityOdds']) {
     for (const packType of packTypes) {
@@ -2024,7 +2239,23 @@ export function saveCardsConfig(config) {
       }
     }
   }
+  const arenaInput = config?.arena || {};
+  const turnHours = cleanPositiveConfigNumber(arenaInput.turnHours ?? state.cards.arena.config.turnHours, 'Turn hours');
+  if (turnHours <= 0) throw new Error('Turn hours must be greater than 0.');
+  const pauseStartHour = Math.round(cleanPositiveConfigNumber(arenaInput.pauseStartHour ?? state.cards.arena.config.pauseStartHour, 'Pause start hour'));
+  const pauseEndHour = Math.round(cleanPositiveConfigNumber(arenaInput.pauseEndHour ?? state.cards.arena.config.pauseEndHour, 'Pause end hour'));
+  if (pauseStartHour > 23 || pauseEndHour > 23) throw new Error('Pause hours must be between 0 and 23.');
+  const maxActiveMatches = Math.max(1, Math.round(cleanPositiveConfigNumber(arenaInput.maxActiveMatches ?? state.cards.arena.config.maxActiveMatches, 'Maximum active matches')));
   state.cards.config = next;
+  state.cards.arena.config.turnHours = turnHours;
+  state.cards.arena.config.pauseStartHour = pauseStartHour;
+  state.cards.arena.config.pauseEndHour = pauseEndHour;
+  state.cards.arena.config.maxActiveMatches = maxActiveMatches;
+  state.cards.arena.config.winnerPrize = Number(wut.rewards.winner);
+  for (const trinket of state.cards.trinkets) trinket.effect = configuredTrinketEffect(trinket.family, trinket.rarity);
+  for (const shop of state.cards.trinketShops) {
+    for (const offer of shop.offers || []) if (!offer.sold_at) offer.effect = configuredTrinketEffect(offer.family, offer.rarity);
+  }
   saveState();
   return getCardsConfig();
 }
@@ -2133,6 +2364,54 @@ function arenaLocalDateKey(date = new Date(), timeZone = null) {
   }).formatToParts(date);
   const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;
+}
+
+function arenaZonedTimeToDate(dateKey, { hour = 0, minute = 0, second = 0 } = {}, timeZone = null) {
+  const zone = timeZone || state.cards?.arena?.config?.timeZone || 'America/Los_Angeles';
+  const [year, month, day] = String(dateKey).split('-').map(Number);
+  const desired = Date.UTC(year, month - 1, day, hour, minute, second);
+  let guess = desired;
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+  });
+  for (let index = 0; index < 3; index += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(guess))
+      .filter(part => part.type !== 'literal')
+      .map(part => [part.type, Number(part.value)]));
+    const actual = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    guess += desired - actual;
+  }
+  return new Date(guess);
+}
+
+function arenaLocalHour(date = new Date()) {
+  const zone = state.cards?.arena?.config?.timeZone || 'America/Edmonton';
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, hour: '2-digit', hourCycle: 'h23' }).formatToParts(date);
+  return Number(parts.find(part => part.type === 'hour')?.value || 0);
+}
+
+function arenaTimerPaused(date = new Date()) {
+  const hour = arenaLocalHour(date);
+  const start = Number(state.cards.arena.config.pauseStartHour ?? 0);
+  const end = Number(state.cards.arena.config.pauseEndHour ?? 8);
+  return start < end ? hour >= start && hour < end : hour >= start || hour < end;
+}
+
+// Add only active clock time. Minute-sized boundaries keep this DST-safe in
+// the configured site timezone and make the pause rule easy to audit/tune.
+function addArenaActiveTime(start, activeMs) {
+  let cursor = new Date(start); let remaining = Math.max(0, Number(activeMs));
+  while (remaining > 0) {
+    const step = Math.min(60000, remaining);
+    cursor = new Date(cursor.getTime() + step);
+    if (!arenaTimerPaused(new Date(cursor.getTime() - 1))) remaining -= step;
+  }
+  return cursor;
+}
+
+function nextArenaTurnDeadline(now) {
+  return addArenaActiveTime(now, Number(state.cards.arena.config.turnHours || 2) * 3600000).toISOString();
 }
 
 function arenaSlotKey(date = new Date()) {
@@ -2270,7 +2549,10 @@ function publicArenaMatch(match, userId) {
     opponent: players.find(player => Number(player.id) !== Number(userId)) || null,
     current_player_id: match.status === 'active' ? arenaCurrentPlayerId(match) : null,
     cards_required_this_turn: match.status === 'active' ? ARENA_TURN_SEQUENCE[Number(match.turn_index)] : 0,
-    is_your_turn: match.status === 'active' && arenaCurrentPlayerId(match) === Number(userId)
+    is_your_turn: match.status === 'active' && arenaCurrentPlayerId(match) === Number(userId),
+    timer_paused: match.status === 'active' && arenaTimerPaused(new Date()),
+    boost_load_cap: wutBoostLoadCap(match.placements || [], userId),
+    boost_load_used: (match.placements || []).filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.boost_load || 0), 0)
   };
 }
 
@@ -2302,11 +2584,12 @@ export function getArenaStateForUser(userId, now = new Date()) {
     activeMatches: matches.filter(match => match.status === 'active').map(match => publicArenaMatch(match, userId)),
     readyMatches: matches.filter(match => match.status === 'ready' && !(match.revealed_by || []).map(Number).includes(Number(userId))).map(match => publicArenaMatch(match, userId)),
     history: matches.filter(match => match.status === 'completed' || (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(Number(userId)))).map(match => publicArenaMatch(match, userId)),
+    cancelledMatches: matches.filter(match => match.status === 'cancelled').map(match => publicArenaMatch(match, userId)),
     serverNow: now.toISOString()
   };
 }
 
-export function enterArenaQueue(userId, now = new Date()) {
+export function enterArenaQueue(userId, deckId, catalogByIdentity, now = new Date()) {
   ensureArenaState();
   const arena = state.cards.arena;
   if (activeArenaMatchesForUser(userId).length >= Number(arena.config.maxActiveMatches || 3)) {
@@ -2317,9 +2600,19 @@ export function enterArenaQueue(userId, now = new Date()) {
   )) throw new Error('You are already in the WUT queue.');
   const user = state.users.find(item => Number(item.id) === Number(userId));
   if (!user) throw new Error('User not found.');
+  const deck = state.cards.decks.find(item => Number(item.id) === Number(deckId) && Number(item.user_id) === Number(userId));
+  if (!deck) throw new Error('Select a saved deck before entering the queue.');
+  const owned = new Map(state.cards.ownedCards.filter(card => Number(card.user_id) === Number(userId)).map(card => [Number(card.id), card]));
+  const active = (deck.active_card_ids || []).map(id => wutCardSnapshot(owned.get(Number(id)), catalogByIdentity));
+  const bench = (deck.bench_card_ids || []).map(id => wutCardSnapshot(owned.get(Number(id)), catalogByIdentity));
+  if (active.length < 5 || active.length > 8 || bench.length !== 5) throw new Error('That deck is not queue-ready.');
+  if (bench.map(card => card.position).sort().join('') !== 'DDFFG' || bench.some(card => card.power > 2)) {
+    throw new Error('That deck’s Safety Bench is no longer legal. Update it before queueing.');
+  }
   const entry = {
     id: arena.nextEntryId++, user_id: Number(userId), entered_date: arenaLocalDateKey(now),
-    paid_amount: ARENA_ENTRY_FEE, priority: false, status: 'queued', created_at: now.toISOString()
+    paid_amount: ARENA_ENTRY_FEE, priority: false, status: 'queued', created_at: now.toISOString(),
+    deck_id: deck.id, deck_name: deck.name, deck_snapshot: { active, bench, snapshot_at: now.toISOString() }
   };
   arena.entries.push(entry);
   if (arena.entries.filter(candidate => candidate.status === 'queued').length >= ARENA_QUEUE_TRIGGER) {
@@ -2333,7 +2626,7 @@ export function enterArenaQueue(userId, now = new Date()) {
 export function assignArenaMatchups(now = new Date()) {
   ensureArenaState();
   const arena = state.cards.arena;
-  const eligible = arena.entries.filter(entry => entry.status === 'queued' &&
+  const eligible = arena.entries.filter(entry => entry.status === 'queued' && entry.deck_snapshot &&
     activeArenaMatchesForUser(entry.user_id).length < Number(arena.config.maxActiveMatches || 3));
   const ordered = [...eligible].sort((a, b) =>
     Number(Boolean(b.priority)) - Number(Boolean(a.priority)) ||
@@ -2363,7 +2656,11 @@ export function assignArenaMatchups(now = new Date()) {
     const match = {
       id: arena.nextMatchId++, player_ids: [Number(firstEntry.user_id), Number(secondEntry.user_id)],
       entry_ids: [firstEntry.id, secondEntry.id], first_player_id: Number(firstPlayerId),
-      turn_index: 0, turn_deadline: new Date(now.getTime() + Number(arena.config.turnHours || 24) * 3600000).toISOString(),
+      turn_index: 0, turn_deadline: nextArenaTurnDeadline(now), rules_version: 2,
+      deck_snapshots: {
+        [String(firstEntry.user_id)]: JSON.parse(JSON.stringify(firstEntry.deck_snapshot)),
+        [String(secondEntry.user_id)]: JSON.parse(JSON.stringify(secondEntry.deck_snapshot))
+      },
       entry_fee: ARENA_ENTRY_FEE, prize_amount: ARENA_WINNER_PRIZE,
       starting_elo: {
         [String(firstEntry.user_id)]: arenaRating(firstEntry.user_id),
@@ -2405,6 +2702,104 @@ export function getArenaAdminState(now = new Date()) {
   };
 }
 
+function adminArenaMatch(match) {
+  const players = (match.player_ids || []).map(id => {
+    const user = state.users.find(item => Number(item.id) === Number(id));
+    return {
+      id: Number(id),
+      displayName: user?.display_name || user?.username || `Player ${id}`
+    };
+  });
+  const currentPlayerId = match.status === 'active' ? arenaCurrentPlayerId(match) : null;
+  return {
+    ...JSON.parse(JSON.stringify(match)),
+    players,
+    playerLabel: players.map(player => player.displayName).join(' vs '),
+    currentPlayerId,
+    currentPlayerName: players.find(player => player.id === currentPlayerId)?.displayName || '',
+    placementCount: (match.placements || []).length
+  };
+}
+
+export function getArenaAdminMatchState({ userId = null } = {}) {
+  ensureArenaState();
+  const selectedUserId = Number(userId) || null;
+  const matches = [...state.cards.arena.matches].sort((a, b) => Number(b.id) - Number(a.id));
+  const historyStatuses = new Set(['ready', 'completed', 'cancelled']);
+  return {
+    selectedUserId,
+    activeMatches: matches.filter(match => ['active', 'scoring'].includes(match.status)).map(adminArenaMatch),
+    history: matches.filter(match =>
+      historyStatuses.has(match.status) &&
+      (!selectedUserId || (match.player_ids || []).map(Number).includes(selectedUserId))
+    ).map(adminArenaMatch),
+    users: state.users.map(user => ({
+      id: Number(user.id),
+      displayName: user.display_name || user.username || `Player ${user.id}`,
+      matchCount: matches.filter(match => (match.player_ids || []).map(Number).includes(Number(user.id))).length
+    })).filter(user => user.matchCount > 0).sort((a, b) => a.displayName.localeCompare(b.displayName))
+  };
+}
+
+export function adminVoidArenaMatch({ matchId, adminUserId, reason = '', now = new Date() }) {
+  ensureArenaState();
+  const admin = state.users.find(user => Number(user.id) === Number(adminUserId));
+  if (!admin || admin.role !== 'admin') throw new Error('Admin access is required.');
+  const match = state.cards.arena.matches.find(item => Number(item.id) === Number(matchId));
+  if (!match) throw new Error('WUT match not found.');
+  if (!['active', 'scoring'].includes(match.status)) throw new Error('Only active or scoring WUT matches can be voided.');
+  if (match.wut_rewards_awarded_at || match.elo_updated_at) throw new Error('This match already awarded results and cannot be voided safely.');
+
+  const cleanReason = String(reason || '').trim().slice(0, 180) || 'Cancelled by an administrator due to a match issue.';
+  const releasedBoostIds = [];
+  for (const row of match.placements || []) {
+    if (!row.boost_id) continue;
+    const boost = state.cards.ownedBoosts.find(item => Number(item.id) === Number(row.boost_id));
+    if (!boost || (boost.used_match_id != null && Number(boost.used_match_id) !== Number(match.id))) continue;
+    boost.consumed = false;
+    delete boost.used_match_id;
+    delete boost.used_slot;
+    delete boost.consumed_at;
+    releasedBoostIds.push(Number(boost.id));
+  }
+
+  let refundedMushybux = 0;
+  for (const entryId of match.entry_ids || []) {
+    const entry = state.cards.arena.entries.find(item => Number(item.id) === Number(entryId));
+    if (!entry) continue;
+    entry.status = 'cancelled';
+    entry.cancel_reason = 'admin_void';
+    entry.cancelled_at = now.toISOString();
+    if (!entry.void_refunded_at && Number(entry.paid_amount || 0) > 0) {
+      const user = state.users.find(item => Number(item.id) === Number(entry.user_id));
+      const refund = Number(entry.paid_amount || 0);
+      if (user) {
+        user.balance = Number(user.balance || 0) + refund;
+        state.transactions.push({
+          id: state.nextTransactionId++, user_id: Number(user.id), week: Number(state.settings.currentWeek || 1),
+          amount: refund, kind: 'arena_void_refund', category: 'cards', note: `Voided WUT match #${match.id}`,
+          arena_match_id: match.id, created_at: now.toISOString()
+        });
+        refundedMushybux += refund;
+      }
+      entry.void_refunded_at = now.toISOString();
+    }
+  }
+
+  match.status = 'cancelled';
+  match.cancel_reason = 'admin_void';
+  match.cancel_note = cleanReason;
+  match.cancelled_at = now.toISOString();
+  match.voided_at = now.toISOString();
+  match.voided_by = Number(adminUserId);
+  match.turn_deadline = null;
+  match.scores = null;
+  match.winner_user_id = null;
+  match.forfeit_user_id = null;
+  saveState();
+  return { match: adminArenaMatch(match), releasedBoostIds, refundedMushybux };
+}
+
 function catalogPlayerForOwnedCard(card, catalogByIdentity) {
   return catalogByIdentity?.[card.card_identity] ||
     catalogByIdentity?.[`${card.edition || 'S3'}|${card.division_id}|${card.player_key}`] ||
@@ -2418,17 +2813,98 @@ function arenaLockedCardIds(userId, exceptMatchId = null) {
   }));
 }
 
-function arenaRarityAllowedForSlot(match, userId, slot, player, catalogByIdentity) {
+function arenaPowerAllowedForSlot(match, userId, slot, candidatePower, player, catalogByIdentity) {
   const opposingPlacement = match.placements.find(row =>
     Number(row.user_id) !== Number(userId) && row.slot === slot
   );
   if (!opposingPlacement) return true;
+  if (Number(match.rules_version || 1) >= 2) {
+    return Number(candidatePower) <= Number(opposingPlacement.power || 0) + Number(state.cards.config.wut.slotPowerAllowance || 1);
+  }
   const opposingCard = state.cards.ownedCards.find(card => Number(card.id) === Number(opposingPlacement.card_id));
   const opposingPlayer = opposingCard ? catalogPlayerForOwnedCard(opposingCard, catalogByIdentity) : null;
   const opposingRank = ARENA_RARITY_RANK[opposingPlayer?.tier];
   const candidateRank = ARENA_RARITY_RANK[player?.tier];
   if (!opposingRank || !candidateRank) return false;
   return candidateRank <= opposingRank + 1;
+}
+
+export function resetWutDebugMatch(adminUserId, now = new Date()) {
+  ensureArenaState();
+  state.cards.arena.debugMatches = state.cards.arena.debugMatches.filter(match => Number(match.admin_user_id) !== Number(adminUserId));
+  const match = {
+    id: `debug-${state.cards.arena.nextDebugMatchId++}`, admin_user_id: Number(adminUserId),
+    player_ids: [-1, -2], rules_version: 2, debug: true,
+    placements: [], status: 'setup', scores: null, winner_side: null,
+    created_at: now.toISOString(), completed_at: null
+  };
+  state.cards.arena.debugMatches.push(match); saveState();
+  return JSON.parse(JSON.stringify(match));
+}
+
+export function getWutDebugMatch(adminUserId) {
+  ensureArenaState();
+  const match = [...state.cards.arena.debugMatches].reverse().find(item => Number(item.admin_user_id) === Number(adminUserId));
+  return match ? JSON.parse(JSON.stringify(match)) : null;
+}
+
+export function queueWutDebugRescore(adminUserId) {
+  ensureArenaState();
+  const match = [...state.cards.arena.debugMatches].reverse().find(item => Number(item.admin_user_id) === Number(adminUserId));
+  if (!match || match.status !== 'completed' || match.placements.length !== 10) return false;
+  match.status = 'scoring';
+  match.scores = null;
+  match.winner_side = null;
+  match.completed_at = null;
+  saveState();
+  return true;
+}
+
+export function commitWutDebugPlacement({ adminUserId, side, slot, cardId, boostId = null, journeymanKey = '', catalogByIdentity, now = new Date() }) {
+  ensureArenaState();
+  const match = [...state.cards.arena.debugMatches].reverse().find(item => Number(item.admin_user_id) === Number(adminUserId));
+  if (!match || match.status !== 'setup') throw new Error('Reset the admin debug game before adding cards.');
+  const cleanSide = String(side || '').toUpperCase();
+  const sideId = cleanSide === 'A' ? -1 : cleanSide === 'B' ? -2 : null;
+  const cleanSlot = String(slot || '').toUpperCase();
+  if (!sideId || !CARD_LINEUP_SLOTS.includes(cleanSlot)) throw new Error('Invalid debug side or slot.');
+  if (match.placements.some(row => Number(row.user_id) === sideId && row.slot === cleanSlot)) throw new Error('That debug slot is already filled.');
+  const card = state.cards.ownedCards.find(item => Number(item.id) === Number(cardId) && Number(item.user_id) === Number(adminUserId));
+  if (!card) throw new Error('Card not found in the admin collection.');
+  if (match.placements.some(row => Number(row.user_id) === sideId && Number(row.card_id) === Number(card.id))) throw new Error('A card can only be used once per debug side.');
+  const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
+  const requiredPosition = cleanSlot === 'G' ? 'G' : cleanSlot[0];
+  if (!player || player.position !== requiredPosition) throw new Error(`That card is not eligible for ${cleanSlot}.`);
+  const snapshot = wutCardSnapshot(card, catalogByIdentity);
+  if (!trinketFitsWutPosition(snapshot.trinket?.family, snapshot.position)) throw new Error('That trinket is not legal for this card position.');
+  if (snapshot.trinket?.family === 'team_crest' && match.placements.some(row => Number(row.user_id) === sideId && row.card_snapshot?.trinket?.family === 'team_crest')) {
+    throw new Error("Only one Captain's Patch can be active on each debug side.");
+  }
+  if (!arenaPowerAllowedForSlot(match, sideId, cleanSlot, snapshot.power, player, catalogByIdentity)) {
+    throw new Error(`${cleanSlot} exceeds the opposing card's Power +${state.cards.config.wut.slotPowerAllowance}.`);
+  }
+  let boost = null;
+  if (boostId) {
+    boost = state.cards.ownedBoosts.find(item => Number(item.id) === Number(boostId) && Number(item.user_id) === Number(adminUserId) && !item.consumed);
+    if (!boost || match.placements.some(row => Number(row.user_id) === sideId && Number(row.boost_id) === Number(boost.id))) throw new Error('That debug boost is unavailable on this side.');
+    const goalieBoost = ['save', 'shutout'].includes(boost.boost_type);
+    if ((player.position === 'G') !== goalieBoost) throw new Error('That boost does not fit this position.');
+    const usedLoad = match.placements.filter(row => Number(row.user_id) === sideId).reduce((sum, row) => sum + Number(row.boost_load || 0), 0);
+    const load = Number(state.cards.config.wut.rarityCosts[boost.rarity] || 1);
+    const cap = wutBoostLoadCap(match.placements, sideId, [snapshot]);
+    if (usedLoad + load > cap) throw new Error(`That boost exceeds this side's ${cap} Boost Load.`);
+  }
+  const placement = {
+    user_id: sideId, owner_user_id: Number(adminUserId), debug_side: cleanSide,
+    slot: cleanSlot, card_id: Number(card.id), card_snapshot: snapshot,
+    power: snapshot.power, boost_id: boost?.id || null,
+    boost_load: boost ? Number(state.cards.config.wut.rarityCosts[boost.rarity] || 1) : 0,
+    journeyman_key: String(journeymanKey || ''), committed_at: now.toISOString()
+  };
+  lockJourneymanChoices(match.placements, [placement]);
+  match.placements.push(placement);
+  if (match.placements.length === 10) match.status = 'scoring';
+  saveState(); return JSON.parse(JSON.stringify(match));
 }
 
 export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity, now = new Date(), automatic = false }) {
@@ -2443,25 +2919,32 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
   }
   const existingSlots = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
   const existingCardIds = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
-  const lockedElsewhere = arenaLockedCardIds(userId, match.id);
+  const rulesV2 = Number(match.rules_version || 1) >= 2;
+  const deckCards = new Map([...(match.deck_snapshots?.[String(userId)]?.active || []), ...(match.deck_snapshots?.[String(userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
   const turnSlots = new Set(); const turnCards = new Set(); const turnBoosts = new Set();
+  const stagedSnapshots = [];
+  let captainPatchChosen = rulesV2 && match.placements.some(row => Number(row.user_id) === Number(userId) && row.card_snapshot?.trinket?.family === 'team_crest');
   const cleaned = placements.map(input => {
     const slot = String(input.slot || '').toUpperCase();
     if (!CARD_LINEUP_SLOTS.includes(slot) || existingSlots.has(slot) || turnSlots.has(slot)) throw new Error('Choose each open lineup slot only once.');
     turnSlots.add(slot);
     const card = state.cards.ownedCards.find(item => Number(item.id) === Number(input.cardId) && Number(item.user_id) === Number(userId));
     if (!card) throw new Error('Card not found in your collection.');
-    if (Number(card.cooldown_remaining || 0) > 0) throw new Error('That card is on cooldown.');
+    const cardSnapshot = deckCards.get(Number(card.id));
+    if (rulesV2 && !cardSnapshot) throw new Error('That card is not in this match deck snapshot.');
+    if (rulesV2 && cardSnapshot?.trinket?.family === 'team_crest') {
+      if (captainPatchChosen) throw new Error("Only one Captain's Patch can be active in a lineup.");
+      captainPatchChosen = true;
+    }
+    if (rulesV2 && !trinketFitsWutPosition(cardSnapshot?.trinket?.family, cardSnapshot?.position)) throw new Error('That trinket is not legal for this card position.');
     if (existingCardIds.has(Number(card.id)) || turnCards.has(Number(card.id))) throw new Error('That card is already committed to this WUT match.');
     turnCards.add(Number(card.id));
     const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
     const requiredPosition = slot === 'G' ? 'G' : slot[0];
     if (!player || player.position !== requiredPosition) throw new Error(`That card is not eligible for ${slot}.`);
-    if (lockedElsewhere.has(Number(card.id)) && player.tier !== 'common') {
-      throw new Error('Only Common cards can be committed to more than one active WUT match.');
-    }
-    if (!arenaRarityAllowedForSlot(match, userId, slot, player, catalogByIdentity)) {
-      throw new Error(`${slot} can be at most one rarity higher than the opponent's committed card. Any lower rarity is allowed.`);
+    const power = rulesV2 ? Number(cardSnapshot.power) : Number(ARENA_RARITY_RANK[player.tier] || 1);
+    if (!arenaPowerAllowedForSlot(match, userId, slot, power, player, catalogByIdentity)) {
+      throw new Error(`${slot} exceeds the opposing card's Power +${state.cards.config.wut.slotPowerAllowance}.`);
     }
     let boost = null;
     if (input.boostId) {
@@ -2471,17 +2954,37 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
       }
       const goalieBoost = ['save', 'shutout'].includes(boost.boost_type);
       if ((player.position === 'G') !== goalieBoost) throw new Error('That boost does not fit this position.');
+      const load = Number(state.cards.config.wut.rarityCosts[boost.rarity] || 1);
+      const used = match.placements.filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.boost_load || 0), 0);
+      const staged = [...turnBoosts].reduce((sum, id) => {
+        const item = state.cards.ownedBoosts.find(candidate => Number(candidate.id) === Number(id));
+        return sum + Number(state.cards.config.wut.rarityCosts[item?.rarity] || 1);
+      }, 0);
+      const cap = wutBoostLoadCap(match.placements, userId, [...stagedSnapshots, cardSnapshot]);
+      if (rulesV2 && used + staged + load > cap) throw new Error(`That boost exceeds your ${cap} Boost Load for this match.`);
       turnBoosts.add(Number(boost.id));
     }
-    return { user_id: Number(userId), slot, card_id: Number(card.id), boost_id: boost?.id || null, automatic: Boolean(automatic), committed_at: now.toISOString() };
+    stagedSnapshots.push(cardSnapshot);
+    return { user_id: Number(userId), slot, card_id: Number(card.id), boost_id: boost?.id || null,
+      boost_load: boost ? Number(state.cards.config.wut.rarityCosts[boost.rarity] || 1) : 0,
+      power, card_snapshot: cardSnapshot ? JSON.parse(JSON.stringify(cardSnapshot)) : null,
+      journeyman_key: String(input.journeymanKey || ''),
+      automatic: Boolean(automatic), committed_at: now.toISOString() };
   });
+  if (rulesV2) lockJourneymanChoices(match.placements, cleaned);
   match.placements.push(...cleaned);
+  if (rulesV2) {
+    for (const row of cleaned.filter(item => item.boost_id)) {
+      const committedBoost = state.cards.ownedBoosts.find(item => Number(item.id) === Number(row.boost_id));
+      if (committedBoost) { committedBoost.consumed = true; committedBoost.used_match_id = match.id; committedBoost.used_slot = row.slot; committedBoost.consumed_at = now.toISOString(); }
+    }
+  }
   match.turn_index += 1;
   if (match.turn_index >= ARENA_TURN_SEQUENCE.length) {
     match.status = 'scoring';
     match.turn_deadline = null;
   } else {
-    match.turn_deadline = new Date(now.getTime() + Number(state.cards.arena.config.turnHours || 24) * 3600000).toISOString();
+    match.turn_deadline = nextArenaTurnDeadline(now);
   }
   saveState();
   return publicArenaMatch(match, userId);
@@ -2490,10 +2993,24 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
 export function autoAssignExpiredArenaTurns(catalogByIdentity, now = new Date()) {
   ensureArenaState();
   const changed = [];
+  for (const match of state.cards.arena.matches.filter(item => item.status === 'active' && Number(item.rules_version || 1) >= 2 && new Date(item.turn_deadline) <= now)) {
+    const forfeiter = arenaCurrentPlayerId(match);
+    if (!(match.placements || []).length) {
+      match.status = 'cancelled'; match.cancel_reason = 'opening_timeout'; match.cancelled_at = now.toISOString(); match.turn_deadline = null;
+    } else {
+      const winner = Number(match.player_ids.find(id => Number(id) !== Number(forfeiter)));
+      match.status = 'completed'; match.winner_user_id = winner; match.forfeit_user_id = Number(forfeiter);
+      match.scores = { [String(winner)]: 1, [String(forfeiter)]: 0 };
+      match.forfeit_reason = 'turn_timeout'; match.completed_at = now.toISOString(); match.resolved_at = now.toISOString(); match.turn_deadline = null;
+      awardArenaCoins(match, { forfeit: true, now });
+      applyArenaElo(match, now);
+    }
+    changed.push(match.id);
+  }
   let progressed = true;
   while (progressed) {
     progressed = false;
-    for (const match of state.cards.arena.matches.filter(item => item.status === 'active' && new Date(item.turn_deadline) <= now)) {
+    for (const match of state.cards.arena.matches.filter(item => item.status === 'active' && Number(item.rules_version || 1) < 2 && new Date(item.turn_deadline) <= now)) {
       const userId = arenaCurrentPlayerId(match);
       const count = ARENA_TURN_SEQUENCE[match.turn_index];
       const occupied = new Set(match.placements.filter(row => Number(row.user_id) === userId).map(row => row.slot));
@@ -2508,7 +3025,7 @@ export function autoAssignExpiredArenaTurns(catalogByIdentity, now = new Date())
         const position = slot === 'G' ? 'G' : slot[0];
         const index = candidates.findIndex(row =>
           row.player.position === position &&
-          arenaRarityAllowedForSlot(match, userId, slot, row.player, catalogByIdentity)
+          arenaPowerAllowedForSlot(match, userId, slot, ARENA_RARITY_RANK[row.player.tier], row.player, catalogByIdentity)
         );
         if (index < 0) continue;
         const [choice] = candidates.splice(index, 1);
@@ -2523,28 +3040,49 @@ export function autoAssignExpiredArenaTurns(catalogByIdentity, now = new Date())
   return [...new Set(changed)];
 }
 
+function awardArenaCoins(match, { forfeit = false, now = new Date() } = {}) {
+  if (match.wut_rewards_awarded_at || match.status === 'cancelled') return;
+  const rewards = state.cards.config.wut.rewards;
+  match.wut_rewards = {};
+  for (const userId of match.player_ids.map(Number)) {
+    const membership = state.cards.wutMemberships.find(item => Number(item.user_id) === userId);
+    if (!membership) continue;
+    const amount = forfeit && Number(match.forfeit_user_id) === userId
+      ? Number(rewards.forfeitLoser || 0)
+      : Number(match.winner_user_id) === userId ? Number(rewards.winner || 60) : Number(rewards.loser || 25);
+    changeWutCoins(membership, amount, forfeit ? 'arena_forfeit_reward' : 'arena_reward', { arena_match_id: match.id });
+    match.wut_rewards[String(userId)] = amount;
+  }
+  match.wut_rewards_awarded_at = now.toISOString();
+}
+
 export function getArenaMatchesNeedingScoring() {
   ensureCardsState();
-  return state.cards.arena.matches.filter(match => match.status === 'scoring').map(match => JSON.parse(JSON.stringify(match)));
+  return [...state.cards.arena.matches, ...state.cards.arena.debugMatches].filter(match => match.status === 'scoring').map(match => JSON.parse(JSON.stringify(match)));
 }
 
 export function completeArenaMatch(matchId, scoredPlacements, now = new Date()) {
   ensureCardsState();
-  const match = state.cards.arena.matches.find(item => Number(item.id) === Number(matchId));
+  const isDebug = String(matchId).startsWith('debug-');
+  const match = (isDebug ? state.cards.arena.debugMatches : state.cards.arena.matches).find(item => String(item.id) === String(matchId));
   if (!match || match.status !== 'scoring') return match ? JSON.parse(JSON.stringify(match)) : null;
   match.placements = scoredPlacements.map(row => JSON.parse(JSON.stringify(row)));
   const totals = Object.fromEntries(match.player_ids.map(userId => [String(userId), match.placements.filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.fp || 0), 0)]));
   match.scores = totals;
   const [a, b] = match.player_ids;
   match.winner_user_id = totals[String(a)] === totals[String(b)] ? null : (totals[String(a)] > totals[String(b)] ? Number(a) : Number(b));
+  if (isDebug) {
+    match.winner_side = match.winner_user_id == null ? null : Number(match.winner_user_id) === -1 ? 'A' : 'B';
+    match.status = 'completed'; match.completed_at = now.toISOString(); match.resolved_at = now.toISOString();
+    saveState(); return JSON.parse(JSON.stringify(match));
+  }
   match.status = 'ready'; match.resolved_at = now.toISOString();
+  if (Number(match.rules_version || 1) >= 2) awardArenaCoins(match, { now });
   for (const userId of match.player_ids) {
-    for (const card of state.cards.ownedCards.filter(item => Number(item.user_id) === Number(userId))) card.cooldown_remaining = Math.max(0, Number(card.cooldown_remaining || 0) - 1);
     for (const row of match.placements.filter(item => Number(item.user_id) === Number(userId))) {
       const card = state.cards.ownedCards.find(item => Number(item.id) === Number(row.card_id));
       if (card) {
-        const rarity = row.card_rarity || 'common';
-        card.cooldown_remaining = Number(ARENA_COOLDOWNS[rarity] || 0);
+        card.cooldown_remaining = 0;
         card.total_fp_for_user = Number(card.total_fp_for_user || 0) + Number(row.fp || 0);
         card.best_week_fp = Math.max(Number(card.best_week_fp || 0), Number(row.fp || 0));
         card.last_week_fp = Number(row.fp || 0);
@@ -2582,6 +3120,9 @@ export function claimArenaWinnings(userId, matchId, now = new Date()) {
   if (Number(match.winner_user_id) !== Number(userId)) throw new Error('Only the winner can collect these winnings.');
   if (!(match.revealed_by || []).map(Number).includes(Number(userId))) throw new Error('Reveal the match result before collecting winnings.');
   if (match.winnings_claimed_at) throw new Error('These winnings were already collected.');
+  if (Number(match.rules_version || 1) >= 2) {
+    return { prize: Number(match.wut_rewards?.[String(userId)] || 0), wutCoins: Number(wutMembership(userId).wut_coins || 0), alreadyAwarded: true };
+  }
   const user = state.users.find(item => Number(item.id) === Number(userId));
   const prize = Math.ceil(Number(match.prize_amount ?? ARENA_WINNER_PRIZE));
   user.balance = Number(user.balance || 0) + prize;
@@ -2649,7 +3190,6 @@ export function setCardsLineupSlot({
       Number(item.user_id) === Number(userId)
     );
   if (cardId && !card) throw new Error('Card not found in your collection.');
-  if (card && Number(card.cooldown_remaining || 0) > 0) throw new Error('That card is on cooldown.');
 
   if (card) {
     const duplicate = state.cards.lineups.find(row => {
@@ -2823,40 +3363,37 @@ export function createCardsPackPurchase({
   ensureCardsState();
   const user = state.users.find(item => Number(item.id) === Number(userId));
   if (!user) throw new Error('User not found.');
+  const membership = wutMembership(userId);
   const pending = state.cards.packPurchases.find(item =>
     Number(item.user_id) === Number(userId) && item.status === 'pending'
   );
   if (pending) throw new Error('Add your current pack to the collection before buying another.');
   const cleanPrice = Math.ceil(Number(price || 0));
   if (cleanPrice <= 0) throw new Error('Invalid pack price.');
-  if (Number(user.balance || 0) < cleanPrice) throw new Error('Insufficient balance.');
-  if (!Array.isArray(items) || items.length !== 3) throw new Error('A pack must contain exactly three items.');
+  if (String(packKind) !== 'player') throw new Error('Separate boost packs were removed in WUT 2.0.');
+  const freePurchase = state.cards.config.wut.freeShopPurchases === true;
+  const chargedPrice = freePurchase ? 0 : cleanPrice;
+  if (Number(membership.wut_coins || 0) < chargedPrice) throw new Error('Insufficient WUT Coins.');
+  if (!Array.isArray(items) || items.length !== 5 || items.filter(item => item.itemType === 'player').length !== 3 || items.filter(item => item.itemType === 'boost').length !== 2) {
+    throw new Error('A player pack must contain exactly three players and two boosts.');
+  }
 
-  user.balance = Number(user.balance || 0) - cleanPrice;
+  if (chargedPrice) changeWutCoins(membership, -chargedPrice, 'player_pack_purchase', { pack_type: String(packType) });
   const purchase = {
     id: state.nextPackPurchaseId++,
     user_id: Number(userId),
     week: Number(week),
     pack_kind: String(packKind),
     pack_type: String(packType),
-    price: cleanPrice,
+    price: chargedPrice,
+    list_price: cleanPrice,
+    free_purchase: freePurchase,
     items: JSON.parse(JSON.stringify(items)),
     status: 'pending',
     created_at: nowIso(),
     claimed_at: null
   };
   state.cards.packPurchases.push(purchase);
-  state.transactions.push({
-    id: state.nextTransactionId++,
-    user_id: Number(userId),
-    week: Number(week),
-    amount: -cleanPrice,
-    kind: 'cards_pack_purchase',
-    category: 'cards',
-    note: `${packType} ${packKind} pack`,
-    cards_pack_purchase_id: purchase.id,
-    created_at: nowIso()
-  });
   saveState();
   return JSON.parse(JSON.stringify(purchase));
 }
@@ -2935,7 +3472,7 @@ export function claimCardsPack(userId, purchaseId) {
   return created;
 }
 
-export function openWutStarterPack({ userId, items }) {
+export function openWutStarterPack({ userId, items, bonusPackItems = null }) {
   ensureCardsState();
   const membership = state.cards.wutMemberships.find(entry => Number(entry.user_id) === Number(userId));
   if (!membership) throw new Error('Join WUT before opening your starter pack.');
@@ -2950,15 +3487,633 @@ export function openWutStarterPack({ userId, items }) {
     throw new Error('A WUT starter pack cannot contain duplicate cards.');
   }
 
+  const freePackItems = Array.isArray(bonusPackItems) && bonusPackItems.length
+    ? bonusPackItems
+    : [
+        ...items.slice(0, 3),
+        { itemType: 'boost', boostType: 'goal', rarity: 'common', effect: JSON.parse(JSON.stringify(state.cards.config.boostEffects.goal.common)) },
+        { itemType: 'boost', boostType: 'grit', rarity: 'common', effect: JSON.parse(JSON.stringify(state.cards.config.boostEffects.grit.common)) }
+      ];
+  if (freePackItems.length !== 5 || freePackItems.filter(item => item.itemType === 'player').length !== 3 || freePackItems.filter(item => item.itemType === 'boost').length !== 2) {
+    throw new Error('The free Starter Standard pack must contain exactly three players and two boosts.');
+  }
+  if (state.cards.packPurchases.some(purchase => Number(purchase.user_id) === Number(userId) && purchase.status === 'pending')) {
+    throw new Error('Add the pending pack to the collection before opening a starter pack.');
+  }
+
   const created = items.map(item => createOwnedPlayerCard(userId, item, state.settings.currentWeek));
+  const starterFamilyPool = [...WUT_TRINKET_FAMILIES];
+  for (let index = starterFamilyPool.length - 1; index > 0; index -= 1) {
+    const other = Math.floor(Math.random() * (index + 1));
+    [starterFamilyPool[index], starterFamilyPool[other]] = [starterFamilyPool[other], starterFamilyPool[index]];
+  }
+  const starterFamilies = starterFamilyPool.slice(0, 2);
+  const starterTrinkets = starterFamilies.map(family => {
+    const trinket = {
+      id: state.nextOwnedTrinketId++, user_id: Number(userId), family, rarity: 'common',
+      effect: configuredTrinketEffect(family, 'common'), attached_card_id: null,
+      source: 'starter_pack', created_at: nowIso()
+    };
+    state.cards.trinkets.push(trinket);
+    return trinket;
+  });
+  const freePack = {
+    id: state.nextPackPurchaseId++, user_id: Number(userId), week: Number(state.settings.currentWeek || 1),
+    pack_kind: 'player', pack_type: 'standard', price: 0,
+    list_price: Number(state.cards.config.playerPackPrices.standard || 0), free_purchase: true,
+    source: 'starter_bonus', items: JSON.parse(JSON.stringify(freePackItems)), status: 'pending',
+    created_at: nowIso(), claimed_at: null
+  };
+  state.cards.packPurchases.push(freePack);
   membership.starter_card_ids = created.map(card => card.id);
+  membership.starter_trinket_ids = starterTrinkets.map(trinket => trinket.id);
+  membership.starter_bonus_pack_id = freePack.id;
   membership.starter_opened_at = nowIso();
+  state.cards.decks.push({
+    id: state.nextDeckId++, user_id: Number(userId), name: 'Starter Deck',
+    active_card_ids: created.map(card => card.id), bench_card_ids: created.map(card => card.id),
+    created_at: nowIso(), updated_at: nowIso()
+  });
   saveState();
   return created.map(card => ({ ...card, itemType: 'player' }));
 }
 
+function wutMembership(userId) {
+  const membership = state.cards.wutMemberships.find(item => Number(item.user_id) === Number(userId));
+  if (!membership?.starter_opened_at) throw new Error('Open your WUT starter pack first.');
+  return membership;
+}
+
+function changeWutCoins(membership, amount, kind, details = {}) {
+  const next = Number(membership.wut_coins || 0) + Number(amount || 0);
+  if (next < 0) throw new Error('Insufficient WUT Coins.');
+  membership.wut_coins = next;
+  state.cards.wutTransactions.push({ id: state.nextWutTransactionId++, user_id: Number(membership.user_id), amount: Number(amount || 0), balance_after: next, kind, ...details, created_at: nowIso() });
+  return next;
+}
+
+export function calculateWutPower(cardRarity, trinketRarity = '', config = null) {
+  const costs = config?.rarityCosts || state.cards?.config?.wut?.rarityCosts || WUT_RARITY_COST;
+  return Number(costs[String(cardRarity || 'common').toLowerCase()] || 1) +
+    Number(trinketRarity ? costs[String(trinketRarity).toLowerCase()] || 0 : 0);
+}
+
+function wutBoostLoadCap(placements = [], userId = null, additionalSnapshots = []) {
+  const snapshots = [
+    ...placements.filter(row => userId == null || Number(row.user_id) === Number(userId)).map(row => row.card_snapshot),
+    ...(additionalSnapshots || [])
+  ].filter(Boolean);
+  const bonus = Math.max(0, ...snapshots
+    .filter(snapshot => snapshot.trinket?.family === 'booster_cable')
+    .map(snapshot => Number(snapshot.trinket?.effect?.loadBonus || 0)));
+  return Number(state.cards.config.wut.boostLoadCap || 5) + bonus;
+}
+
+function lockJourneymanChoices(existingPlacements, newPlacements) {
+  const all = [...existingPlacements, ...newPlacements].map(row => ({
+    row,
+    userId: Number(row.user_id),
+    slot: row.slot,
+    printedChemistryKey: row.card_snapshot?.chemistry_key || '',
+    trinket: row.card_snapshot?.trinket || null
+  }));
+  for (const entry of all.filter(item => newPlacements.includes(item.row) && item.trinket?.family === 'journeyman')) {
+    const opposingZebraWasAlreadyCommitted = all.some(candidate =>
+      existingPlacements.includes(candidate.row) &&
+      Number(candidate.userId) !== Number(entry.userId) &&
+      candidate.slot === entry.slot &&
+      candidate.trinket?.family === 'zebra_stripes'
+    );
+    entry.row.journeyman_zebra_preexisting = opposingZebraWasAlreadyCommitted;
+    const selectionEntry = opposingZebraWasAlreadyCommitted
+      ? resolveZebraStripes(all, state.cards.config.wut.trinketEffects).find(candidate => candidate.row === entry.row) || entry
+      : entry;
+    if (selectionEntry.trinket?.family !== 'journeyman') {
+      entry.row.journeyman_key = '';
+      continue;
+    }
+    const candidates = journeymanCandidates(selectionEntry, all);
+    const allowed = new Set(candidates.map(candidate => candidate.printedChemistryKey));
+    const mode = selectionEntry.trinket.effect?.mode || '';
+    let chosen = '';
+    if (mode.startsWith('random_')) chosen = '';
+    else {
+      chosen = String(entry.row.journeyman_key || '').trim();
+      if (allowed.size && !allowed.has(chosen)) throw new Error('Choose an eligible team for Journeyman before locking this card.');
+    }
+    entry.row.journeyman_key = allowed.has(chosen) ? chosen : '';
+    delete entry.row.journeyman_choice_requested;
+  }
+}
+
+function ownedTrinketForCard(card) {
+  return card?.trinket_id == null ? null : state.cards.trinkets.find(item => Number(item.id) === Number(card.trinket_id)) || null;
+}
+
+export function reconcileWutTrinketPositions(userId, catalogByIdentity) {
+  ensureCardsState();
+  let detached = 0;
+  for (const card of state.cards.ownedCards.filter(item => Number(item.user_id) === Number(userId) && item.trinket_id != null)) {
+    const trinket = ownedTrinketForCard(card);
+    const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
+    if (!trinket || !player || trinketFitsWutPosition(trinket.family, player.position)) continue;
+    card.trinket_id = null;
+    trinket.attached_card_id = null;
+    trinket.detached_at = nowIso();
+    trinket.detach_reason = 'position_rule_migration';
+    detached += 1;
+  }
+  let repairedDecks = 0;
+  const owned = state.cards.ownedCards.filter(item => Number(item.user_id) === Number(userId));
+  const legalBenchCards = owned.map(card => {
+    const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
+    const trinket = ownedTrinketForCard(card);
+    return { card, player, power: player ? calculateWutPower(player.tier, trinket?.rarity) : Infinity };
+  }).filter(item => item.player && item.power <= 2);
+  for (const deck of state.cards.decks.filter(item => Number(item.user_id) === Number(userId))) {
+    const requested = (deck.bench_card_ids || []).map(Number);
+    const used = new Set();
+    const repaired = [];
+    for (const position of ['F', 'F', 'D', 'D', 'G']) {
+      const preferred = requested.map(id => legalBenchCards.find(item => Number(item.card.id) === id))
+        .find(item => item && item.player.position === position && !used.has(Number(item.card.id)));
+      const fallback = legalBenchCards
+        .filter(item => item.player.position === position && !used.has(Number(item.card.id)))
+        .sort((a, b) => Number(!(deck.active_card_ids || []).map(Number).includes(Number(a.card.id))) - Number(!(deck.active_card_ids || []).map(Number).includes(Number(b.card.id))) || a.power - b.power || Number(a.card.id) - Number(b.card.id))[0];
+      const chosen = preferred || fallback;
+      if (!chosen) break;
+      used.add(Number(chosen.card.id));
+      repaired.push(Number(chosen.card.id));
+    }
+    const alreadyLegal = requested.length === 5 && requested.every((id, index) => Number(id) === Number(repaired[index]));
+    if (repaired.length === 5 && !alreadyLegal) {
+      deck.bench_card_ids = repaired;
+      deck.bench_repaired_at = nowIso();
+      repairedDecks += 1;
+    }
+  }
+  if (detached || repairedDecks) saveState();
+  return { detached, repairedDecks };
+}
+
+function wutCardSnapshot(card, catalogByIdentity) {
+  if (!card) throw new Error('A saved deck references a card that is no longer owned.');
+  const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
+  if (!player) throw new Error(`Card #${card.id} is not in the current WUT catalog.`);
+  const trinket = ownedTrinketForCard(card);
+  if (trinket && !trinketFitsWutPosition(trinket.family, player.position)) throw new Error(`${trinket.family === 'generalist' ? 'Generalist' : 'Specialist'} can only be used by skaters.`);
+  return {
+    card_id: Number(card.id), card_identity: card.card_identity, position: player.position,
+    rarity: player.tier, team_id: player.teamId || '', team_name: player.teamName || player.teamId || '',
+    season: player.cardType === 'mythic' ? player.sourceSeason : player.edition,
+    chemistry_key: `${player.cardType === 'mythic' ? player.sourceSeason : player.edition}|${player.teamId || ''}`,
+    display_name: player.name || player.displayName || '',
+    base_power: calculateWutPower(player.tier), power: calculateWutPower(player.tier, trinket?.rarity),
+    trinket: trinket ? { id: trinket.id, family: trinket.family, rarity: trinket.rarity, effect: JSON.parse(JSON.stringify(trinket.effect)) } : null
+  };
+}
+
+const DAILY_ROTATING_MISSIONS = {
+  score_200: { title: 'Light the Lamp', description: 'Score at least 200 total FP in one completed WUT match.', target: 1 },
+  win_no_boost: { title: 'All Natural', description: 'Win a WUT match without using a boost.', target: 1 },
+  use_boost: { title: 'Extra Juice', description: 'Use a boost in a completed WUT match.', target: 1 },
+  three_seasons: { title: 'Across the Eras', description: 'Complete a WUT match using cards from three different seasons.', target: 1 },
+  five_teams: { title: 'League Tour', description: 'Complete a WUT match using five different teams.', target: 1 },
+  trigger_trinket: { title: 'Pocket Magic', description: 'Trigger a trinket effect in a completed WUT match.', target: 1 },
+  slots_five: { title: 'Five Spins', description: 'Complete five slot spins today.', target: 5 },
+  slots_win: { title: 'Winner on the Reels', description: 'Hit any paying slots result today.', target: 1 },
+  puckiq_complete: { title: 'Read the Release', description: 'Complete one PuckIQ run today.', target: 1 },
+  horse_two: { title: 'At the Track', description: 'Have wagers locked on two horse races today.', target: 2 },
+  horse_win: { title: 'Photo Finish', description: 'Win a settled horse-racing wager today.', target: 1 }
+};
+
+const WEEKLY_ROTATING_MISSIONS = {
+  wager_500: { title: 'Action Across the Board', description: 'Have 500 Mushybux committed when sportsbook betting locks.', target: 500, requiresLock: true },
+  every_division: { title: 'Division Tour', description: 'Have at least 25 Mushybux wagered in every active division when betting locks.', target: 1, requiresLock: true },
+  six_teams: { title: 'No Home Team', description: 'Back six different teams before sportsbook betting locks.', target: 6, requiresLock: true },
+  mixed_markets: { title: 'Market Mixer', description: 'Have five series bets and five prop bets locked in.', target: 10, requiresLock: true },
+  five_winners: { title: 'Winning Tickets', description: 'Settle five winning sportsbook wagers this week.', target: 5 },
+  three_x_winner: { title: 'Long Shot', description: 'Win a sportsbook wager paying at least 3×.', target: 1 },
+  puckiq_five: { title: 'PuckIQ Regular', description: 'Complete all five available PuckIQ runs this week.', target: 5 },
+  slots_twenty_five: { title: 'Reel Regular', description: 'Complete 25 slot spins this week.', target: 25 },
+  horse_six: { title: 'Railbird', description: 'Have wagers lock on six horse races this week.', target: 6 }
+};
+
+function seededMissionIndex(text, length) {
+  let hash = 2166136261;
+  for (const char of String(text)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return length ? (hash >>> 0) % length : 0;
+}
+
+function missionDayKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : arenaLocalDateKey(date);
+}
+
+function missionWeekKey() {
+  return `${String(state.settings.seasonId || 'S3')}|${Number(state.settings.currentWeek || 1)}`;
+}
+
+function completedWutMatchesForDay(userId, dayKey) {
+  return state.cards.arena.matches.filter(match =>
+    match.player_ids?.map(Number).includes(Number(userId)) &&
+    match.wut_rewards_awarded_at &&
+    missionDayKey(match.resolved_at || match.completed_at) === dayKey
+  );
+}
+
+function missionBetOpportunityKey(week) {
+  return `${String(state.settings.seasonId || 'S3')}|${Number(week || state.settings.currentWeek || 1)}`;
+}
+
+function missionBetOpportunityRecord(week) {
+  return state.cards.missionBetOpportunities.find(item => item.key === missionBetOpportunityKey(week)) || null;
+}
+
+export function setWutMissionBetOpportunities({ week, opportunities = [], locked = false, now = new Date() }) {
+  ensureCardsState();
+  const key = missionBetOpportunityKey(week);
+  let record = state.cards.missionBetOpportunities.find(item => item.key === key);
+  if (!record) {
+    record = { key, season_id: String(state.settings.seasonId || 'S3'), week: Number(week), opportunities: [], locked_at: null };
+    state.cards.missionBetOpportunities.push(record);
+  }
+  if (record.locked_at) return JSON.parse(JSON.stringify(record));
+  const unique = new Map();
+  for (const item of opportunities || []) {
+    const opportunityKey = String(item?.key || '').trim();
+    if (!opportunityKey) continue;
+    unique.set(opportunityKey, {
+      key: opportunityKey,
+      kind: item.kind === 'prop' ? 'prop' : 'series',
+      division_id: String(item.divisionId || item.division_id || ''),
+      label: String(item.label || opportunityKey)
+    });
+  }
+  record.opportunities = [...unique.values()];
+  record.updated_at = now.toISOString();
+  if (locked) record.locked_at = now.toISOString();
+  saveState();
+  return JSON.parse(JSON.stringify(record));
+}
+
+function missionOpportunityForBet(bet) {
+  if ((bet.bet_kind || 'series') === 'prop') return `prop:${String(bet.prop_key || `${bet.division_id}|${bet.prop_category}`)}`;
+  return `series:${String(bet.series_key || '')}`;
+}
+
+function eligibleDailyRotations(userId, now) {
+  const result = ['score_200', 'win_no_boost'];
+  const owned = state.cards.ownedCards.filter(card => Number(card.user_id) === Number(userId));
+  if (state.cards.ownedBoosts.some(boost => Number(boost.user_id) === Number(userId) && !boost.consumed)) result.push('use_boost');
+  if (new Set(owned.map(card => String(card.source_season || card.edition || 'S3'))).size >= 3) result.push('three_seasons');
+  if (new Set(owned.map(card => String(card.source_team_id || '')).filter(Boolean)).size >= 5) result.push('five_teams');
+  if (owned.some(card => card.trinket_id != null)) result.push('trigger_trinket');
+  const user = state.users.find(item => Number(item.id) === Number(userId));
+  if (state.settings.casinoOpen !== false && Number(user?.balance || 0) >= 50) {
+    result.push('slots_five', 'slots_win');
+    if (SHOT_DOCTOR_WEEKLY_LIMIT <= 0 || getShotDoctorRunsUsedThisWeek(userId) < SHOT_DOCTOR_WEEKLY_LIMIT) result.push('puckiq_complete');
+  }
+  const dayKey = missionDayKey(now);
+  const todayRaces = (state.casino?.horseRacing?.races || []).filter(race => race.race_date === dayKey);
+  if (state.settings.casinoOpen !== false && Number(user?.balance || 0) >= 1 && todayRaces.length >= 2) result.push('horse_two', 'horse_win');
+  return result;
+}
+
+function eligibleWeeklyRotations(userId) {
+  const week = Number(state.settings.currentWeek || 1);
+  const opportunityRecord = missionBetOpportunityRecord(week);
+  const hasSportsbook = Boolean(opportunityRecord?.opportunities?.length);
+  const result = hasSportsbook ? ['wager_500', 'five_winners', 'three_x_winner'] : [];
+  if (hasSportsbook && new Set(opportunityRecord.opportunities.map(item => item.division_id).filter(Boolean)).size) result.push('every_division');
+  if (hasSportsbook && opportunityRecord.opportunities.length >= 6) result.push('six_teams', 'mixed_markets');
+  if (state.settings.casinoOpen !== false) result.push('puckiq_five', 'slots_twenty_five');
+  return result;
+}
+
+function ensureMissionPeriod(userId, period, key, eligibleIds, now = new Date()) {
+  let record = state.cards.missionPeriods.find(item => Number(item.user_id) === Number(userId) && item.period === period && item.key === key);
+  if (!record) {
+    const ids = eligibleIds.length ? eligibleIds : period === 'daily' ? ['score_200'] : [];
+    record = {
+      user_id: Number(userId), period, key,
+      rotating_id: ids.length ? ids[seededMissionIndex(`${userId}|${period}|${key}`, ids.length)] : '',
+      claimed_ids: [], created_at: now.toISOString()
+    };
+    state.cards.missionPeriods.push(record);
+  }
+  if (!record.rotating_id && eligibleIds.length) {
+    record.rotating_id = eligibleIds[seededMissionIndex(`${userId}|${period}|${key}`, eligibleIds.length)];
+    record.assigned_at = now.toISOString();
+  }
+  if (record.rotating_id && !eligibleIds.includes(record.rotating_id) && !record.claimed_ids?.includes(`rotate:${record.rotating_id}`)) {
+    record.rotating_id = eligibleIds.length ? eligibleIds[seededMissionIndex(`${userId}|${period}|${key}|eligible`, eligibleIds.length)] : '';
+    record.assigned_at = now.toISOString();
+  }
+  record.claimed_ids = Array.isArray(record.claimed_ids) ? record.claimed_ids : [];
+  return record;
+}
+
+function dailyRotationProgress(id, userId, dayKey, matches) {
+  const userRows = match => match.placements.filter(row => Number(row.user_id) === Number(userId));
+  if (id === 'score_200') return matches.filter(match => userRows(match).reduce((sum, row) => sum + Number(row.fp || 0), 0) >= 200).length;
+  if (id === 'win_no_boost') return matches.filter(match => Number(match.winner_user_id) === Number(userId) && userRows(match).every(row => !row.boost_id)).length;
+  if (id === 'use_boost') return matches.filter(match => userRows(match).some(row => row.boost_id)).length;
+  if (id === 'three_seasons') return matches.filter(match => new Set(userRows(match).map(row => row.card_snapshot?.season).filter(Boolean)).size >= 3).length;
+  if (id === 'five_teams') return matches.filter(match => new Set(userRows(match).map(row => row.card_snapshot?.team_id).filter(Boolean)).size >= 5).length;
+  if (id === 'trigger_trinket') return matches.filter(match => userRows(match).some(row =>
+    Boolean(row.journeyman_key_effective) || (row.scoring_effects || []).some(effect =>
+      effect.type === 'trinket' &&
+      effect.direction !== 'incoming' &&
+      !String(effect.label || '').startsWith('Incoming ') &&
+      (effect.triggered === true || (effect.triggered == null && Number(effect.points || 0) !== 0))
+    )
+  )).length;
+  const spins = (state.casino?.spins || []).filter(spin => Number(spin.user_id) === Number(userId) && missionDayKey(spin.created_at) === dayKey);
+  if (id === 'slots_five') return spins.length;
+  if (id === 'slots_win') return spins.filter(spin => Number(spin.payout || 0) > 0).length;
+  if (id === 'puckiq_complete') return (state.casino?.shotDoctorRuns || []).filter(run => Number(run.user_id) === Number(userId) && run.status === 'complete' && missionDayKey(run.completed_at) === dayKey).length;
+  const raceById = new Map((state.casino?.horseRacing?.races || []).map(race => [Number(race.id), race]));
+  const horseBets = (state.casino?.horseRacing?.bets || []).filter(bet => {
+    if (Number(bet.user_id) !== Number(userId)) return false;
+    const race = raceById.get(Number(bet.race_id));
+    return race?.race_date === dayKey && (bet.status === 'settled' || (race.betting_closes_at && new Date(race.betting_closes_at) <= new Date()));
+  });
+  if (id === 'horse_two') return new Set(horseBets.map(bet => bet.race_id)).size;
+  if (id === 'horse_win') return horseBets.filter(bet => bet.status === 'settled' && Number(bet.payout || 0) > 0).length;
+  return 0;
+}
+
+function weeklyRotationProgress(id, userId, week) {
+  const bets = state.bets.filter(bet => Number(bet.user_id) === Number(userId) && Number(bet.week) === week && bet.status !== 'void');
+  const locked = isWeekLockedInternal(week);
+  if (id === 'wager_500') return locked ? bets.reduce((sum, bet) => sum + Number(bet.stake || 0), 0) : 0;
+  if (id === 'every_division') {
+    if (!locked) return 0;
+    const divisions = [...new Set((missionBetOpportunityRecord(week)?.opportunities || []).map(item => item.division_id).filter(Boolean))];
+    return divisions.length && divisions.every(division => bets.filter(bet => String(bet.division_id) === division).reduce((sum, bet) => sum + Number(bet.stake || 0), 0) >= 25) ? 1 : 0;
+  }
+  if (id === 'six_teams') return locked ? new Set(bets.map(bet => bet.team_id).filter(Boolean)).size : 0;
+  if (id === 'mixed_markets') return locked ? Math.min(5, bets.filter(bet => (bet.bet_kind || 'series') !== 'prop').length) + Math.min(5, bets.filter(bet => bet.bet_kind === 'prop').length) : 0;
+  if (id === 'five_winners') return bets.filter(bet => bet.status === 'settled' && bet.won).length;
+  if (id === 'three_x_winner') return bets.filter(bet => bet.status === 'settled' && bet.won && Number(bet.multiplier || 0) >= 3).length;
+  if (id === 'puckiq_five') return (state.casino?.shotDoctorRuns || []).filter(run => Number(run.user_id) === Number(userId) && Number(run.week) === week && run.status === 'complete').length;
+  if (id === 'slots_twenty_five') return (state.casino?.spins || []).filter(spin => Number(spin.user_id) === Number(userId) && Number(spin.week) === week).length;
+  if (id === 'horse_six') return new Set((state.casino?.horseRacing?.bets || []).filter(bet => Number(bet.user_id) === Number(userId) && Number(bet.week || week) === week && bet.status === 'settled').map(bet => bet.race_id)).size;
+  return 0;
+}
+
+function publicMission(period, id, title, description, reward, progress, target, claimed, rotating = false) {
+  const cleanProgress = Math.max(0, Number(progress || 0));
+  const cleanTarget = Math.max(1, Number(target || 1));
+  return {
+    period, id, title, description, reward, progress: Math.min(cleanProgress, cleanTarget), target: cleanTarget,
+    percent: Math.min(100, Math.round(cleanProgress / cleanTarget * 100)), complete: cleanProgress >= cleanTarget,
+    claimed: Boolean(claimed), rotating
+  };
+}
+
+export function getWutMissionsForUser(userId, now = new Date()) {
+  ensureCardsState();
+  wutMembership(userId);
+  const dayKey = missionDayKey(now);
+  const week = Number(state.settings.currentWeek || 1);
+  const weekKey = missionWeekKey();
+  const dailyRecord = ensureMissionPeriod(userId, 'daily', dayKey, eligibleDailyRotations(userId, now), now);
+  const weeklyRecord = ensureMissionPeriod(userId, 'weekly', weekKey, eligibleWeeklyRotations(userId), now);
+  const matches = completedWutMatchesForDay(userId, dayKey);
+  const wonToday = matches.filter(match => Number(match.winner_user_id) === Number(userId)).length;
+  const dailyRotation = DAILY_ROTATING_MISSIONS[dailyRecord.rotating_id] || DAILY_ROTATING_MISSIONS.score_200;
+  const weeklyRotation = WEEKLY_ROTATING_MISSIONS[weeklyRecord.rotating_id] || null;
+  const missionRewards = state.cards.config.wut.missionRewards;
+  const weeklyBets = state.bets.filter(bet => Number(bet.user_id) === Number(userId) && Number(bet.week) === week && bet.status !== 'void');
+  const profit = weeklyBets.filter(bet => bet.status === 'settled' && bet.won).reduce((sum, bet) => sum + Math.max(0, Number(bet.payout || 0) - Number(bet.stake || 0)), 0);
+  const opportunityRecord = missionBetOpportunityRecord(week);
+  const opportunities = opportunityRecord?.opportunities || [];
+  const covered = opportunities.filter(opportunity => weeklyBets.filter(bet => missionOpportunityForBet(bet) === opportunity.key).reduce((sum, bet) => sum + Number(bet.stake || 0), 0) >= 50).length;
+  const locked = isWeekLockedInternal(week);
+  const sportsbookSettled = locked && weeklyBets.every(bet => bet.status === 'settled');
+  const claimed = (record, id) => record.claimed_ids.includes(id);
+  const weekly = [];
+  if (opportunities.length || weeklyBets.length) {
+    const profitMission = publicMission('weekly', 'profit_500', 'Winning Week', 'Earn 500 Mushybux in profit from winning settled sportsbook tickets.', missionRewards.weekly_profit_500, profit, 500, claimed(weeklyRecord, 'profit_500'));
+    if (locked && !sportsbookSettled) profitMission.progressLabel = `${profitMission.progress}/${profitMission.target} · awaiting settlement`;
+    if (sportsbookSettled && !profitMission.complete) { profitMission.failed = true; profitMission.progressLabel = `Failed · ${profitMission.progress}/${profitMission.target}`; }
+    weekly.push(profitMission);
+  }
+  if (opportunities.length) {
+    const coverage = publicMission('weekly', 'category_coverage', 'Cover the Board', `Have at least 50 Mushybux locked on every available betting option (${opportunities.length} this week). Outcomes within an option do not count separately.`, missionRewards.weekly_category_coverage, covered, opportunities.length, claimed(weeklyRecord, 'category_coverage'));
+    if (!locked) {
+      coverage.complete = false;
+      coverage.progressLabel = `${covered}/${opportunities.length} ready for lock`;
+    } else if (!coverage.complete) {
+      coverage.failed = true;
+      coverage.progressLabel = `Failed · covered ${covered}/${opportunities.length}`;
+    }
+    weekly.push(coverage);
+  }
+  if (weeklyRotation) {
+    const rotatingMission = publicMission('weekly', `rotate:${weeklyRecord.rotating_id}`, weeklyRotation.title, weeklyRotation.description, missionRewards.weekly_rotating, weeklyRotationProgress(weeklyRecord.rotating_id, userId, week), weeklyRotation.target, claimed(weeklyRecord, `rotate:${weeklyRecord.rotating_id}`), true);
+    const resolvesAtLock = Boolean(weeklyRotation.requiresLock);
+    const resolvesWithSportsbook = ['five_winners', 'three_x_winner'].includes(weeklyRecord.rotating_id);
+    if ((resolvesAtLock && locked) || (resolvesWithSportsbook && sportsbookSettled)) {
+      if (!rotatingMission.complete) { rotatingMission.failed = true; rotatingMission.progressLabel = `Failed · ${rotatingMission.progress}/${rotatingMission.target}`; }
+    } else if (resolvesWithSportsbook && locked) {
+      rotatingMission.progressLabel = `${rotatingMission.progress}/${rotatingMission.target} · awaiting settlement`;
+    }
+    weekly.push(rotatingMission);
+  }
+  return {
+    dayKey, weekKey,
+    daily: [
+      publicMission('daily', 'play_three', 'Three Games a Day', 'Complete three WUT matches today.', missionRewards.daily_play_three, matches.length, 3, claimed(dailyRecord, 'play_three')),
+      publicMission('daily', 'first_win', 'First Win', 'Win your first WUT match of the day.', missionRewards.daily_first_win, wonToday, 1, claimed(dailyRecord, 'first_win')),
+      publicMission('daily', `rotate:${dailyRecord.rotating_id}`, dailyRotation.title, dailyRotation.description, missionRewards.daily_rotating, dailyRotationProgress(dailyRecord.rotating_id, userId, dayKey, matches), dailyRotation.target, claimed(dailyRecord, `rotate:${dailyRecord.rotating_id}`), true)
+    ],
+    weekly
+  };
+}
+
+export function claimWutMission({ userId, period, missionId, now = new Date() }) {
+  ensureCardsState();
+  const missions = getWutMissionsForUser(userId, now);
+  const cleanPeriod = period === 'weekly' ? 'weekly' : 'daily';
+  const mission = missions[cleanPeriod].find(item => item.id === String(missionId || ''));
+  if (!mission) throw new Error('That mission is not active.');
+  if (!mission.complete) throw new Error('That mission is not complete yet.');
+  if (mission.claimed) throw new Error('That mission reward was already claimed.');
+  const key = cleanPeriod === 'daily' ? missions.dayKey : missions.weekKey;
+  const record = state.cards.missionPeriods.find(item => Number(item.user_id) === Number(userId) && item.period === cleanPeriod && item.key === key);
+  if (!record) throw new Error('Mission period not found.');
+  record.claimed_ids.push(mission.id);
+  record.updated_at = now.toISOString();
+  const membership = wutMembership(userId);
+  changeWutCoins(membership, mission.reward, 'mission_reward', { mission_period: cleanPeriod, mission_key: key, mission_id: mission.id });
+  saveState();
+  return { mission, wutCoins: Number(membership.wut_coins || 0) };
+}
+
+export function getWutSystemsState(userId, now = new Date()) {
+  ensureCardsState();
+  const membership = wutMembership(userId);
+  const shop = ensureTrinketShop(userId, now);
+  const missions = getWutMissionsForUser(userId, now);
+  saveState();
+  return {
+    wutCoins: Number(membership.wut_coins || 0), deckSlots: Number(membership.deck_slots || 3),
+    nextDeckSlotCost: state.cards.config.wut.deckSlotCosts[String(Number(membership.deck_slots || 3) + 1)] || null,
+    decks: state.cards.decks.filter(item => Number(item.user_id) === Number(userId)).map(item => JSON.parse(JSON.stringify(item))),
+    trinkets: state.cards.trinkets.filter(item => Number(item.user_id) === Number(userId)).map(item => JSON.parse(JSON.stringify(item))),
+    shop: JSON.parse(JSON.stringify(shop)), missions, config: JSON.parse(JSON.stringify(state.cards.config.wut))
+  };
+}
+
+export function saveWutDeck({ userId, deckId = null, name, activeCardIds, benchCardIds, catalogByIdentity }) {
+  ensureCardsState();
+  const membership = wutMembership(userId);
+  const owned = new Map(state.cards.ownedCards.filter(card => Number(card.user_id) === Number(userId)).map(card => [Number(card.id), card]));
+  const active = [...new Set((activeCardIds || []).map(Number).filter(Number.isFinite))];
+  const bench = (benchCardIds || []).map(Number).filter(Number.isFinite);
+  if (active.length < 5 || active.length > 8) throw new Error('Active Deck must contain 5 to 8 unique cards.');
+  if (bench.length !== 5 || new Set(bench).size !== 5) throw new Error('Safety Bench must contain exactly 5 unique cards.');
+  if ([...active, ...bench].some(id => !owned.has(id))) throw new Error('Every deck card must be in your collection.');
+  const benchSnapshots = bench.map(id => wutCardSnapshot(owned.get(id), catalogByIdentity));
+  const positions = benchSnapshots.map(card => card.position).sort().join('');
+  if (positions !== 'DDFFG') throw new Error('Safety Bench must be exactly 2F / 2D / 1G.');
+  if (benchSnapshots.some(card => card.power > 2)) throw new Error('Every Safety Bench card must be Power 2 or lower.');
+  let deck = state.cards.decks.find(item => Number(item.id) === Number(deckId) && Number(item.user_id) === Number(userId));
+  if (!deck) {
+    const count = state.cards.decks.filter(item => Number(item.user_id) === Number(userId)).length;
+    if (count >= Number(membership.deck_slots || 3)) throw new Error('Purchase another saved deck slot first.');
+    deck = { id: state.nextDeckId++, user_id: Number(userId), created_at: nowIso() };
+    state.cards.decks.push(deck);
+  }
+  deck.name = String(name || 'Saved Deck').trim().slice(0, 40) || 'Saved Deck';
+  deck.active_card_ids = active; deck.bench_card_ids = bench; deck.updated_at = nowIso();
+  saveState();
+  return JSON.parse(JSON.stringify(deck));
+}
+
+export function buyWutDeckSlot(userId) {
+  ensureCardsState();
+  const membership = wutMembership(userId);
+  const next = Number(membership.deck_slots || 3) + 1;
+  const cost = Number(state.cards.config.wut.deckSlotCosts[String(next)] || 0);
+  if (!cost) throw new Error('You already have the maximum number of deck slots.');
+  const user = state.users.find(item => Number(item.id) === Number(userId));
+  if (Number(user?.balance || 0) < cost) throw new Error('Insufficient Mushybux.');
+  user.balance -= cost; membership.deck_slots = next;
+  state.transactions.push({ id: state.nextTransactionId++, user_id: Number(userId), week: Number(state.settings.currentWeek || 1), amount: -cost, kind: 'wut_deck_slot', category: 'cards_convenience', note: `WUT saved deck slot ${next}`, created_at: nowIso() });
+  saveState(); return { deckSlots: next, cost, balance: user.balance };
+}
+
+function rollTrinketRarity(slot) {
+  const weights = state.cards.config.wut.trinketShopOdds?.[String(slot)] || {};
+  const total = WUT_TRINKET_RARITIES.reduce((sum, rarity) => sum + Math.max(0, Number(weights[rarity] || 0)), 0);
+  if (total <= 0) throw new Error(`Trinket Shop slot ${slot} needs at least one positive rarity weight.`);
+  let roll = Math.random() * total;
+  for (const rarity of WUT_TRINKET_RARITIES) {
+    roll -= Math.max(0, Number(weights[rarity] || 0));
+    if (roll < 0) return rarity;
+  }
+  return WUT_TRINKET_RARITIES[WUT_TRINKET_RARITIES.length - 1];
+}
+
+function buildTrinketOffer(slot) {
+  const rarity = rollTrinketRarity(slot);
+  const family = WUT_TRINKET_FAMILIES[Math.floor(Math.random() * WUT_TRINKET_FAMILIES.length)];
+  return { slot, family, rarity, power_cost: WUT_RARITY_COST[rarity], price: Number(state.cards.config.wut.trinketPrices[rarity]), effect: configuredTrinketEffect(family, rarity), sold_at: null };
+}
+
+function ensureTrinketShop(userId, now = new Date(), force = false) {
+  const dateKey = arenaLocalDateKey(now);
+  const timeZone = state.cards?.arena?.config?.timeZone || 'America/Los_Angeles';
+  let shop = state.cards.trinketShops.find(item => Number(item.user_id) === Number(userId));
+  if (!shop || force || shop.date_key !== dateKey) {
+    if (!shop) { shop = { user_id: Number(userId) }; state.cards.trinketShops.push(shop); }
+    shop.date_key = dateKey; shop.offers = [1, 2, 3].map(buildTrinketOffer); shop.refreshed_at = now.toISOString();
+  }
+  for (const offer of shop.offers || []) {
+    if (offer.effect == null) offer.effect = configuredTrinketEffect(offer.family, offer.rarity);
+  }
+  shop.next_refresh_at = arenaZonedTimeToDate(nextDateKey(dateKey), {}, timeZone).toISOString();
+  shop.refresh_timezone = timeZone;
+  return shop;
+}
+
+export function buyWutTrinket({ userId, slot, now = new Date() }) {
+  ensureCardsState(); const membership = wutMembership(userId); const shop = ensureTrinketShop(userId, now);
+  const offer = shop.offers.find(item => Number(item.slot) === Number(slot));
+  if (!offer || offer.sold_at) throw new Error('That trinket shop slot is sold out.');
+  const chargedPrice = state.cards.config.wut.freeShopPurchases === true ? 0 : Number(offer.price);
+  if (Number(membership.wut_coins || 0) < chargedPrice) throw new Error('Insufficient WUT Coins.');
+  if (chargedPrice) changeWutCoins(membership, -chargedPrice, 'trinket_purchase', { shop_slot: Number(slot), trinket_family: offer.family, rarity: offer.rarity });
+  const trinket = { id: state.nextOwnedTrinketId++, user_id: Number(userId), family: offer.family, rarity: offer.rarity, effect: configuredTrinketEffect(offer.family, offer.rarity), attached_card_id: null, created_at: now.toISOString() };
+  state.cards.trinkets.push(trinket); offer.sold_at = now.toISOString(); offer.owned_trinket_id = trinket.id;
+  saveState(); return JSON.parse(JSON.stringify(trinket));
+}
+
+export function rerollWutTrinketShop({ userId, currency, now = new Date() }) {
+  ensureCardsState(); const membership = wutMembership(userId); const kind = currency === 'mushy' ? 'mushy' : 'wut';
+  const cost = state.cards.config.wut.freeShopPurchases === true ? 0 : Number(state.cards.config.wut.shopReroll[kind]);
+  if (kind === 'wut') {
+    if (Number(membership.wut_coins || 0) < cost) throw new Error('Insufficient WUT Coins.');
+    if (cost) changeWutCoins(membership, -cost, 'trinket_shop_reroll');
+  } else {
+    const user = state.users.find(item => Number(item.id) === Number(userId));
+    if (Number(user?.balance || 0) < cost) throw new Error('Insufficient Mushybux.');
+    if (cost) {
+      user.balance -= cost;
+      state.transactions.push({ id: state.nextTransactionId++, user_id: Number(userId), week: Number(state.settings.currentWeek || 1), amount: -cost, kind: 'wut_shop_reroll', category: 'cards_convenience', note: 'WUT trinket shop reroll', created_at: nowIso() });
+    }
+  }
+  const shop = ensureTrinketShop(userId, now, true); saveState(); return JSON.parse(JSON.stringify(shop));
+}
+
+export function attachWutTrinket({ userId, cardId, trinketId, catalogByIdentity = null }) {
+  ensureCardsState(); wutMembership(userId);
+  const card = state.cards.ownedCards.find(item => Number(item.id) === Number(cardId) && Number(item.user_id) === Number(userId));
+  const trinket = state.cards.trinkets.find(item => Number(item.id) === Number(trinketId) && Number(item.user_id) === Number(userId));
+  if (!card || !trinket) throw new Error('Card or trinket not found.');
+  if (card.trinket_id) throw new Error('That card already has a trinket.');
+  if (trinket.attached_card_id) throw new Error('That trinket is already attached.');
+  if (catalogByIdentity) {
+    const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
+    if (!player || !trinketFitsWutPosition(trinket.family, player.position)) {
+      throw new Error(`${trinket.family === 'generalist' ? 'Generalist' : 'Specialist'} can only be attached to skaters.`);
+    }
+  }
+  card.trinket_id = trinket.id; trinket.attached_card_id = card.id; trinket.attached_at = nowIso(); saveState();
+}
+
+export function removeWutTrinket({ userId, cardId, currency }) {
+  ensureCardsState(); const membership = wutMembership(userId);
+  const card = state.cards.ownedCards.find(item => Number(item.id) === Number(cardId) && Number(item.user_id) === Number(userId));
+  const trinket = ownedTrinketForCard(card); if (!trinket) throw new Error('That card has no trinket.');
+  const kind = currency === 'mushy' ? 'mushy' : 'wut';
+  const costs = kind === 'mushy' ? state.cards.config.wut.trinketRemovalMushy : state.cards.config.wut.trinketRemovalWut;
+  const cost = Number(costs[trinket.rarity]);
+  if (kind === 'wut') { changeWutCoins(membership, -cost, 'trinket_removal', { trinket_id: trinket.id, card_id: card.id }); }
+  else { const user = state.users.find(item => Number(item.id) === Number(userId)); if (user.balance < cost) throw new Error('Insufficient Mushybux.'); user.balance -= cost; state.transactions.push({ id: state.nextTransactionId++, user_id: Number(userId), week: Number(state.settings.currentWeek || 1), amount: -cost, kind: 'wut_trinket_removal', category: 'cards_convenience', note: `Removed trinket #${trinket.id}`, created_at: nowIso() }); }
+  card.trinket_id = null; trinket.attached_card_id = null; trinket.detached_at = nowIso(); saveState(); return { cost, currency: kind };
+}
+
 export function grantCardsTestItem({ userId, item }) {
   ensureCardsState();
+  if (item.itemType === 'trinket') {
+    wutMembership(userId);
+    const family = String(item.family || '');
+    const rarity = String(item.rarity || '').toLowerCase();
+    if (!WUT_TRINKET_FAMILIES.includes(family) || !WUT_TRINKET_RARITIES.includes(rarity)) throw new Error('Choose a valid trinket and rarity.');
+    const trinket = {
+      id: state.nextOwnedTrinketId++, user_id: Number(userId), family, rarity,
+      effect: configuredTrinketEffect(family, rarity), attached_card_id: null,
+      source: 'admin_grant', created_at: nowIso()
+    };
+    state.cards.trinkets.push(trinket);
+    saveState();
+    return JSON.parse(JSON.stringify(trinket));
+  }
   const fakePurchase = {
     id: state.nextPackPurchaseId++,
     user_id: Number(userId),

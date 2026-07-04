@@ -11,8 +11,11 @@
   };
   const displayBoostLabel = displayBoostLabels[displayBoostType] || [displayBoostTitleCase(displayBoostType), `${displayBoostTitleCase(displayBoostType)}s`];
   const displayBoostPerText = displayBoostPer === 1 ? displayBoostLabel[0] : `${displayBoostPer} ${displayBoostLabel[1]}`;
+  const displayBoostEffectText = displayBoostType === 'grit'
+    ? `+${displayBoostBonus} FP per ${displayBoostPer === 1 ? 'Hit and per Block' : `${displayBoostPer} Hits and per ${displayBoostPer} Blocks`}`
+    : `+${displayBoostBonus} FP per ${displayBoostPerText}`;
   const displayBoostStars = '★'.repeat(({ common:1, uncommon:2, rare:3, epic:4, legendary:5 })[displayBoostRarity] || 1);
 %>
 <span class="boost-card-stars"><%= displayBoostStars %></span>
 <h3 class="boost-card-title"><%= displayBoostTitleCase(displayBoostRarity) %> <%= displayBoostTitleCase(displayBoostType) %> Boost</h3>
-<strong class="boost-card-effect">+<%= displayBoostBonus %> FP per <%= displayBoostPerText %></strong>
+<strong class="boost-card-effect"><%= displayBoostEffectText %></strong>

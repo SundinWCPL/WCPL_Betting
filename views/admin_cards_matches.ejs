@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WUT Match Administration</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const formatTime = value => value ? new Date(value).toLocaleString() : '—';
+    const scoreFor = (match, playerId) => match.scores?.[String(playerId)];
+    const statusLabel = status => status === 'cancelled' ? 'Voided / Cancelled' : wutTitleCase(status);
+  %>
+  <main class="container admin-page wut-match-admin-page">
+    <section class="card page-title">
+      <div><p class="eyebrow">Admin recovery tools</p><h1>WUT Match Administration</h1><p>Inspect every live match and browse any user's complete match history.</p></div>
+      <a class="button-link ghost" href="/admin#cards-controls">← Admin</a>
+    </section>
+
+    <section class="card admin-card">
+      <div class="cards-section-head"><div><p class="eyebrow">All users</p><h2>Active & Scoring Matches</h2><p class="muted">Voiding is limited to unfinished matches. It releases committed boosts and awards no WUT Coins or ELO.</p></div><span class="pill"><%= arenaMatches.activeMatches.length %> ongoing</span></div>
+      <% if (!arenaMatches.activeMatches.length) { %><p class="muted">No active or scoring WUT matches.</p><% } %>
+      <div class="wut-admin-match-list">
+        <% arenaMatches.activeMatches.forEach(match => { %>
+          <article class="wut-admin-match-row">
+            <div class="wut-admin-match-main">
+              <span class="pill <%= match.status === 'scoring' ? 'positive' : '' %>"><%= statusLabel(match.status) %></span>
+              <div><strong>Match #<%= match.id %> · <%= match.playerLabel %></strong><small><%= match.placementCount %>/10 cards committed<%= match.currentPlayerName ? ` · ${match.currentPlayerName}'s turn` : '' %> · created <%= formatTime(match.created_at) %></small></div>
+            </div>
+            <details class="wut-admin-match-details">
+              <summary>Inspect lineups</summary>
+              <div class="wut-admin-lineups">
+                <% match.players.forEach(player => { const placements = (match.placements || []).filter(row => Number(row.user_id) === Number(player.id)); %>
+                  <section><h3><%= player.displayName %></h3><% if (!placements.length) { %><p class="muted">No cards committed.</p><% } %><% placements.forEach(row => { %><p><strong><%= row.slot %></strong> · <%= row.card_snapshot?.display_name || `Card #${row.card_id}` %> · P<%= row.power || row.card_snapshot?.power || 1 %><%= row.card_snapshot?.trinket ? ` · ${wutTrinketName(row.card_snapshot.trinket.family)}` : '' %><%= row.boost_id ? ` · Boost #${row.boost_id}` : '' %></p><% }) %></section>
+                <% }) %>
+              </div>
+            </details>
+            <form method="post" action="/admin/cards/matches/<%= match.id %>/void" class="wut-admin-void-form" onsubmit="return confirm('Cancel and void WUT match #<%= match.id %>? No winner, rewards, or ELO will be recorded. Committed boosts will be returned.');">
+              <input type="hidden" name="return_user_id" value="<%= arenaMatches.selectedUserId || '' %>">
+              <label>Void reason<input name="reason" maxlength="180" required placeholder="Bug or soft-lock reason"></label>
+              <button type="submit" class="danger">Cancel & Void Match</button>
+            </form>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+
+    <section class="card admin-card">
+      <div class="cards-section-head"><div><p class="eyebrow">Ready, completed, and voided</p><h2>User Match History</h2></div><span class="pill"><%= arenaMatches.history.length %> matches</span></div>
+      <form method="get" action="/admin/cards/matches" class="wut-admin-history-filter">
+        <label>User<select name="user_id"><option value="">All users</option><% arenaMatches.users.forEach(user => { %><option value="<%= user.id %>" <%= Number(arenaMatches.selectedUserId) === Number(user.id) ? 'selected' : '' %>><%= user.displayName %> (<%= user.matchCount %>)</option><% }) %></select></label>
+        <button>View History</button>
+      </form>
+      <% if (!arenaMatches.history.length) { %><p class="muted">No matches found for this selection.</p><% } %>
+      <div class="table-scroll"><table class="wut-admin-history-table"><thead><tr><th>Match</th><th>Players</th><th>Status</th><th>Score</th><th>Finished</th><th>Details</th></tr></thead><tbody>
+        <% arenaMatches.history.forEach(match => { %><tr><td>#<%= match.id %></td><td><%= match.playerLabel %></td><td><span class="pill <%= match.status === 'cancelled' ? 'negative' : match.status === 'completed' ? 'positive' : '' %>"><%= statusLabel(match.status) %></span><% if (match.cancel_note) { %><br><small><%= match.cancel_note %></small><% } %></td><td><% if (match.scores) { %><%= match.players.map(player => `${player.displayName} ${scoreFor(match, player.id) ?? 0}`).join(' · ') %><% } else { %>—<% } %></td><td><%= formatTime(match.completed_at || match.resolved_at || match.cancelled_at) %></td><td><details><summary>Lineups</summary><% match.players.forEach(player => { %><strong><%= player.displayName %></strong><% (match.placements || []).filter(row => Number(row.user_id) === Number(player.id)).forEach(row => { %><p><%= row.slot %> · <%= row.card_snapshot?.display_name || `Card #${row.card_id}` %><%= row.fp == null ? '' : ` · ${row.fp} FP` %></p><% }) %><% }) %></details></td></tr><% }) %>
+      </tbody></table></div>
+    </section>
+  </main>
+</body>
+</html>

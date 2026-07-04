@@ -12,7 +12,11 @@
   <%
     const cardRarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
     const starsForPlayer = player => '&#9733;'.repeat(Number(player?.stars || cardRarityRank[player?.tier] || 1));
-    const titleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+    const titleCase = wutTitleCase;
+    const trinketName = wutTrinketName;
+    const trinketIcons = WUT_TRINKET_ICONS;
+    const trinketEffectText = wutTrinketDescription;
+    const trinketTooltip = item => `${trinketName(item.family)} · ${titleCase(item.rarity)} · +${item.power_cost} Power\n${trinketEffectText(item)}\nRemoval: ${wut.config.trinketRemovalWut[item.rarity]} WUT Coins or ${wut.config.trinketRemovalMushy[item.rarity]} Mushybux`;
     const cleanPlayerName = player => {
       const edition = String(player?.edition || '').trim();
       const name = String(player?.name || '').trim();
@@ -23,13 +27,14 @@
   %>
   <main class="container cards-page">
     <section class="card page-title cards-title">
-      <div><p class="eyebrow">WCPL Cards</p><h1>Card Shop</h1><p>Every pack contains three unique pulls.</p></div>
-      <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(balance) %> Mushybux</span><a class="button-link ghost" href="/cards">Back to Hub</a></div>
+      <div><p class="eyebrow">WUT Economy</p><h1>WUT Shop</h1><p>Every player pack contains three players and two boosts.</p></div>
+      <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(wutCoins) %> WUT Coins</span><a class="button-link ghost" href="/cards">Back to Hub</a></div>
     </section>
+    <% if (wut.config.freeShopPurchases) { %><section class="card casino-closed-notice"><strong>Admin testing: shop purchases are free.</strong><span>Pack, trinket, and shop-reroll prices are not charged while this toggle is active.</span></section><% } %>
 
     <% if (pendingPack) { %>
       <section class="card pack-reveal">
-        <p class="eyebrow"><%= pendingPack.pack_type %> <%= pendingPack.pack_kind %> pack</p>
+        <p class="eyebrow"><%= pendingPack.source === 'starter_bonus' ? 'Free Starter Bonus · Standard Pack' : `${pendingPack.pack_type} ${pendingPack.pack_kind} pack` %></p>
         <h2>Your Pack</h2>
         <div class="pack-reveal-grid">
           <% pendingPack.items.forEach((item, index) => { %>
@@ -63,26 +68,30 @@
         </form>
       </section>
     <% } else { %>
-      <section class="pack-shop-grid">
-        <% ['player', 'boost'].forEach(kind => { const prices = kind === 'player' ? config.playerPackPrices : config.boostPackPrices; %>
-          <article class="card pack-shop-column">
-            <div class="pack-art <%= kind %>-pack"><span><%= kind === 'player' ? 'PLAYER' : 'BOOST' %></span><strong>PACK</strong></div>
-            <h2><%= kind === 'player' ? 'Player Packs' : 'Boost Packs' %></h2>
-            <% ['standard', 'premium', 'prestige'].forEach(type => { %>
-              <form method="post" action="/cards/store/buy">
-                <input type="hidden" name="pack_kind" value="<%= kind %>">
-                <input type="hidden" name="pack_type" value="<%= type %>">
-                <button class="pack-buy-button" <%= balance < prices[type] ? 'disabled' : '' %>>
-                  <span><%= type %></span><strong><%= prices[type] %> Mushybux</strong>
-                </button>
-              </form>
-            <% }) %>
-          </article>
-        <% }) %>
+      <section class="wut-shop-columns">
+        <article class="card pack-shop-column">
+          <% const prices = config.playerPackPrices; %>
+          <div class="pack-art player-pack"><span>PLAYER</span><strong>PACK</strong></div>
+          <h2>Player + Boost Packs</h2>
+          <% ['standard', 'premium', 'prestige'].forEach(type => { %>
+            <form method="post" action="/cards/store/buy"><input type="hidden" name="pack_kind" value="player"><input type="hidden" name="pack_type" value="<%= type %>"><button class="pack-buy-button" <%= !wut.config.freeShopPurchases && wutCoins < prices[type] ? 'disabled' : '' %>><span><%= type %></span><strong><%= wut.config.freeShopPurchases ? 'FREE · Admin Test' : `${prices[type]} WUT Coins` %></strong></button></form>
+          <% }) %>
+        </article>
+        <article class="card wut-trinket-shop-panel">
+          <div class="cards-section-head"><div><p class="eyebrow">Your personal daily rotation</p><h2>Trinket Shop</h2><p class="muted wut-shop-refresh">New offers at midnight <%= wut.shop.refresh_timezone === 'America/Los_Angeles' ? 'Pacific' : `(${wut.shop.refresh_timezone})` %> · <span data-shop-refresh-at="<%= wut.shop.next_refresh_at %>">--:--:--</span></p></div><span class="pill"><%= wut.shop.date_key %></span></div>
+          <div class="wut-shop-trinket-stack">
+            <% wut.shop.offers.forEach(offer => { %><article class="wut-shop-trinket-offer tier-<%= offer.rarity %> <%= offer.sold_at ? 'is-sold' : '' %>" data-trinket-family="<%= offer.family %>"><span class="wut-trinket-icon wut-shop-trinket-icon" title="<%= trinketTooltip(offer) %>"><%= trinketIcons[offer.family] || '◆' %></span><strong class="wut-shop-trinket-name"><%= titleCase(offer.rarity) %> <%= trinketName(offer.family) %></strong><form method="post" action="/cards/trinkets/buy"><input type="hidden" name="slot" value="<%= offer.slot %>"><button <%= offer.sold_at || (!wut.config.freeShopPurchases && wutCoins < offer.price) ? 'disabled' : '' %>><%= offer.sold_at ? 'Sold Out' : wut.config.freeShopPurchases ? 'FREE' : `${offer.price} WUT Coins` %></button></form></article><% }) %>
+          </div>
+          <button type="button" id="openTrinketReroll">Reroll Trinket Shop</button>
+        </article>
       </section>
+      <dialog id="rerollTrinketDialog" class="wut-trinket-dialog"><h2>Reroll trinket shop?</h2><p>This refreshes all three offers, including sold-out slots.</p><div class="admin-action-row"><% if (wut.config.freeShopPurchases) { %><form method="post" action="/cards/trinkets/reroll"><input type="hidden" name="currency" value="wut"><button>Reroll Free</button></form><% } else { %><form method="post" action="/cards/trinkets/reroll"><input type="hidden" name="currency" value="wut"><button><%= wut.config.shopReroll.wut %> WUT Coins</button></form><form method="post" action="/cards/trinkets/reroll"><input type="hidden" name="currency" value="mushy"><button><%= wut.config.shopReroll.mushy %> Mushybux</button></form><% } %><button type="button" class="ghost" id="cancelTrinketReroll">Cancel</button></div></dialog>
     <% } %>
   </main>
   <script>
+    const rerollDialog = document.getElementById('rerollTrinketDialog');
+    document.getElementById('openTrinketReroll')?.addEventListener('click', () => rerollDialog.showModal());
+    document.getElementById('cancelTrinketReroll')?.addEventListener('click', () => rerollDialog.close());
     const revealCards = [...document.querySelectorAll('[data-reveal-card]')];
     revealCards.forEach(card => card.addEventListener('click', () => {
       card.classList.remove('is-hidden');
@@ -94,6 +103,19 @@
       card.addEventListener('animationend', () => card.classList.remove('is-revealed-pop'), { once: true });
       if (revealCards.every(item => !item.classList.contains('is-hidden'))) document.getElementById('claimPack').disabled = false;
     }));
+    const refreshClock = document.querySelector('[data-shop-refresh-at]');
+    if (refreshClock) {
+      const renderRefreshClock = () => {
+        const remaining = Math.max(0, new Date(refreshClock.dataset.shopRefreshAt).getTime() - Date.now());
+        const hours = Math.floor(remaining / 3600000);
+        const minutes = Math.floor(remaining % 3600000 / 60000);
+        const seconds = Math.floor(remaining % 60000 / 1000);
+        refreshClock.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        if (remaining === 0) window.location.reload();
+      };
+      renderRefreshClock();
+      setInterval(renderRefreshClock, 1000);
+    }
   </script>
 </body>
 </html>

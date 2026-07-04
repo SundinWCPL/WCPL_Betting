@@ -9,15 +9,18 @@ import {
 } from './wcplData.js';
 import fs from 'fs/promises';
 import path from 'path';
+import { readCsvFile } from './csv.js';
 
 export const CARD_TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
 export const CARD_STARS = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
-export const CARD_COOLDOWNS = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 };
-export const BOOST_TYPES = ['goal', 'assist', 'shot', 'hit', 'block', 'save', 'shutout'];
+// WUT 2.0 uses immutable match snapshots, so owned cards never need cooldowns.
+export const CARD_COOLDOWNS = { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0, mythic: 0 };
+export const BOOST_TYPES = ['goal', 'assist', 'shot', 'grit', 'save', 'shutout'];
 export const DEFAULT_BOOST_EFFECTS = {
   goal: { common: { per: 1, bonus: 2 }, uncommon: { per: 1, bonus: 3 }, rare: { per: 1, bonus: 5 }, epic: { per: 1, bonus: 7 }, legendary: { per: 1, bonus: 10 } },
   assist: { common: { per: 1, bonus: 1 }, uncommon: { per: 1, bonus: 2 }, rare: { per: 1, bonus: 3 }, epic: { per: 1, bonus: 5 }, legendary: { per: 1, bonus: 7 } },
   shot: { common: { per: 4, bonus: 1 }, uncommon: { per: 3, bonus: 1 }, rare: { per: 2, bonus: 1 }, epic: { per: 1, bonus: 1 }, legendary: { per: 1, bonus: 2 } },
+  grit: { common: { per: 1, bonus: 1 }, uncommon: { per: 1, bonus: 2 }, rare: { per: 1, bonus: 3 }, epic: { per: 1, bonus: 5 }, legendary: { per: 1, bonus: 7 } },
   hit: { common: { per: 1, bonus: 1 }, uncommon: { per: 1, bonus: 2 }, rare: { per: 1, bonus: 3 }, epic: { per: 1, bonus: 4 }, legendary: { per: 1, bonus: 6 } },
   block: { common: { per: 1, bonus: 2 }, uncommon: { per: 1, bonus: 3 }, rare: { per: 1, bonus: 4 }, epic: { per: 1, bonus: 6 }, legendary: { per: 1, bonus: 8 } },
   save: { common: { per: 8, bonus: 1 }, uncommon: { per: 5, bonus: 1 }, rare: { per: 3, bonus: 1 }, epic: { per: 2, bonus: 1 }, legendary: { per: 1, bonus: 1 } },
@@ -40,7 +43,7 @@ export const DEFAULT_SAVE_PCT_BONUSES = [
   { threshold: 0.95, multiplier: 1.35 },
   { threshold: 0.975, multiplier: 1.5 }
 ];
-export const DEFAULT_CHEMISTRY_BONUSES = { 2: 10, 3: 15, 4: 25, 5: 50 };
+export const DEFAULT_CHEMISTRY_BONUSES = { 2: 10, 3: 15, 4: 20, 5: 25 };
 export const PLAYER_CARD_SEASONS = ['S1', 'S2', 'S3'];
 export const HISTORICAL_SAMPLE_SIZE = 3;
 const S1_GOALIE_SAVE_PCT_MAX_DEVIATION = 0.05;
@@ -48,10 +51,21 @@ const S1_GOALIE_SHOTS_MIN_FACTOR = 0.5;
 const S1_GOALIE_SHOTS_MAX_FACTOR = 1.5;
 const PACK_EXCLUDED_PLAYER_NAMES = new Set(['bleh', 'jurkey']);
 const PACK_EXCLUDED_STEAM_IDS = new Set(['76561198300298208', '76561199027789459']);
+export const S1_CANONICAL_POSITIONS = Object.freeze({
+  'nickisntcool': 'F', 'bardownbart': 'D', 'boeser': 'F', 'lepuckuer': 'D',
+  'imacomputa': 'D', 'jarry': 'G', 'jb': 'D', 'quick': 'G',
+  'moose': 'F', 'foxbrow': 'F', 'pogba': 'D', 'poro': 'F', 'pretty': 'D',
+  'rickey': 'G', 'walker': 'D', 'player 43': 'F', 'foster': 'G',
+  'nakamura': 'G', 'john puck': 'F', 'mushy': 'D', 'pyros': 'F',
+  'supawoov': 'D', 'matvei': 'F', 'light': 'G', 'puckster': 'G',
+  'stinkyshawn': 'F', 'chilliam': 'D', 'silly': 'D', 'zen': 'G',
+  'jurkey': 'F', 'dabz': 'D', 'ovo': 'F', 'siddedon': 'D', 'marcus': 'F',
+  'midnight': 'F', 'milk': 'G', 'socanadian': 'F', 'miku': 'G',
+  'nemestokes': 'D', 'shoe': 'D'
+});
 
 export const DEFAULT_CARDS_CONFIG = {
-  playerPackPrices: { standard: 75, premium: 150, prestige: 350 },
-  boostPackPrices: { standard: 50, premium: 100, prestige: 250 },
+  playerPackPrices: { standard: 250, premium: 500, prestige: 1000 },
   playerTierOdds: {
     standard: { common: 55, uncommon: 25, rare: 13, epic: 6, legendary: 1, mythic: 0 },
     premium: { common: 25, uncommon: 30, rare: 25, epic: 15, legendary: 5, mythic: 0 },
@@ -222,6 +236,22 @@ export function chemistryMultiplierForCount(count, scoringConfig = {}) {
   return 1 + Math.max(0, percent) / 100;
 }
 
+export function captainPatchChemistry(baseMultiplier, patchEffects = []) {
+  const strongest = Math.max(0, ...(patchEffects || []).map(Number).filter(Number.isFinite));
+  const baseBonus = Math.max(0, Number(baseMultiplier || 1) - 1);
+  return { multiplier: 1 + baseBonus * (1 + strongest), effect: strongest };
+}
+
+export function wutChemistryKey(player = {}) {
+  const teamId = clean(player.teamId || player.team_id).toUpperCase();
+  if (!teamId) return '';
+  const cardType = norm(player.cardType || player.card_type);
+  const season = normalizeSeason(cardType === 'mythic'
+    ? player.sourceSeason || player.source_season || player.season
+    : player.edition || player.season || player.sourceSeason || player.source_season);
+  return `${season}|${teamId}`;
+}
+
 export function applyChemistryBonus(score, chemistry) {
   const multiplier = Number(chemistry?.multiplier || 1);
   if (!score || multiplier <= 1) return score;
@@ -246,6 +276,200 @@ export function applyChemistryBonus(score, chemistry) {
       }
     ]
   };
+}
+
+// WUT trinket scoring is split into two pure phases so balance changes can be
+// tested without creating a live match. This phase only changes the owner's
+// positive score and runs before boosts and chemistry.
+export function applyWutSelfTrinket({
+  exactFp = 0,
+  trinket = null,
+  gameFps = [],
+  bonusGameFps = [],
+  breakdown = [],
+  stats = {},
+  isFirst = false,
+  hasOpponent = false,
+  teamCount = 0,
+  cardRarityRank = 1,
+  opponentRarityRank = null
+} = {}) {
+  let exact = Number(exactFp || 0);
+  const startingExact = exact;
+  const logs = [];
+  const family = trinket?.family;
+  const effect = trinket?.effect;
+  const games = [...gameFps].map(Number).filter(Number.isFinite);
+  let trinketLabel = '';
+  let luckyCharm = null;
+
+  if (family === 'lucky_charm' && games.length) {
+    trinketLabel = 'Lucky Charm';
+    const candidates = [...bonusGameFps].slice(0, Number(effect?.rolls || 1)).map(Number).filter(Number.isFinite);
+    const best = Math.max(...candidates, -Infinity);
+    const highest = Math.max(...games);
+    const threshold = Number(effect?.threshold || 1);
+    const qualifies = threshold > 1 ? best >= highest * threshold : best > highest;
+    const low = games.indexOf(Math.min(...games));
+    luckyCharm = { hit: qualifies, replacedIndex: qualifies ? low : null, usedBonusIndex: qualifies ? candidates.indexOf(best) : null };
+    if (qualifies) {
+      exact += best - games[low];
+      logs.push(`Lucky Charm replaced ${games[low].toFixed(1)} with ${best.toFixed(1)} FP.`);
+    } else logs.push('Lucky Charm did not clear its spike threshold.');
+  } else if (family === 'safety_net' && games.length >= 3) {
+    trinketLabel = 'Safety Net';
+    const low = games.indexOf(Math.min(...games));
+    const others = games.filter((_, index) => index !== low);
+    const floor = others.reduce((sum, value) => sum + value, 0) / others.length * Number(effect || 0);
+    if (games[low] < floor) {
+      exact += floor - games[low];
+      logs.push(`Safety Net raised the floor by ${(floor - games[low]).toFixed(1)} FP.`);
+    }
+  } else if (family === 'glass_skates' && games.length) {
+    trinketLabel = 'Glass Skates';
+    let delta = 0;
+    if (Array.isArray(effect)) {
+      // Legacy WUT 2.0 effect shape, retained so old saved matches remain
+      // replayable while the launch balance lab evaluates the glass-cannon rule.
+      delta = Math.max(...games) * Number(effect?.[0] || 0) + Math.min(...games) * Number(effect?.[1] || 0);
+    } else {
+      const ordered = [...games].sort((a, b) => b - a);
+      const threshold = Math.max(0, Number(effect?.threshold || 0));
+      const cleared = ordered.length >= 2 && ordered[0] >= ordered[1] * (1 + threshold);
+      const rate = cleared ? Number(effect?.bonus || 0) : -Math.abs(Number(effect?.penalty || 0));
+      delta = startingExact * rate;
+      trinketLabel = cleared ? 'Glass Skates (boom)' : 'Glass Skates (bust)';
+    }
+    exact += delta;
+    logs.push(`Glass Skates ${delta >= 0 ? '+' : ''}${delta.toFixed(1)} FP.`);
+  } else if (family === 'specialist_tape') {
+    const stat = [...breakdown].filter(row => !row?.unavailable).sort((a, b) => Number(b.points || 0) - Number(a.points || 0))[0];
+    trinketLabel = `Specialist (${stat?.label || 'top stat'})`;
+    const gain = Number(stat?.points || 0) * Number(effect || 0);
+    exact += gain;
+    logs.push(`Specialist boosted ${stat?.label || 'top stat'} +${gain.toFixed(1)} FP.`);
+  } else if (family === 'first_strike_tape' && isFirst) {
+    trinketLabel = 'First Strike';
+    const gain = exact * Number(effect || 0); exact += gain;
+    logs.push(`First Strike +${gain.toFixed(1)} FP.`);
+  } else if (family === 'counterpunch_gloves' && hasOpponent && !isFirst) {
+    trinketLabel = 'Counterpunch Gloves';
+    const gain = exact * Number(effect || 0); exact += gain;
+    logs.push(`Counterpunch Gloves +${gain.toFixed(1)} FP.`);
+  } else if (family === 'underdog_patch' && hasOpponent && Number(cardRarityRank) < Number(opponentRarityRank)) {
+    trinketLabel = 'Underdog Patch';
+    const gap = Number(opponentRarityRank) - Number(cardRarityRank);
+    const pct = Math.min(Number(effect?.[1] || 0), gap * Number(effect?.[0] || 0));
+    const gain = exact * pct; exact += gain;
+    logs.push(`Underdog Patch +${gain.toFixed(1)} FP (${gap}-tier card-rarity gap).`);
+  } else if (family === 'generalist') {
+    const categories = ['goals', 'assists', 'shots', 'hits', 'blocks'];
+    const combo = categories.filter(key => Number(stats?.[key] || 0) > 0).length;
+    const rate = Number(effect?.[String(combo)] ?? effect?.[combo] ?? 0);
+    trinketLabel = `Generalist (${combo}-stat combo)`;
+    if (combo >= 3 && rate > 0) {
+      const gain = exact * rate;
+      exact += gain;
+      logs.push(`Generalist ${combo}-stat combo +${gain.toFixed(1)} FP.`);
+    }
+  }
+  return { exactFp: exact, logs, trinketGain: exact - startingExact, trinketLabel, luckyCharm };
+}
+
+// Positive layer order is a game rule, not an implementation detail:
+// self trinket -> committed boost -> chemistry -> would-be final FP.
+export function applyWutPositiveScoring({
+  baseExactFp = 0,
+  trinket = null,
+  gameFps = [],
+  bonusGameFps = [],
+  breakdown = [],
+  isFirst = false,
+  hasOpponent = false,
+  teamCount = 0,
+  cardRarityRank = 1,
+  opponentRarityRank = null,
+  stats = {},
+  boost = null,
+  boostLoad = 0,
+  adjacentBoostGains = [],
+  chemistryMultiplier = 1
+} = {}) {
+  const self = applyWutSelfTrinket({ exactFp: baseExactFp, trinket, gameFps, bonusGameFps, breakdown, isFirst, hasOpponent, teamCount, cardRarityRank, opponentRarityRank, stats });
+  const logs = [...self.logs];
+  const boostGain = boostFantasyBonus(stats, boost);
+  let cableGain = 0;
+  if (trinket?.family === 'booster_cable') {
+    cableGain += boostGain * Math.max(0, Number(trinket.effect?.own || 0));
+    const adjacent = (adjacentBoostGains || []).map(Number).filter(value => Number.isFinite(value) && value > 0);
+    const eligible = trinket.effect?.adjacentMode === 'strongest'
+      ? adjacent.sort((a, b) => b - a).slice(0, 1)
+      : adjacent;
+    cableGain += eligible.reduce((sum, value) => sum + value, 0) * Math.max(0, Number(trinket.effect?.adjacent || 0));
+    if (cableGain) logs.push(`Booster Cable +${cableGain.toFixed(1)} FP from committed boosts.`);
+  }
+  let exact = self.exactFp + boostGain + cableGain;
+  if (boostGain) logs.push(`${boost.boost_type || boost.boostType} Boost +${boostGain.toFixed(1)} FP (${Number(boostLoad || 0)} Load).`);
+  const multiplier = Math.max(1, Number(chemistryMultiplier || 1));
+  const chemistryGain = exact * (multiplier - 1);
+  exact *= multiplier;
+  if (chemistryGain) logs.push(`Chemistry +${chemistryGain.toFixed(1)} FP.`);
+  return {
+    wouldBeFp: exact,
+    selfFp: self.exactFp,
+    boostGain,
+    cableGain,
+    chemistryGain,
+    trinketGain: self.trinketGain + cableGain,
+    trinketLabel: self.trinketLabel || (cableGain ? 'Booster Cable' : ''),
+    preChemistryFp: self.exactFp + boostGain + cableGain,
+    luckyCharm: self.luckyCharm,
+    logs
+  };
+}
+
+// Hostile trinkets always read wouldBeFp, which already includes the owner's
+// self trinket, boost, and chemistry. They never read another hostile result,
+// preventing circular Hex/Siphon resolution. Warding reduces incoming strength.
+export function resolveWutMatchingTrinkets(entries = []) {
+  const resolved = entries.map(entry => ({
+    ...entry,
+    finalFp: Number(entry.finalFp ?? entry.wouldBeFp ?? 0),
+    logs: [...(entry.logs || [])],
+    scoringEffects: [...(entry.scoringEffects || [])]
+  }));
+  for (const source of resolved) {
+    const target = resolved.find(other => Number(other.placement?.user_id) !== Number(source.placement?.user_id) && other.placement?.slot === source.placement?.slot);
+    if (!target) continue;
+    const ward = target.trinket?.family === 'warding_charm' ? Number(target.trinket.effect || 0) : 0;
+    if (source.trinket?.family === 'hex_bag') {
+      const [threshold, reduction] = source.trinket.effect || [];
+      if (Number(target.wouldBeFp) >= Number(threshold) * Math.max(Number(source.wouldBeFp), 10)) {
+        const rawLoss = Number(target.wouldBeFp) * Number(reduction);
+        const blocked = rawLoss * ward;
+        const loss = rawLoss - blocked;
+        target.finalFp -= loss;
+        source.logs.push(`Hex Charm reduced opposing ${source.placement.slot} by ${loss.toFixed(1)} FP${ward ? ' after Warding' : ''}.`);
+        target.logs.push(`Incoming Hex Charm -${loss.toFixed(1)} FP.`);
+        source.scoringEffects.push({ type: 'trinket', family: 'hex_bag', direction: 'outgoing', triggered: true, label: 'Hex Charm triggered', points: 0, rarity: source.trinket?.rarity || 'common' });
+        target.scoringEffects.push({ type: 'trinket', family: 'hex_bag', direction: 'incoming', triggered: true, label: 'Incoming Hex Charm', points: -rawLoss, rarity: source.trinket?.rarity || 'common' });
+        if (blocked) target.scoringEffects.push({ type: 'trinket', family: 'warding_charm', direction: 'defense', triggered: true, label: 'Warding Charm blocked Hex', points: blocked, rarity: target.trinket?.rarity || 'common' });
+      }
+    }
+    if (source.trinket?.family === 'siphon_stone' && Number(target.wouldBeFp) > Number(source.wouldBeFp)) {
+      const rawSteal = (Number(target.wouldBeFp) - Number(source.wouldBeFp)) * Number(source.trinket.effect || 0);
+      const blocked = rawSteal * ward;
+      const steal = rawSteal - blocked;
+      source.finalFp += steal;
+      target.finalFp -= steal;
+      source.logs.push(`Siphon Stone stole ${steal.toFixed(1)} FP${ward ? ' after Warding' : ''}.`);
+      target.logs.push(`Incoming Siphon -${steal.toFixed(1)} FP.`);
+      source.scoringEffects.push({ type: 'trinket', family: 'siphon_stone', direction: 'outgoing', triggered: true, label: 'Siphon Stone', points: steal, rarity: source.trinket?.rarity || 'common' });
+      target.scoringEffects.push({ type: 'trinket', family: 'siphon_stone', direction: 'incoming', triggered: true, label: 'Incoming Siphon Stone', points: -rawSteal, rarity: source.trinket?.rarity || 'common' });
+      if (blocked) target.scoringEffects.push({ type: 'trinket', family: 'warding_charm', direction: 'defense', triggered: true, label: 'Warding Charm blocked Siphon', points: blocked, rarity: target.trinket?.rarity || 'common' });
+    }
+  }
+  return resolved;
 }
 
 function saveMultiplier(savePct, scoringConfig = {}) {
@@ -299,8 +523,11 @@ export function boostFantasyBonus(stats, boost) {
   if (!type || !rarity) return 0;
   const effect = boost?.effect || DEFAULT_BOOST_EFFECTS[type]?.[rarity];
   if (!effect) return 0;
-  const statKey = { goal: 'goals', assist: 'assists', shot: 'shots', hit: 'hits', block: 'blocks', save: 'saves', shutout: 'shutouts' }[type];
   const per = Math.max(1, Number(effect.per || 1));
+  if (type === 'grit') {
+    return (Math.floor(n(stats?.hits) / per) + Math.floor(n(stats?.blocks) / per)) * Number(effect.bonus || 0);
+  }
+  const statKey = { goal: 'goals', assist: 'assists', shot: 'shots', hit: 'hits', block: 'blocks', save: 'saves', shutout: 'shutouts' }[type];
   return Math.floor(n(stats?.[statKey]) / per) * Number(effect.bonus || 0);
 }
 
@@ -376,14 +603,17 @@ export function buildFantasyBreakdown(stats, position, boost = null, options = {
         unavailable: true
       };
     }
-    const boosted = boostedType === type;
+    const boosted = boostedType === type || (boostedType === 'grit' && ['hit', 'block'].includes(type));
+    const lineBoostBonus = boostedType === 'grit' && ['hit', 'block'].includes(type)
+      ? Math.floor(n(stats[key]) / Math.max(1, Number(boost?.effect?.per || 1))) * Number(boost?.effect?.bonus || 0)
+      : boosted ? boostBonus : 0;
     return [{
       type,
       label,
       count: n(stats[key]),
       basePoints: n(stats[key]) * value,
-      boostBonus: boosted ? boostBonus : 0,
-      points: n(stats[key]) * value + (boosted ? boostBonus : 0),
+      boostBonus: lineBoostBonus,
+      points: n(stats[key]) * value + lineBoostBonus,
       boosted,
       multiplier: 1
     }];
@@ -554,7 +784,7 @@ function tierForRank(index, total) {
   if (percentile < 0.05) return 'legendary';
   if (percentile < 0.15) return 'epic';
   if (percentile < 0.35) return 'rare';
-  if (percentile < 0.60) return 'uncommon';
+  if (percentile < 0.70) return 'uncommon';
   return 'common';
 }
 
@@ -626,6 +856,7 @@ export async function buildCardPlayerCatalog({
         seasonStats,
         editionStats: seasonStats.S3,
         weightedFpPerGame: s3.fpPerGame,
+        rarityGamesPlayed: Number(s3.games || 0),
         tier: clean(tierOverrides[key]).toLowerCase() || 'common',
         stars: 1,
         teamLogo: `/images/casino/${divisionId}/${player.team_id}.png`,
@@ -657,7 +888,10 @@ export async function buildCardPlayerCatalog({
         const counts = countPositions(player, boxes);
         const rosterPosition = clean(player.position).toUpperCase();
         const explicitHistoricalGoalie = rosterPosition === 'G' ? 'G' : '';
-        const resolvedPosition = override || resolveCountWinner(counts) || explicitHistoricalGoalie || currentIdentity?.resolvedPosition || positionGroup(rosterPosition);
+        const canonicalS1Position = historicalSeason === 'S1'
+          ? S1_CANONICAL_POSITIONS[norm(player.display_name || player.name)] || ''
+          : '';
+        const resolvedPosition = override || canonicalS1Position || resolveCountWinner(counts) || explicitHistoricalGoalie || currentIdentity?.resolvedPosition || positionGroup(rosterPosition);
         const rate = resolvedPosition
           ? (boxes.length ? aggregatePlayerRate(player, boxes, resolvedPosition, scoringConfig) : aggregatePlayerRateFromSeasonRow(player, resolvedPosition, scoringConfig))
           : { games: 0, fp: 0, fpPerGame: 0 };
@@ -714,6 +948,7 @@ export async function buildCardPlayerCatalog({
           editionStats: stats,
           s1SyntheticRates,
           weightedFpPerGame,
+          rarityGamesPlayed: Number(rate.games || 0),
           tier: clean(tierOverrides[key]).toLowerCase() || 'common',
           stars: 1,
           teamLogo: `/images/casino/${historicalSeason}/${player.team_id}.png`,
@@ -727,28 +962,48 @@ export async function buildCardPlayerCatalog({
 
   catalog.push(...await loadManualMythicCards());
 
+  for (const player of catalog) {
+    const rollCount = Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE);
+    player.expectedWutFpPerMatch = Number(player.weightedFpPerGame || 0) * rollCount;
+  }
+
   const pools = new Map();
   for (const player of catalog) {
     if (!player.position || player.cardType === 'mythic') continue;
-    const poolKey = `${player.edition}|${player.position === 'G' ? 'G' : 'S'}`;
+    // Mature historical seasons share a pool; the live season stays isolated
+    // so its small, volatile sample cannot displace established S1/S2 cards.
+    // Every cohort remains position-specific.
+    const seasonPool = normalizeSeason(player.edition) === 'S3' ? 'S3' : 'HISTORICAL';
+    const poolKey = `${seasonPool}|${player.position}`;
     if (!pools.has(poolKey)) pools.set(poolKey, []);
     pools.get(poolKey).push(player);
   }
   for (const pool of pools.values()) {
     const eligible = pool
-      .sort((a, b) => b.weightedFpPerGame - a.weightedFpPerGame || a.catalogKey.localeCompare(b.catalogKey));
+      .filter(player => Number(player.rarityGamesPlayed || 0) >= 6)
+      .sort((a, b) => b.expectedWutFpPerMatch - a.expectedWutFpPerMatch || a.catalogKey.localeCompare(b.catalogKey));
     let previousFp = null;
     let previousCalculatedTier = null;
+    const calculatedTiers = new Map();
     eligible.forEach((player, index) => {
-      const tiedWithPrevious = previousFp != null && Math.abs(player.weightedFpPerGame - previousFp) < 1e-9;
+      const tiedWithPrevious = previousFp != null && Math.abs(player.expectedWutFpPerMatch - previousFp) < 1e-9;
       const calculatedTier = tiedWithPrevious ? previousCalculatedTier : tierForRank(index, eligible.length);
+      calculatedTiers.set(player.catalogKey, calculatedTier);
       if (!tierOverrides[player.catalogKey]) player.tier = calculatedTier;
-      previousFp = player.weightedFpPerGame;
+      previousFp = player.expectedWutFpPerMatch;
       previousCalculatedTier = calculatedTier;
     });
+    for (const player of pool.filter(item => Number(item.rarityGamesPlayed || 0) < 6)) {
+      player.rarityProvisional = true;
+      const tied = eligible.find(item => Math.abs(item.expectedWutFpPerMatch - player.expectedWutFpPerMatch) < 1e-9);
+      const playersAhead = eligible.filter(item => item.expectedWutFpPerMatch > player.expectedWutFpPerMatch).length;
+      const provisionalTier = (tied && calculatedTiers.get(tied.catalogKey)) || tierForRank(playersAhead, eligible.length);
+      if (!tierOverrides[player.catalogKey]) player.tier = provisionalTier;
+    }
   }
   for (const player of catalog) {
     if (player.cardType === 'mythic') player.tier = 'mythic';
+    player.rarityEligible = player.cardType === 'mythic' || Number(player.rarityGamesPlayed || 0) >= 6;
     player.stars = CARD_STARS[player.tier] || 1;
   }
   return catalog.sort((a, b) =>
@@ -937,6 +1192,15 @@ export function generatePlayerPack({ packType, catalog, config }) {
   });
 }
 
+// Every WUT 2.0 player pack is a single five-item product: three players and
+// two boosts. Keeping generation here makes the economy route impossible to
+// accidentally split back into Mushybux-powered boost packs.
+export function generateWutPlayerPack({ packType, catalog, config }) {
+  const players = generatePlayerPack({ packType, catalog, config });
+  const boosts = generateBoostPack({ packType, config }).slice(0, 2);
+  return [...players, ...boosts];
+}
+
 export function generateWutStarterPack(catalog) {
   const used = new Set();
   return ['F', 'F', 'D', 'D', 'G'].map(position => {
@@ -1045,8 +1309,9 @@ function playerRowsFromBoxscores(boxscores, player, position, stage = '', allowe
   });
 }
 
-function chooseSampleMatchIds(rows, existingIds = [], sampleSize = HISTORICAL_SAMPLE_SIZE) {
-  const available = [...new Set(rows.map(row => clean(row.match_id)).filter(Boolean))];
+function chooseSampleMatchIds(rows, existingIds = [], sampleSize = HISTORICAL_SAMPLE_SIZE, excludedIds = []) {
+  const excluded = new Set((excludedIds || []).map(clean).filter(Boolean));
+  const available = [...new Set(rows.map(row => clean(row.match_id)).filter(id => id && !excluded.has(id)))];
   const existing = (existingIds || []).map(clean).filter(id => available.includes(id));
   if (existing.length) return existing;
   const pool = [...available];
@@ -1117,10 +1382,26 @@ function generateS1SyntheticGames(player, position, sampleSize = HISTORICAL_SAMP
   });
 }
 
-function generateManualMythicGames(player, position, sampleSize = HISTORICAL_SAMPLE_SIZE) {
+const S1_WUT_GAMES_PATH = path.resolve('./data/S1/s1_wut_synthetic_games.csv');
+let s1WutGamesPromise = null;
+
+async function permanentS1Games(player, position) {
+  s1WutGamesPromise ||= readCsvFile(S1_WUT_GAMES_PATH).catch(() => {
+    // Do not permanently cache a missing generated file. This lets a running
+    // development server recover as soon as `npm run wut:s1-games` creates it.
+    s1WutGamesPromise = null;
+    return [];
+  });
+  const rows = await s1WutGamesPromise;
+  const steam = norm(player.sourceSteamId || player.steamId);
+  const name = norm(player.baseName || player.name);
+  return rows.filter(row => ((steam && norm(row.steam_id) === steam) || (!steam && norm(row.player_name) === name)) && positionGroup(row.position) === position);
+}
+
+function generateManualMythicGames(player, position, sampleSize = HISTORICAL_SAMPLE_SIZE, startIndex = 0) {
   const rates = player.manualRates || {};
   return Array.from({ length: sampleSize }, (_, index) => {
-    const matchId = `MYTHIC-MANUAL-${index + 1}`;
+    const matchId = `MYTHIC-MANUAL-${startIndex + index + 1}`;
     if (position === 'G') {
       const saves = randomPoisson(rates.saves);
       const isShutout = Math.random() < clamp(rates.shutouts, 0, 1);
@@ -1162,16 +1443,24 @@ export async function scoreHistoricalCardSample({
   boost = null,
   sampleMatchIds = [],
   syntheticGames = [],
+  excludeMatchIds = [],
   scoringConfig = {}
 }) {
   const sourceSeason = normalizeSeason(player.sourceSeason || player.edition || player.season);
   const sourceType = norm(player.sourceType || player.source_type) === 'manual' ? 'manual' : 'automatic';
   if (sourceType === 'manual' || sourceSeason === 'S1') {
+    const permanentRows = sourceSeason === 'S1' ? await permanentS1Games(player, position) : [];
+    if (sourceSeason === 'S1' && !permanentRows.length && !(Array.isArray(syntheticGames) && syntheticGames.length)) {
+      throw new Error(`Permanent S1 WUT games are missing for ${player.baseName || player.name}. Expected ${S1_WUT_GAMES_PATH}.`);
+    }
+    const permanentSampleIds = sourceSeason === 'S1'
+      ? chooseSampleMatchIds(permanentRows, sampleMatchIds, Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE), excludeMatchIds)
+      : [];
     const selected = Array.isArray(syntheticGames) && syntheticGames.length
       ? syntheticGames
       : sourceType === 'manual'
-        ? generateManualMythicGames(player, position, Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE))
-        : generateS1SyntheticGames(player, position, Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE));
+        ? generateManualMythicGames(player, position, Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE), (excludeMatchIds || []).length)
+        : permanentRows.filter(row => permanentSampleIds.includes(clean(row.match_id)));
     const unavailableStats = player.unavailableStats || [];
     const base = fantasyPointsForRows(selected, position, scoringConfig);
     const boostedExact = applyBoostToFantasy(base, boost, { unavailableStats });
@@ -1184,7 +1473,9 @@ export async function scoreHistoricalCardSample({
       stats: base.stats,
       sampleMatchIds: selected.map(row => clean(row.match_id)).filter(Boolean),
       syntheticGames: selected,
-      breakdown
+      rolledGames: selected,
+      breakdown,
+      gameFps: selected.map(row => fantasyPointsForRows([row], position, scoringConfig).exact)
     };
   }
 
@@ -1193,7 +1484,7 @@ export async function scoreHistoricalCardSample({
   const boxscores = await getBoxscores(sourceDivisionId, sourceSeason);
   const allowedMatchIds = await stageMatchIdsFor(sourceDivisionId, sourceSeason, sourceStage);
   const rows = playerRowsFromBoxscores(boxscores, player, position, sourceStage, allowedMatchIds);
-  const selectedMatchIds = chooseSampleMatchIds(rows, sampleMatchIds, Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE));
+  const selectedMatchIds = chooseSampleMatchIds(rows, sampleMatchIds, Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE), excludeMatchIds);
   const selected = rows.filter(row => selectedMatchIds.includes(clean(row.match_id)));
   if (selected.length === 0) {
     return {
@@ -1203,6 +1494,7 @@ export async function scoreHistoricalCardSample({
       stats: {},
       sampleMatchIds: selectedMatchIds,
       breakdown: [],
+      rolledGames: [],
       warning: 'Historical sample could not be resolved. Card and boost preserved.'
     };
   }
@@ -1219,6 +1511,8 @@ export async function scoreHistoricalCardSample({
     stats: base.stats,
     sampleMatchIds: selectedMatchIds,
     syntheticGames: [],
-    breakdown
+    rolledGames: selected,
+    breakdown,
+    gameFps: selected.map(row => fantasyPointsForRows([row], position, scoringConfig).exact)
   };
 }

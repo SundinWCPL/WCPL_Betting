@@ -10,18 +10,24 @@
 <body>
   <%- include('partials_header') %>
   <%
-    const titleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
-    const statusForCard = card => card.arenaLocked ? 'Committed to an active match' : Number(card.cooldown_remaining || 0) > 0 ? `Cooldown: ${card.cooldown_remaining} WUT matches remaining` : 'Available for WUT';
+    const titleCase = wutTitleCase;
+    const trinketName = wutTrinketName;
+    const trinketIcons = WUT_TRINKET_ICONS;
+    const trinketEffectText = wutTrinketDescription;
+    const trinketTooltip = item => `${trinketName(item.family)} · ${titleCase(item.rarity)} · +${wut.config.rarityCosts[item.rarity]} Power\n${trinketEffectText(item)}\nRemoval: ${wut.config.trinketRemovalWut[item.rarity]} WUT Coins or ${wut.config.trinketRemovalMushy[item.rarity]} Mushybux`;
+    const statusForCard = card => `Available for WUT · Power ${card.power || 1}`;
     const availableCollectionBoosts = boosts.filter(boost => !boost.arenaLocked);
   %>
   <main class="container cards-page arena-page">
     <section class="card page-title cards-title">
       <div><p class="eyebrow">Owned items</p><h1>Your Collection</h1><p>Browse every player card and boost with season, position, rarity, and availability filters.</p></div>
-      <div class="cards-title-actions"><a class="button-link ghost" href="/cards">← WUT</a><a class="button-link" href="/cards/store">Card Shop</a></div>
+      <div class="cards-title-actions"><span class="cards-balance"><%= wutCoins %> WUT Coins</span><a class="button-link ghost" href="/cards">← WUT</a><a class="button-link ghost" href="/cards/decks">Decks</a><a class="button-link" href="/cards/store">WUT Shop</a></div>
     </section>
 
+    <section class="card"><div class="cards-section-head"><div><p class="eyebrow">Semi-permanent attachments</p><h2>Trinket Inventory</h2><p class="muted" id="trinketAttachHelp">Hover for details. Click an available trinket, then click a card to attach it.</p></div><span class="pill"><%= wut.trinkets.length %> owned</span></div><div class="wut-trinket-inventory"><% wut.trinkets.forEach(item => { const attachedCard = cards.find(card => Number(card.id) === Number(item.attached_card_id)); %><button type="button" class="wut-trinket-inventory-item tier-<%= item.rarity %> <%= item.attached_card_id ? 'is-attached' : '' %>" data-trinket-pick data-trinket-family="<%= item.family %>" data-trinket-id="<%= item.id %>" data-trinket-name="<%= trinketName(item.family) %>" data-skater-only="<%= ['specialist_tape','generalist'].includes(item.family) ? '1' : '0' %>" data-removal-wut="<%= wut.config.trinketRemovalWut[item.rarity] %>" data-removal-mushy="<%= wut.config.trinketRemovalMushy[item.rarity] %>" title="<%= trinketTooltip(item) %>" <%= item.attached_card_id ? 'disabled' : '' %>><span class="wut-trinket-icon"><%= trinketIcons[item.family] || '◆' %></span><small><%= trinketName(item.family) %></small><em><%= item.attached_card_id ? `On ${attachedCard?.player?.name || `card #${item.attached_card_id}`}` : 'Available' %></em></button><% }) %><% if (!wut.trinkets.length) { %><p class="muted">No trinkets yet. The WUT Shop rotates three offers daily.</p><% } %></div></section>
+
     <section class="card cards-collection full-collection-page">
-      <div class="cards-section-head"><div><p class="eyebrow">Collection browser</p><h2>Cards & Boosts</h2></div><span class="pill"><%= cards.length %> cards · <%= availableCollectionBoosts.length %> boosts</span></div>
+      <div class="cards-section-head"><div><p class="eyebrow">Collection browser</p><h2>Cards & Boosts</h2><p class="muted">Power = card rarity value + trinket rarity value. Common 1 · Uncommon 2 · Rare 3 · Epic 4 · Legendary 5 · Mythic card 6.</p></div><span class="pill"><%= cards.length %> cards · <%= availableCollectionBoosts.length %> boosts</span></div>
       <div class="collection-progress"><% collectionProgress.forEach(pool => { %><span><strong><%= pool.owned %>/<%= pool.total %></strong> <%= pool.label %></span><% }) %></div>
       <div class="collection-tabs"><button type="button" class="collection-tab is-active" data-collection-tab="players">Player Cards</button><button type="button" class="collection-tab" data-collection-tab="boosts">Boosts</button></div>
 
@@ -30,19 +36,18 @@
         <fieldset><legend>Season</legend><% ['S1','S2','S3','MYTHIC'].forEach(edition => { %><label><input type="checkbox" data-edition-filter value="<%= edition %>" checked> <%= edition === 'MYTHIC' ? 'Mythic' : edition %></label><% }) %></fieldset>
         <fieldset><legend>Position</legend><% [['F','Forwards'],['D','Defense'],['G','Goalies']].forEach(([position,label]) => { %><label><input type="checkbox" data-position-filter value="<%= position %>" checked> <%= label %></label><% }) %></fieldset>
         <label>Rarity<select data-rarity-filter><option value="">All rarities</option><% ['common','uncommon','rare','epic','legendary','mythic'].forEach(rarity => { %><option value="<%= rarity %>"><%= titleCase(rarity) %></option><% }) %></select></label>
-        <label>Status<select data-status-filter><option value="">All statuses</option><option value="available">Available</option><option value="cooldown">Cooldown</option><option value="committed">Committed</option></select></label>
       </div>
 
       <div class="full-collection-filters" data-filter-panel="boosts" hidden>
         <label class="collection-search">Search<input type="search" placeholder="Boost type" data-boost-search></label>
         <label>Rarity<select data-boost-rarity-filter><option value="">All rarities</option><% ['common','uncommon','rare','epic','legendary'].forEach(rarity => { %><option value="<%= rarity %>"><%= titleCase(rarity) %></option><% }) %></select></label>
-        <label>Type<select data-boost-type-filter><option value="">All boost types</option><% ['goal','assist','shot','hit','block','save','shutout'].forEach(type => { %><option value="<%= type %>"><%= titleCase(type) %></option><% }) %></select></label>
+        <label>Type<select data-boost-type-filter><option value="">All boost types</option><% ['goal','assist','shot','grit','save','shutout'].forEach(type => { %><option value="<%= type %>"><%= titleCase(type) %></option><% }) %></select></label>
       </div>
 
       <p class="muted collection-result-count" data-result-count></p>
       <div class="collection-grid" data-collection-panel="players">
-        <% cards.forEach(card => { const status = card.arenaLocked ? 'committed' : Number(card.cooldown_remaining || 0) > 0 ? 'cooldown' : 'available'; %>
-          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %> <%= status !== 'available' ? 'is-retired' : '' %>" tabindex="0" data-position="<%= card.player.position %>" data-edition="<%= card.player.cardType === 'mythic' ? 'MYTHIC' : card.player.edition %>" data-rarity="<%= card.player.tier %>" data-status="<%= status %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''}`.toLowerCase() %>">
+        <% cards.forEach(card => { const status = 'available'; %>
+          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0" data-card-id="<%= card.id %>" data-card-name="<%= card.player.name %>" data-has-trinket="<%= card.trinket ? '1' : '0' %>" data-trinket-name="<%= card.trinket ? trinketName(card.trinket.family) : '' %>" data-removal-wut="<%= card.trinket ? wut.config.trinketRemovalWut[card.trinket.rarity] : '' %>" data-removal-mushy="<%= card.trinket ? wut.config.trinketRemovalMushy[card.trinket.rarity] : '' %>" data-position="<%= card.player.position %>" data-edition="<%= card.player.cardType === 'mythic' ? 'MYTHIC' : card.player.edition %>" data-rarity="<%= card.player.tier %>" data-status="available" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''}`.toLowerCase() %>">
             <%- include('partials_wut_card', { card, statusText: statusForCard(card) }) %>
           </article>
         <% }) %>
@@ -55,17 +60,67 @@
         <% }) %>
       </div>
     </section>
+    <dialog id="removeTrinketDialog" class="wut-trinket-dialog"><form method="post" action="/cards/trinkets/remove"><input type="hidden" name="card_id" id="removeTrinketCardId"><h2>Remove trinket?</h2><p id="removeTrinketMessage"></p><div class="admin-action-row"><button name="currency" value="wut" id="removeWithWut">Pay with WUT Coins</button><button name="currency" value="mushy" id="removeWithMushy">Pay with Mushybux</button><button type="button" class="ghost" id="cancelTrinketRemoval">Cancel</button></div></form></dialog>
   </main>
   <script>
     const playerCards = [...document.querySelectorAll('[data-collection-panel="players"] .arena-collection-card')];
     const boostCards = [...document.querySelectorAll('[data-collection-panel="boosts"] .collection-boost')];
     const resultCount = document.querySelector('[data-result-count]');
+    const trinketButtons = [...document.querySelectorAll('[data-trinket-pick]')];
+    const trinketHelp = document.getElementById('trinketAttachHelp');
+    const removeDialog = document.getElementById('removeTrinketDialog');
+    let selectedTrinket = null;
+    const setSelectedTrinket = button => {
+      selectedTrinket = selectedTrinket === button ? null : button;
+      trinketButtons.forEach(item => item.classList.toggle('is-selected', item === selectedTrinket));
+      playerCards.forEach(card => card.classList.toggle('is-attach-target', Boolean(selectedTrinket) && card.dataset.hasTrinket === '0' && !(selectedTrinket.dataset.skaterOnly === '1' && card.dataset.position === 'G')));
+      trinketHelp.textContent = selectedTrinket
+        ? `${selectedTrinket.dataset.trinketName} selected. Click a glowing card to attach it, or click the trinket again to cancel.`
+        : 'Hover for details. Click an available trinket, then click a card to attach it.';
+      if (selectedTrinket) {
+        const playersTab = document.querySelector('[data-collection-tab="players"]');
+        if (!playersTab.classList.contains('is-active')) playersTab.click();
+        document.querySelector('[data-collection-panel="players"]').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+    trinketButtons.filter(button => !button.disabled).forEach(button => button.addEventListener('click', () => setSelectedTrinket(button)));
+    const attachSelectedTrinket = card => {
+      if (!selectedTrinket || card.dataset.hasTrinket === '1') return;
+      if (selectedTrinket.dataset.skaterOnly === '1' && card.dataset.position === 'G') return window.alert(`${selectedTrinket.dataset.trinketName} can only be attached to skaters.`);
+      const warning = `${selectedTrinket.dataset.trinketName} will be attached to ${card.dataset.cardName}.\n\nThis is a semi-permanent choice. Removing it later costs ${selectedTrinket.dataset.removalWut} WUT Coins or ${selectedTrinket.dataset.removalMushy} Mushybux.\n\nAttach this trinket?`;
+      if (!window.confirm(warning)) return;
+      const form = document.createElement('form');
+      form.method = 'post'; form.action = '/cards/trinkets/attach';
+      form.innerHTML = `<input type="hidden" name="card_id" value="${card.dataset.cardId}"><input type="hidden" name="trinket_id" value="${selectedTrinket.dataset.trinketId}">`;
+      document.body.appendChild(form); form.submit();
+    };
+    const openRemoveDialog = card => {
+      document.getElementById('removeTrinketCardId').value = card.dataset.cardId;
+      document.getElementById('removeTrinketMessage').textContent = `Remove ${card.dataset.trinketName} from ${card.dataset.cardName}? Choose how to pay the removal cost.`;
+      document.getElementById('removeWithWut').textContent = `${card.dataset.removalWut} WUT Coins`;
+      document.getElementById('removeWithMushy').textContent = `${card.dataset.removalMushy} Mushybux`;
+      removeDialog.showModal();
+    };
+    document.getElementById('cancelTrinketRemoval').addEventListener('click', () => removeDialog.close());
+    playerCards.forEach(card => {
+      const badge = card.querySelector('.wut-trinket-badge');
+      if (badge) {
+        badge.setAttribute('role', 'button'); badge.setAttribute('tabindex', '0'); badge.setAttribute('aria-label', `Remove ${card.dataset.trinketName} from ${card.dataset.cardName}`);
+        badge.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); event.stopPropagation(); openRemoveDialog(card); } });
+      }
+      card.addEventListener('click', event => {
+        if (event.target.closest('.wut-trinket-badge') && card.dataset.hasTrinket === '1') { event.stopPropagation(); return openRemoveDialog(card); }
+        if (selectedTrinket && card.dataset.hasTrinket === '0') return attachSelectedTrinket(card);
+        card.classList.toggle('is-flipped');
+      });
+      card.addEventListener('keydown', event => { if (event.key === 'Enter' && event.target === card) { selectedTrinket && card.dataset.hasTrinket === '0' ? attachSelectedTrinket(card) : card.classList.toggle('is-flipped'); } });
+    });
     const checkedValues = selector => new Set([...document.querySelectorAll(`${selector}:checked`)].map(input => input.value));
     const filterPlayers = () => {
       const editions = checkedValues('[data-edition-filter]');
       const positions = checkedValues('[data-position-filter]');
       const rarity = document.querySelector('[data-rarity-filter]').value;
-      const status = document.querySelector('[data-status-filter]').value;
+      const status = document.querySelector('[data-status-filter]')?.value || '';
       const search = document.querySelector('[data-card-search]').value.trim().toLowerCase();
       let visible = 0;
       playerCards.forEach(card => {

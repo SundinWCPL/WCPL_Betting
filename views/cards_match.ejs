@@ -14,8 +14,17 @@
     const rarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
     const titleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
     const placementFor = (userId, slot) => match.placements.find(row => Number(row.user_id) === Number(userId) && row.slot === slot);
+    const displayCardFor = row => {
+      if (!row?.card || row.card.matchTeamLogo) return row?.card || null;
+      const printedKey = String(row.card_snapshot?.chemistry_key || '');
+      const adoptedKey = String(row.journeyman_key_effective || row.journeyman_key || '');
+      const target = adoptedKey && adoptedKey !== printedKey ? match.placements.find(item => item.card_snapshot?.chemistry_key === adoptedKey) : null;
+      return target?.card?.player?.teamLogo
+        ? { ...row.card, matchTeamLogo: target.card.player.teamLogo, matchTeamBgColor: target.card.player.teamBgColor, matchTeamName: target.card_snapshot?.team_name || target.card.player.teamName }
+        : row.card;
+    };
     const playerName = id => match.players.find(player => Number(player.id) === Number(id))?.displayName || 'Player';
-    const statusForCard = card => card.arenaLocked ? 'Committed to an active match' : Number(card.cooldown_remaining || 0) > 0 ? `Cooldown: ${card.cooldown_remaining} WUT matches remaining` : 'Available for WUT';
+    const statusForCard = card => `Available in this match snapshot · Power ${card.power || 1}`;
     const lineupStatus = match.status === 'ready' ? 'Lineups locked' : match.status === 'completed' ? 'Match complete' : match.is_your_turn ? `Your turn · commit ${match.cards_required_this_turn}` : `${playerName(match.current_player_id)} is choosing`;
   %>
   <main class="container cards-page arena-match-page">
@@ -52,10 +61,10 @@
       </div>
       <div class="cards-lineup arena-card-lineup" data-user-lineup>
         <% slots.forEach(slot => { const row = placementFor(currentUser.id, slot); const opposingRow = placementFor(match.opponent.id, slot); const requiredPosition = slot === 'G' ? 'G' : slot[0]; %>
-          <article class="lineup-slot <%= row ? 'is-locked' : '' %>" data-match-slot="<%= slot %>" data-position="<%= requiredPosition %>" data-committed="<%= row ? '1' : '0' %>" data-opponent-rarity="<%= opposingRow?.card?.player?.tier || '' %>" data-opponent-rarity-rank="<%= rarityRank[opposingRow?.card?.player?.tier] || 0 %>">
+          <article class="lineup-slot <%= row ? 'is-locked' : '' %>" data-match-slot="<%= slot %>" data-position="<%= requiredPosition %>" data-committed="<%= row ? '1' : '0' %>" data-chemistry-key="<%= row?.card_snapshot?.chemistry_key || (row?.card ? `${row.card.player.cardType === 'mythic' ? row.card.player.sourceSeason : row.card.player.edition}|${row.card.player.teamId || ''}` : '') %>" data-team-name="<%= row?.card_snapshot?.team_name || row?.card?.player?.teamName || row?.card?.player?.teamId || '' %>" data-team-logo="<%= row?.card?.player?.teamLogo || '' %>" data-team-bg="<%= row?.card?.player?.teamBgColor || '' %>" data-opponent-power="<%= opposingRow?.power || 0 %>">
             <span class="arena-lineup-slot-name"><%= slot %></span>
             <% if (row?.card) { %>
-              <div class="arena-wut-card tier-<%= row.card.player.tier %>" data-flip-card><%- include('partials_wut_card', { card: row.card, statusText: row.automatic ? 'Auto-picked and committed' : 'Committed to this match' }) %></div>
+              <div class="arena-wut-card tier-<%= row.card.player.tier %>" data-flip-card><%- include('partials_wut_card', { card: displayCardFor(row), statusText: row.automatic ? 'Auto-picked and committed' : 'Committed to this match' }) %></div>
             <% } else { %>
               <button type="button" class="empty-card-slot <%= match.is_your_turn ? 'assignment-zone' : '' %>" data-empty-player <%= match.is_your_turn ? '' : 'disabled' %>>
                 <strong><%= requiredPosition === 'F' ? 'Forward' : requiredPosition === 'D' ? 'Defense' : 'Goalie' %></strong><span><%= match.is_your_turn ? 'Choose this slot' : 'Not committed' %></span>
@@ -78,7 +87,7 @@
         <form method="post" action="/cards/arena/matches/<%= match.id %>/turn" class="arena-visual-lock-form" id="arenaTurnForm">
           <input type="hidden" name="count" value="<%= match.cards_required_this_turn %>">
           <div data-turn-inputs></div>
-          <div><strong data-turn-progress>0/<%= match.cards_required_this_turn %> cards staged</strong><p class="muted">You can preview and change staged choices until you lock the whole turn. A responding card may be at most one rarity higher than the opponent's card in the same slot; any lower rarity is allowed.</p></div>
+          <div><strong data-turn-progress>0/<%= match.cards_required_this_turn %> cards staged</strong><p class="muted">Power rule: a responding card may be at most opposing Power +<%= wut.config.slotPowerAllowance %>. Boosts do not change Power.</p><strong>Boost Load: <span data-boost-load><%= match.boost_load_used %></span>/<%= match.boost_load_cap %></strong></div>
           <button type="submit" disabled data-lock-turn>Lock In Turn</button>
         </form>
       <% } %>
@@ -88,9 +97,9 @@
       <div class="cards-section-head"><div><p class="eyebrow">Opponent</p><h2><%= match.opponent.displayName %>’s Lineup</h2></div><span class="pill">Committed cards are public</span></div>
       <div class="cards-lineup arena-card-lineup">
         <% slots.forEach(slot => { const row = placementFor(match.opponent.id, slot); %>
-          <article class="lineup-slot <%= row ? 'is-locked' : '' %>">
+          <article class="lineup-slot <%= row ? 'is-locked' : '' %>" data-opponent-slot="<%= slot %>" data-chemistry-key="<%= row?.card_snapshot?.chemistry_key || (row?.card ? `${row.card.player.cardType === 'mythic' ? row.card.player.sourceSeason : row.card.player.edition}|${row.card.player.teamId || ''}` : '') %>" data-team-name="<%= row?.card_snapshot?.team_name || row?.card?.player?.teamName || row?.card?.player?.teamId || '' %>" data-team-logo="<%= row?.card?.player?.teamLogo || '' %>" data-team-bg="<%= row?.card?.player?.teamBgColor || '' %>" data-trinket-family="<%= row?.card_snapshot?.trinket?.family || '' %>" data-trinket-effect="<%= row?.card_snapshot?.trinket?.family === 'zebra_stripes' ? Number(row.card_snapshot.trinket.effect || 0) : 0 %>">
             <span class="arena-lineup-slot-name"><%= slot %></span>
-            <% if (row?.card) { %><div class="arena-wut-card tier-<%= row.card.player.tier %>" data-flip-card><%- include('partials_wut_card', { card: row.card, statusText: row.automatic ? 'Auto-picked and committed' : 'Committed by opponent' }) %></div>
+            <% if (row?.card) { %><div class="arena-wut-card tier-<%= row.card.player.tier %>" data-flip-card><%- include('partials_wut_card', { card: displayCardFor(row), statusText: row.automatic ? 'Auto-picked and committed' : 'Committed by opponent' }) %></div>
             <% } else { %><div class="empty-card-slot arena-empty-opponent-slot" aria-label="Empty <%= slot %> player slot"></div><% } %>
             <% if (row?.boost) { %><div class="boost-slot assigned-boost tier-<%= row.boost.rarity %>"><%- include('partials_boost_content', { boost: row.boost }) %></div>
             <% } else { %><div class="boost-slot empty-boost-slot arena-empty-opponent-boost" aria-label="Empty <%= slot %> boost slot"></div><% } %>
@@ -103,15 +112,15 @@
       <div class="cards-section-head"><div><p class="eyebrow">Available choices</p><h2 data-context-collection-title>Your Collection</h2></div><span class="pill" data-context-collection-count></span></div>
       <p class="muted" data-context-collection-help></p>
       <div class="collection-grid" data-collection-panel="players">
-        <% cards.forEach(card => { const unavailable = card.arenaLocked || Number(card.cooldown_remaining || 0) > 0; %>
-          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %> <%= unavailable ? 'is-retired' : '' %>" tabindex="0" data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-card-name="<%= card.player.name %>" data-rarity="<%= card.player.tier %>" data-rarity-rank="<%= rarityRank[card.player.tier] || 0 %>" data-unavailable="<%= unavailable ? '1' : '0' %>">
+        <% cards.forEach(card => { const unavailable = false; %>
+          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0" data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-card-name="<%= card.player.name %>" data-power="<%= card.power || 1 %>" data-chemistry-key="<%= `${card.player.cardType === 'mythic' ? card.player.sourceSeason : card.player.edition}|${card.player.teamId || ''}` %>" data-team-name="<%= card.player.teamName || card.player.teamId || '' %>" data-team-logo="<%= card.player.teamLogo || '' %>" data-team-bg="<%= card.player.teamBgColor || '' %>" data-trinket-family="<%= card.trinket?.family || '' %>" data-trinket-icon="<%= WUT_TRINKET_ICONS[card.trinket?.family] || '' %>" data-trinket-rarity="<%= card.trinket?.rarity || '' %>" data-trinket-mode="<%= card.trinket?.effect?.mode || '' %>" data-load-bonus="<%= card.trinket?.effect?.loadBonus || 0 %>" data-unavailable="0">
             <%- include('partials_wut_card', { card, statusText: statusForCard(card) }) %>
           </article>
         <% }) %>
       </div>
       <div class="collection-grid arena-boost-collection" data-collection-panel="boosts" hidden>
         <% boosts.forEach(boost => { const goalieBoost = ['save','shutout'].includes(boost.boost_type); %>
-          <button type="button" class="collection-boost tier-<%= boost.rarity %> <%= boost.arenaLocked ? 'is-unavailable' : '' %>" data-boost-id="<%= boost.id %>" data-goalie="<%= goalieBoost ? '1' : '0' %>" data-unavailable="<%= boost.arenaLocked ? '1' : '0' %>">
+          <button type="button" class="collection-boost tier-<%= boost.rarity %> <%= boost.arenaLocked ? 'is-unavailable' : '' %>" data-boost-id="<%= boost.id %>" data-load="<%= wut.config.rarityCosts[boost.rarity] || 1 %>" data-goalie="<%= goalieBoost ? '1' : '0' %>" data-unavailable="<%= boost.arenaLocked ? '1' : '0' %>">
             <%- include('partials_boost_content', { boost }) %>
           </button>
         <% }) %>
@@ -131,6 +140,7 @@
     const collectionHelp = matchCollection?.querySelector('[data-context-collection-help]');
     const collectionCount = matchCollection?.querySelector('[data-context-collection-count]');
     const rarityNames = ['', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
+    const committedCaptainPatch = <%= match.placements.some(row => Number(row.user_id) === Number(currentUser.id) && row.card_snapshot?.trinket?.family === 'team_crest') ? 'true' : 'false' %>;
 
     const showStatus = (message, error = false) => {
       if (!statusEl) return;
@@ -143,9 +153,14 @@
       if (!turnForm) return;
       const staged = stagedSlots();
       const inputs = turnForm.querySelector('[data-turn-inputs]');
-      inputs.innerHTML = staged.map((slot, index) => `<input type="hidden" name="slot_${index}" value="${slot.dataset.matchSlot}"><input type="hidden" name="card_id_${index}" value="${slot.dataset.cardId}"><input type="hidden" name="boost_id_${index}" value="${slot.dataset.boostId || ''}">`).join('');
+      inputs.innerHTML = staged.map((slot, index) => `<input type="hidden" name="slot_${index}" value="${slot.dataset.matchSlot}"><input type="hidden" name="card_id_${index}" value="${slot.dataset.cardId}"><input type="hidden" name="boost_id_${index}" value="${slot.dataset.boostId || ''}"><input type="hidden" name="journeyman_key_${index}" value="${slot.dataset.journeymanKey || ''}">`).join('');
       turnForm.querySelector('[data-turn-progress]').textContent = `${staged.length}/${requiredCount} cards staged`;
-      turnForm.querySelector('[data-lock-turn]').disabled = staged.length !== requiredCount;
+      const load = <%= match.boost_load_used || 0 %> + staged.reduce((sum, slot) => sum + Number(slot.dataset.boostLoad || 0), 0);
+      const loadEl = turnForm.querySelector('[data-boost-load]'); if (loadEl) loadEl.textContent = load;
+      const cap = Math.max(<%= match.boost_load_cap || 5 %>, <%= wut.config.boostLoadCap || 5 %> + Math.max(0, ...staged.map(slot => Number(slot.dataset.loadBonus || 0))));
+      const capLabel = loadEl?.parentElement; if (capLabel) capLabel.lastChild.textContent = `/${cap}`;
+      const journeyReady = staged.every(slot => !['choose_own','choose_own_or_opposite','choose_any'].includes(slot.dataset.trinketMode) || Boolean(slot.dataset.journeymanKey) || slot.dataset.journeymanNoChoice === '1');
+      turnForm.querySelector('[data-lock-turn]').disabled = staged.length !== requiredCount || !journeyReady;
       document.querySelectorAll('[data-empty-player]').forEach(button => { button.disabled = staged.length >= requiredCount && !button.closest('[data-match-slot]').dataset.cardId; });
     };
     const clearSelections = () => {
@@ -160,23 +175,24 @@
       matchCollection.querySelectorAll('[data-collection-panel]').forEach(panel => { panel.hidden = panel.dataset.collectionPanel !== panelName; });
     };
     const cardFitsSlotRarity = (slot, card) => {
-      const opponentRank = Number(slot?.dataset.opponentRarityRank || 0);
-      const cardRank = Number(card?.dataset.rarityRank || 0);
-      return !opponentRank || (cardRank > 0 && cardRank <= opponentRank + 1);
+      const opponentPower = Number(slot?.dataset.opponentPower || 0);
+      return !opponentPower || Number(card?.dataset.power || 1) <= opponentPower + <%= wut.config.slotPowerAllowance %>;
     };
     const showCardsForSlot = slot => {
       showCollectionPanel('players');
       let available = 0;
       matchCollection.querySelectorAll('[data-card-id]').forEach(card => {
-        const show = card.dataset.unavailable === '0' && card.dataset.position === slot.dataset.position && cardFitsSlotRarity(slot, card) && !card.classList.contains('is-staged');
+        const stagedPatch = stagedSlots().some(item => item.dataset.trinketFamily === 'team_crest');
+        const patchAvailable = card.dataset.trinketFamily !== 'team_crest' || (!committedCaptainPatch && !stagedPatch);
+        const show = card.dataset.unavailable === '0' && card.dataset.position === slot.dataset.position && cardFitsSlotRarity(slot, card) && !card.classList.contains('is-staged') && patchAvailable;
         card.hidden = !show;
         if (show) available += 1;
       });
       const positionName = slot.dataset.position === 'F' ? 'Forward' : slot.dataset.position === 'D' ? 'Defense' : 'Goalie';
       collectionTitle.textContent = `${positionName} Cards for ${slot.dataset.matchSlot}`;
-      const opponentRank = Number(slot.dataset.opponentRarityRank || 0);
-      collectionHelp.textContent = opponentRank
-        ? `The opponent committed a ${slot.dataset.opponentRarity} card here. You may use any lower rarity, up to ${rarityNames[Math.min(6, opponentRank + 1)]}.`
+      const opponentPower = Number(slot.dataset.opponentPower || 0);
+      collectionHelp.textContent = opponentPower
+        ? `The opponent committed Power ${slot.dataset.opponentPower} here. Your limit is Power ${Number(slot.dataset.opponentPower) + <%= wut.config.slotPowerAllowance %>}.`
         : `Showing every available ${positionName.toLowerCase()} card eligible for this slot.`;
       collectionCount.textContent = `${available} available`;
       matchCollection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -195,17 +211,86 @@
       collectionCount.textContent = `${available} available`;
       matchCollection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
+    const swapJourneymanLogo = (slot, choice = null) => {
+      const logo = slot.querySelector('[data-staged-card] .wut-front-logo');
+      if (!logo) return;
+      const nextLogo = choice?.logo || slot.dataset.printedTeamLogo || logo.src;
+      const nextBg = choice?.background || slot.dataset.printedTeamBg || '';
+      const token = String(Number(logo.dataset.swapToken || 0) + 1);
+      logo.dataset.swapToken = token;
+      logo.classList.add('is-team-logo-swapping');
+      window.setTimeout(() => {
+        if (logo.dataset.swapToken !== token) return;
+        logo.src = nextLogo;
+        if (nextBg) logo.style.setProperty('--team-bg', nextBg);
+        logo.classList.remove('is-team-logo-swapping');
+      }, 180);
+    };
+    const refreshJourneymanChoices = () => {
+      stagedSlots().forEach(slot => {
+        const preview = slot.querySelector('[data-staged-card]');
+        preview.querySelector('.journeyman-choice')?.remove();
+        const mode = slot.dataset.trinketMode || '';
+        if (!['choose_own', 'choose_own_or_opposite', 'choose_any'].includes(mode)) return;
+        const own = [...document.querySelectorAll('[data-user-lineup] [data-match-slot]')]
+          .filter(item => item !== slot && item.dataset.chemistryKey)
+          .map(item => ({ key: item.dataset.chemistryKey, label: `${item.dataset.teamName || item.dataset.chemistryKey} · ${item.dataset.chemistryKey.split('|')[0]}`, logo: item.dataset.teamLogo || '', background: item.dataset.teamBg || '' }));
+        const opponent = [...document.querySelectorAll('[data-opponent-slot]')]
+          .filter(item => item.dataset.chemistryKey && (mode === 'choose_any' || item.dataset.opponentSlot === slot.dataset.matchSlot))
+          .map(item => ({ key: item.dataset.chemistryKey, label: `${item.dataset.teamName || item.dataset.chemistryKey} · ${item.dataset.chemistryKey.split('|')[0]}`, logo: item.dataset.teamLogo || '', background: item.dataset.teamBg || '' }));
+        const sourceSeason = String(slot.dataset.chemistryKey || '').split('|')[0];
+        const pool = mode === 'choose_own' ? own : [...own, ...opponent];
+        const choices = [...new Map(pool.filter(item => item.key !== slot.dataset.chemistryKey && (mode === 'choose_any' || item.key.split('|')[0] === sourceSeason)).map(item => [item.key, item])).values()];
+        slot.dataset.journeymanNoChoice = choices.length ? '0' : '1';
+        const label = document.createElement('label'); label.className = 'journeyman-choice'; label.textContent = 'Journeyman team ';
+        const select = document.createElement('select'); select.innerHTML = choices.length ? `<option value="">Choose team</option>${choices.map(item => `<option value="${item.key}">${item.label}</option>`).join('')}` : `<option value="">No eligible ${mode === 'choose_any' ? '' : 'same-season '}team in play yet</option>`;
+        const selectedChoice = choices.find(item => item.key === slot.dataset.journeymanKey);
+        if (selectedChoice) select.value = slot.dataset.journeymanKey;
+        else if (slot.dataset.journeymanKey) { delete slot.dataset.journeymanKey; swapJourneymanLogo(slot); }
+        select.addEventListener('change', () => {
+          slot.dataset.journeymanKey = select.value;
+          swapJourneymanLogo(slot, choices.find(item => item.key === select.value));
+          refreshTurn();
+        });
+        label.appendChild(select); preview.appendChild(label);
+      });
+    };
     const stageCard = (slot, card) => {
       if (!slot || !card || card.dataset.unavailable === '1') return;
       if (slot.dataset.cardId) return showStatus('That lineup slot already has a staged card.', true);
       if (stagedSlots().length >= requiredCount) return showStatus(`This turn only allows ${requiredCount} card${requiredCount === 1 ? '' : 's'}.`, true);
       if (slot.dataset.position !== card.dataset.position) return showStatus(`That card is not eligible for ${slot.dataset.matchSlot}.`, true);
-      if (!cardFitsSlotRarity(slot, card)) return showStatus(`${slot.dataset.matchSlot} can be at most one rarity higher than the opponent's committed ${slot.dataset.opponentRarity} card. Any lower rarity is allowed.`, true);
+      if (card.dataset.trinketFamily === 'team_crest' && (committedCaptainPatch || stagedSlots().some(item => item.dataset.trinketFamily === 'team_crest'))) return showStatus("Only one Captain's Patch can be active in a lineup.", true);
+      if (!cardFitsSlotRarity(slot, card)) return showStatus(`${slot.dataset.matchSlot} exceeds the opposing Power allowance.`, true);
       if (stagedSlots().some(item => item.dataset.cardId === card.dataset.cardId)) return showStatus('That card is already staged.', true);
       slot.dataset.cardId = card.dataset.cardId;
+      slot.dataset.trinketFamily = card.dataset.trinketFamily || '';
+      slot.dataset.trinketIcon = card.dataset.trinketIcon || '';
+      if (slot.dataset.trinketFamily) {
+        slot.classList.remove('is-trinket-playing');
+        void slot.offsetWidth;
+        slot.classList.add('is-trinket-playing');
+        window.setTimeout(() => slot.classList.remove('is-trinket-playing'), 850);
+      }
+      const opposingSlot = document.querySelector(`[data-opponent-slot="${slot.dataset.matchSlot}"]`);
+      const zebraReduction = opposingSlot?.dataset.trinketFamily === 'zebra_stripes' ? Number(opposingSlot.dataset.trinketEffect || 0) : 0;
+      const journeymanRarities = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+      const journeymanModes = ['random_all', 'random_own', 'choose_own', 'choose_own_or_opposite', 'choose_any'];
+      const effectiveJourneymanIndex = journeymanRarities.indexOf(card.dataset.trinketRarity) - zebraReduction;
+      slot.dataset.trinketMode = card.dataset.trinketFamily === 'journeyman' && zebraReduction
+        ? (effectiveJourneymanIndex >= 0 ? journeymanModes[effectiveJourneymanIndex] : '')
+        : card.dataset.trinketMode || '';
+      slot.dataset.chemistryKey = card.dataset.chemistryKey || '';
+      slot.dataset.teamName = card.dataset.teamName || '';
+      slot.dataset.teamLogo = card.dataset.teamLogo || '';
+      slot.dataset.teamBg = card.dataset.teamBg || '';
+      slot.dataset.printedTeamLogo = card.dataset.teamLogo || '';
+      slot.dataset.printedTeamBg = card.dataset.teamBg || '';
+      slot.dataset.loadBonus = card.dataset.loadBonus || '0';
       const preview = slot.querySelector('[data-staged-card]');
       preview.innerHTML = `<div class="arena-wut-card tier-${[...card.classList].find(name => name.startsWith('tier-'))?.slice(5) || 'common'}">${card.querySelector('.arena-wut-card-inner').outerHTML}</div>`;
       preview.hidden = false;
+      refreshJourneymanChoices();
       slot.querySelector('[data-empty-player]').hidden = true;
       slot.querySelector('[data-remove-card]').hidden = false;
       const boostButton = slot.querySelector('[data-empty-boost]');
@@ -222,8 +307,13 @@
       const wantsGoalie = slot.dataset.position === 'G';
       if ((boost.dataset.goalie === '1') !== wantsGoalie) return showStatus(`That boost cannot be used in ${slot.dataset.matchSlot}.`, true);
       if (stagedSlots().some(item => item !== slot && item.dataset.boostId === boost.dataset.boostId)) return showStatus('That boost is already staged.', true);
+      const currentLoad = <%= match.boost_load_used || 0 %>;
+      const stagedLoad = stagedSlots().filter(item => item !== slot && item.dataset.boostLoad).reduce((sum, item) => sum + Number(item.dataset.boostLoad), 0);
+      const cap = Math.max(<%= match.boost_load_cap || 5 %>, <%= wut.config.boostLoadCap || 5 %> + Math.max(0, ...stagedSlots().map(item => Number(item.dataset.loadBonus || 0))));
+      if (currentLoad + stagedLoad + Number(boost.dataset.load || 1) > cap) return showStatus('That boost exceeds your remaining Boost Load.', true);
       if (slot.dataset.boostId) document.querySelector(`.arena-boost-collection [data-boost-id="${slot.dataset.boostId}"]`)?.classList.remove('is-staged');
       slot.dataset.boostId = boost.dataset.boostId;
+      slot.dataset.boostLoad = boost.dataset.load;
       const button = slot.querySelector('[data-empty-boost]');
       button.className = `boost-slot assigned-boost ${[...boost.classList].find(name => name.startsWith('tier-')) || ''}`;
       button.innerHTML = boost.innerHTML;
@@ -262,23 +352,23 @@
       const slot = button.closest('[data-match-slot]');
       document.querySelector(`.arena-collection-card[data-card-id="${slot.dataset.cardId}"]`)?.classList.remove('is-staged');
       if (slot.dataset.boostId) document.querySelector(`.arena-boost-collection [data-boost-id="${slot.dataset.boostId}"]`)?.classList.remove('is-staged');
-      delete slot.dataset.cardId; delete slot.dataset.boostId;
+      delete slot.dataset.cardId; delete slot.dataset.boostId; delete slot.dataset.boostLoad; delete slot.dataset.trinketFamily; delete slot.dataset.trinketIcon; delete slot.dataset.trinketMode; delete slot.dataset.chemistryKey; delete slot.dataset.teamName; delete slot.dataset.teamLogo; delete slot.dataset.teamBg; delete slot.dataset.printedTeamLogo; delete slot.dataset.printedTeamBg; delete slot.dataset.loadBonus; delete slot.dataset.journeymanKey; delete slot.dataset.journeymanNoChoice;
       slot.querySelector('[data-staged-card]').hidden = true; slot.querySelector('[data-staged-card]').innerHTML = '';
       slot.querySelector('[data-empty-player]').hidden = false; button.hidden = true;
       const boostButton = slot.querySelector('[data-empty-boost]');
       boostButton.className = 'boost-slot empty-boost-slot'; boostButton.innerHTML = '<strong>Optional boost</strong><small>Stage a card first</small>'; boostButton.disabled = true;
-      slot.querySelector('[data-remove-boost]').hidden = true; clearSelections(); matchCollection.hidden = true; refreshTurn();
+      slot.querySelector('[data-remove-boost]').hidden = true; clearSelections(); matchCollection.hidden = true; refreshJourneymanChoices(); refreshTurn();
     }));
     document.querySelectorAll('[data-remove-boost]').forEach(button => button.addEventListener('click', () => {
       const slot = button.closest('[data-match-slot]');
-      document.querySelector(`.arena-boost-collection [data-boost-id="${slot.dataset.boostId}"]`)?.classList.remove('is-staged'); delete slot.dataset.boostId;
+      document.querySelector(`.arena-boost-collection [data-boost-id="${slot.dataset.boostId}"]`)?.classList.remove('is-staged'); delete slot.dataset.boostId; delete slot.dataset.boostLoad;
       const boostButton = slot.querySelector('[data-empty-boost]'); boostButton.className = 'boost-slot empty-boost-slot'; boostButton.innerHTML = '<strong>Optional boost</strong><small>Click, then choose a boost</small>'; button.hidden = true; refreshTurn();
     }));
     document.querySelectorAll('[data-flip-card]').forEach(card => card.addEventListener('click', () => card.classList.toggle('is-flipped')));
     turnForm?.addEventListener('submit', event => { if (!confirm('Lock this turn? These cards and boosts cannot be changed afterward.')) event.preventDefault(); });
     refreshTurn();
     document.querySelectorAll('[data-deadline]').forEach(el => {
-      const update = () => { const remaining = new Date(el.dataset.deadline).getTime() - Date.now(); if (remaining <= 0) return el.textContent = 'Auto-pick pending'; const hours = Math.floor(remaining / 3600000); const minutes = Math.floor((remaining % 3600000) / 60000); el.textContent = `${hours}h ${minutes}m remaining`; };
+      const update = () => { if (<%= match.timer_paused ? 'true' : 'false' %>) return el.textContent = 'Timer paused overnight · play is still allowed'; const remaining = new Date(el.dataset.deadline).getTime() - Date.now(); if (remaining <= 0) return el.textContent = 'Timeout processing'; const hours = Math.floor(remaining / 3600000); const minutes = Math.floor((remaining % 3600000) / 60000); el.textContent = `${hours}h ${minutes}m remaining`; };
       update(); setInterval(update, 60000);
     });
     if (!turnForm && <%= match.status === 'active' ? 'true' : 'false' %>) setTimeout(() => window.location.reload(), 30000);

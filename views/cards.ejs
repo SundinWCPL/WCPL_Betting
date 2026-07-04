@@ -15,7 +15,7 @@
   <main class="container cards-page arena-page">
     <section class="card page-title cards-title">
       <div><p class="eyebrow">Asynchronous head-to-head</p><h1>WUT</h1><p>Build a five-card lineup, assign boosts, and go head-to-head.</p></div>
-      <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(balance) %> Mushybux</span><% if (wutMembership.starterOpened) { %><span class="pill">ELO <%= arena.rating %></span><span class="pill">Record <%= arena.record.wins %>-<%= arena.record.losses %><%= arena.record.draws ? `-${arena.record.draws}` : '' %></span><% } %><% if (cardsOpen && wutMembership.starterOpened) { %><a class="button-link ghost" href="/cards/collection">Collection</a><a class="button-link" href="/cards/store">Card Shop</a><% } %></div>
+      <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(wutCoins) %> WUT Coins</span><% if (wutMembership.starterOpened) { %><span class="pill">ELO <%= arena.rating %></span><span class="pill">Record <%= arena.record.wins %>-<%= arena.record.losses %><%= arena.record.draws ? `-${arena.record.draws}` : '' %></span><% } %><a class="button-link ghost" href="/cards/guide">How to Play</a><% if (cardsOpen && wutMembership.starterOpened) { %><a class="button-link ghost" href="/cards/collection">Collection</a><a class="button-link" href="/cards/store">WUT Shop</a><% } %></div>
     </section>
 
     <% if (!cardsOpen) { %>
@@ -25,12 +25,12 @@
       </section>
     <% } else if (!wutMembership.joined) { %>
       <section class="card arena-queue-card wut-onboarding-card">
-        <div><p class="eyebrow">First-time entry</p><h2>Join WUT</h2><p class="muted">Unlock WUT and receive a starter pack containing 2 common forwards, 2 common defense, and 1 common goalie.</p></div>
-        <form method="post" action="/cards/wut/join"><button <%= balance < wutMembership.joinFee ? 'disabled' : '' %>>Join WUT (<%= wutMembership.joinFee %> bux)</button></form>
+        <div><p class="eyebrow">First-time entry</p><h2>Join WUT</h2><p class="muted">Unlock WUT and receive five unique Common players (2F / 2D / 1G), two random Common trinkets, and one free Standard pack.</p></div>
+        <form method="post" action="/cards/wut/join"><button>Join WUT Free</button></form>
       </section>
     <% } else if (!wutMembership.starterOpened) { %>
       <section class="card arena-queue-card wut-onboarding-card">
-        <div><p class="eyebrow">Membership active</p><h2>Your five-card starter pack is ready</h2><p class="muted">Inside: 2 random common forwards, 2 random common defense, and 1 random common goalie.</p></div>
+        <div><p class="eyebrow">Membership active</p><h2>Your starter bundle is ready</h2><p class="muted">Inside: five unique Common players (2F / 2D / 1G) and two random Common trinkets. Your free Standard pack will be waiting in the WUT Shop.</p></div>
         <form method="post" action="/cards/wut/starter-pack"><button>Open Starter Pack</button></form>
       </section>
     <% } else { %>
@@ -42,14 +42,37 @@
           <div class="admin-action-row">
             <form method="post" action="/cards/arena/admin/match"><button>Run Matchmaking Now</button></form>
             <form method="post" action="/cards/arena/admin/recalculate-elo" onsubmit="return confirm('Reset every ELO to 1000 and replay all completed WUT matches oldest to newest?');"><button>Recalculate All ELO</button></form>
+            <a class="button-link" href="/cards/arena/debug">Open Admin Debug Game</a>
           </div>
         </div>
       </details>
     <% } %>
 
+    <section class="card wut-missions" id="missions">
+      <div class="cards-section-head"><div><p class="eyebrow">Earn WUT Coins</p><h2>Daily & Weekly Missions</h2><p class="muted">Completed missions wait here until you claim them.</p></div><span class="pill"><%= [...(wut.missions?.daily || []), ...(wut.missions?.weekly || [])].filter(mission => mission.complete && !mission.claimed).length %> ready</span></div>
+      <div class="wut-mission-columns">
+        <% [['Daily', wut.missions?.daily || []], ['Weekly', wut.missions?.weekly || []]].forEach(([label, missions]) => { %>
+          <section class="wut-mission-group">
+            <div class="wut-mission-group-title"><h3><%= label %></h3><small><%= label === 'Daily' ? wut.missions?.dayKey : `Week ${String(wut.missions?.weekKey || '').split('|').pop()}` %></small></div>
+            <% if (!missions.length) { %><p class="muted">No eligible <%= label.toLowerCase() %> missions are active for the current schedule.</p><% } %>
+            <% missions.forEach(mission => { %>
+              <article class="wut-mission <%= mission.complete ? 'is-complete' : '' %> <%= mission.claimed ? 'is-claimed' : '' %> <%= mission.failed ? 'is-failed' : '' %>">
+                <div class="wut-mission-copy"><strong><%= mission.title %><% if (mission.rotating) { %><small>Rotating</small><% } %></strong><span><%= mission.description %></span></div>
+                <div class="wut-mission-progress"><progress value="<%= mission.progress %>" max="<%= mission.target %>"></progress><small><%= mission.progressLabel || `${mission.progress}/${mission.target}` %></small></div>
+                <div class="wut-mission-reward"><strong>+<%= mission.reward %></strong><span>WUT Coins</span></div>
+                <% if (mission.claimed) { %><span class="pill">Claimed</span><% } else if (mission.failed) { %><span class="pill negative">Failed</span><% } else { %>
+                  <form method="post" action="/cards/missions/claim"><input type="hidden" name="period" value="<%= mission.period %>"><input type="hidden" name="mission_id" value="<%= mission.id %>"><button <%= mission.complete ? '' : 'disabled' %>><%= mission.complete ? 'Claim' : 'In Progress' %></button></form>
+                <% } %>
+              </article>
+            <% }) %>
+          </section>
+        <% }) %>
+      </div>
+    </section>
+
     <section class="card arena-queue-card">
-      <div><p class="eyebrow">Always-open Queue · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span> · Runs early at <%= arena.config.queueTrigger %> players</p><h2><%= arena.queuedEntry ? (arena.queuedEntry.priority ? 'Priority Entry Active' : 'You’re In') : 'Join Queue' %></h2><p class="muted"><%= arena.queuedEntry ? (arena.queuedEntry.priority ? 'You stayed queued and will be matched first in the next run.' : `You are one of ${arena.queueCount} queued players. We’ll prefer a nearby ELO, then match from everyone available.`) : `Free entry · skill-aware pairing · win ${arena.config.winnerPrize} Mushybux · maximum ${arena.config.maxActiveMatches} active matches` %></p></div>
-      <% if (!arena.queuedEntry) { %><form method="post" action="/cards/arena/enter"><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches ? 'disabled' : '' %>>Enter Queue Free</button></form><% } else { %><span class="pill">Waiting for matchmaking</span><% } %>
+      <div><p class="eyebrow">Always-open Queue · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span></p><h2><%= arena.queuedEntry ? 'You’re In' : 'Choose a Deck & Queue' %></h2><p class="muted"><%= arena.queuedEntry ? `Queued with ${arena.queuedEntry.deck_name}. Its snapshot is locked.` : `Winner ${wut.config.rewards.winner} · loser ${wut.config.rewards.loser} WUT Coins · timeout loser 0` %></p></div>
+      <% if (!arena.queuedEntry) { %><form method="post" action="/cards/arena/enter"><select name="deck_id" required><option value="">Select saved deck</option><% wut.decks.forEach(deck => { %><option value="<%= deck.id %>"><%= deck.name %></option><% }) %></select><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches || !wut.decks.length ? 'disabled' : '' %>>Enter Queue Free</button></form><% } else { %><span class="pill">Waiting for matchmaking</span><% } %>
     </section>
 
     <section class="card arena-active-section">
@@ -64,12 +87,13 @@
             <h3>vs <%= match.opponent.displayName %> <small>· <%= match.opponent.elo %> ELO</small></h3>
             <div class="arena-match-progress"><span>You <strong><%= committedCount(match, currentUser.id) %>/5</strong></span><span><%= match.opponent.displayName %> <strong><%= committedCount(match, match.opponent.id) %>/5</strong></span></div>
             <strong class="arena-match-callout"><%= isReady ? 'Lineups Locked — Show Results' : match.is_your_turn ? `Your turn · place ${match.cards_required_this_turn}` : `${playerName(match, match.current_player_id)} is choosing` %></strong>
-            <% if (match.turn_deadline) { %><small data-deadline="<%= match.turn_deadline %>"></small><% } %>
+            <% if (match.turn_deadline) { %><small data-deadline="<%= match.turn_deadline %>" data-paused="<%= match.timer_paused ? '1' : '0' %>"></small><% } %>
           </a>
         <% }) %>
         <% if (!arena.activeMatches.length && !arena.readyMatches.length) { %><div class="arena-empty"><h3>No active matches</h3><p class="muted">Enter the queue and your next matchup will land here.</p></div><% } %>
       </div>
     </section>
+    <% if (arena.cancelledMatches?.length) { %><section class="card"><div class="cards-section-head"><div><p class="eyebrow">No rewards · no ELO change</p><h2>Cancelled Matches</h2></div></div><% arena.cancelledMatches.slice(0, 5).forEach(match => { %><p>Match #<%= match.id %> vs <%= match.opponent.displayName %> was cancelled<%= match.cancel_reason === 'admin_void' ? ` by an administrator${match.cancel_note ? `: ${match.cancel_note}` : '.'}` : ' after the opening turn timed out.' %></p><% }) %></section><% } %>
     <% } %>
 
     <section class="card arena-elo-leaderboard" id="elo-leaderboard">
@@ -114,7 +138,7 @@
       setInterval(updateQueueCountdown, 1000);
     }
     document.querySelectorAll('[data-deadline]').forEach(el => {
-      const update = () => { const remaining = new Date(el.dataset.deadline).getTime() - Date.now(); if (remaining <= 0) return el.textContent = 'Auto-pick pending'; const hours = Math.floor(remaining / 3600000); const minutes = Math.floor((remaining % 3600000) / 60000); el.textContent = `${hours}h ${minutes}m remaining`; };
+      const update = () => { if (el.dataset.paused === '1') return el.textContent = 'Timer paused overnight · play is still allowed'; const remaining = new Date(el.dataset.deadline).getTime() - Date.now(); if (remaining <= 0) return el.textContent = 'Timeout processing'; const hours = Math.floor(remaining / 3600000); const minutes = Math.floor((remaining % 3600000) / 60000); el.textContent = `${hours}h ${minutes}m remaining`; };
       update(); setInterval(update, 60000);
     });
     if (document.querySelector('.arena-match-link:not(.is-your-turn):not(.is-ready)') && !document.querySelector('.arena-match-link.is-your-turn')) setTimeout(() => window.location.reload(), 30000);

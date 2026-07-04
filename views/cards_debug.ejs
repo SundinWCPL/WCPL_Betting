@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WUT Admin Debug Game</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/card-name-fit.js" defer></script>
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const slots = ['F1', 'F2', 'D1', 'D2', 'G'];
+    const sideId = side => side === 'A' ? -1 : -2;
+    const placementFor = (side, slot) => debugMatch.placements.find(row => Number(row.user_id) === sideId(side) && row.slot === slot);
+    const placementsFor = side => debugMatch.placements.filter(row => Number(row.user_id) === sideId(side));
+    const displayCardFor = row => {
+      if (!row?.card || row.card.matchTeamLogo) return row?.card || null;
+      const printedKey = String(row.card_snapshot?.chemistry_key || '');
+      const adoptedKey = String(row.journeyman_key_effective || row.journeyman_key || '');
+      const target = adoptedKey && adoptedKey !== printedKey ? debugMatch.placements.find(item => item.card_snapshot?.chemistry_key === adoptedKey) : null;
+      return target?.card?.player?.teamLogo
+        ? { ...row.card, matchTeamLogo: target.card.player.teamLogo, matchTeamBgColor: target.card.player.teamBgColor, matchTeamName: target.card_snapshot?.team_name || target.card.player.teamName }
+        : row.card;
+    };
+    const usedCardIdsBySide = Object.fromEntries(['A', 'B'].map(side => [side, placementsFor(side).map(row => Number(row.card_id))]));
+    const usedBoostIdsBySide = Object.fromEntries(['A', 'B'].map(side => [side, placementsFor(side).filter(row => row.boost_id).map(row => Number(row.boost_id))]));
+    const loadBySide = Object.fromEntries(['A', 'B'].map(side => [side, placementsFor(side).reduce((sum, row) => sum + Number(row.boost_load || 0), 0)]));
+    const boostCapBySide = Object.fromEntries(['A', 'B'].map(side => [side, Number(wut.config.boostLoadCap || 5) + Math.max(0, ...placementsFor(side).filter(row => row.card_snapshot?.trinket?.family === 'booster_cable').map(row => Number(row.card_snapshot.trinket.effect?.loadBonus || 0)))]));
+    const statusForCard = card => `Available from your full collection \u00b7 Power ${card.power || 1}`;
+    const cleanName = player => {
+      const edition = String(player?.edition || '').trim();
+      const name = String(player?.name || '').trim();
+      return edition && name.toUpperCase().startsWith(`${edition.toUpperCase()} `) ? name.slice(edition.length).trim() : name;
+    };
+  %>
+  <main class="container cards-page arena-match-page">
+    <section class="card page-title cards-title">
+      <div>
+        <div class="arena-page-nav"><a class="button-link ghost" href="/cards">&larr; WUT</a></div>
+        <p class="eyebrow">No rewards &middot; no ELO &middot; no inventory consumption</p>
+        <h1>Admin Debug Game</h1>
+        <p>This is the real match setup using your full collection. You control both sides; fill all ten slots to run scoring.</p>
+      </div>
+      <div class="arena-turn-status is-yours">
+        <strong><%= debugMatch.status === 'completed' ? 'Debug match complete' : 'Choose a side and an open slot' %></strong>
+        <form method="post" action="/cards/arena/debug/reset" onsubmit="return confirm('Reset this debug game and clear both lineups?');"><button>Reset Debug Game</button></form>
+      </div>
+    </section>
+
+    <div class="cards-selection-status" id="cardsSelectionStatus" hidden></div>
+
+    <% if (debugMatch.status === 'completed') { %>
+      <section class="card arena-results arena-card-results" id="arena-results" data-reveal-board>
+        <div class="arena-results-title"><p class="eyebrow">Admin debug result</p><h2>Side A vs Side B</h2></div>
+
+        <div class="arena-duel-scoreboard">
+          <div class="arena-duel-total is-left"><span>Side A</span></div>
+          <div class="arena-duel-score-center"><span>Running Score</span><strong><b data-total-for="-1" data-final-total="<%= debugMatch.scores['-1'] %>">0</b>&ndash;<b data-total-for="-2" data-final-total="<%= debugMatch.scores['-2'] %>">0</b></strong></div>
+          <div class="arena-duel-total is-right"><span>Side B</span></div>
+        </div>
+
+        <div class="arena-duel-reveal">
+          <% slots.forEach(slot => { %>
+            <div class="arena-duel-row">
+              <% ['A', 'B'].forEach(side => { const row = placementFor(side, slot); const userId = sideId(side); const isLeft = side === 'A'; %>
+                <article class="arena-duel-entry <%= isLeft ? 'is-left' : 'is-right' %> tier-<%= row?.card?.player?.tier || 'common' %>" data-reveal-entry data-user="<%= userId %>">
+                  <% if (isLeft && row?.card) { %><div class="arena-duel-card arena-wut-card tier-<%= row.card.player.tier %>"><%- include('partials_wut_card', { card: displayCardFor(row), statusText: `${row.fp || 0} FP in debug game` }) %></div><% } %>
+                  <div class="arena-duel-scoring">
+                    <div class="arena-duel-scoring-head"><span><%= isLeft ? `${slot} \u00b7 Scoring` : `Scoring \u00b7 ${slot}` %></span><strong><%= row?.card ? cleanName(row.card.player) : 'Empty' %></strong></div>
+                    <%- include('partials_arena_score_details', { row, userId }) %>
+                    <strong class="arena-player-fp"><%= row?.fp || 0 %> FP</strong>
+                  </div>
+                  <% if (!isLeft && row?.card) { %><div class="arena-duel-card arena-wut-card tier-<%= row.card.player.tier %>"><%- include('partials_wut_card', { card: displayCardFor(row), statusText: `${row.fp || 0} FP in debug game` }) %></div><% } %>
+                </article>
+              <% }) %>
+            </div>
+          <% }) %>
+        </div>
+
+        <div class="arena-outcome" data-arena-outcome>
+          <h2><%= debugMatch.winner_side ? `Side ${debugMatch.winner_side} wins!` : 'Draw' %></h2>
+          <p>Final score: Side A <strong><%= debugMatch.scores['-1'] %></strong> &ndash; <strong><%= debugMatch.scores['-2'] %></strong> Side B</p>
+          <form method="post" action="/cards/arena/debug/reset"><button>Reset and Play Again</button></form>
+        </div>
+      </section>
+    <% } else { %>
+
+    <div class="arena-debug-boards">
+      <% ['A', 'B'].forEach(side => { %>
+        <article class="card arena-visual-board">
+          <div class="cards-section-head">
+            <div><p class="eyebrow">Controlled by admin</p><h2>Side <%= side %> Lineup</h2></div>
+            <span class="pill">Boost Load <span data-side-load="<%= side %>"><%= loadBySide[side] %></span>/<span data-side-cap="<%= side %>"><%= boostCapBySide[side] %></span></span>
+          </div>
+          <div class="cards-lineup arena-card-lineup" data-debug-lineup="<%= side %>">
+            <% slots.forEach(slot => { const row = placementFor(side, slot); const opposingRow = placementFor(side === 'A' ? 'B' : 'A', slot); const requiredPosition = slot === 'G' ? 'G' : slot[0]; %>
+              <article class="lineup-slot <%= row ? 'is-locked' : '' %>" data-debug-slot="<%= slot %>" data-side="<%= side %>" data-position="<%= requiredPosition %>" data-committed="<%= row ? '1' : '0' %>" data-chemistry-key="<%= row?.card_snapshot?.chemistry_key || (row?.card ? `${row.card.player.cardType === 'mythic' ? row.card.player.sourceSeason : row.card.player.edition}|${row.card.player.teamId || ''}` : '') %>" data-team-name="<%= row?.card_snapshot?.team_name || row?.card?.player?.teamName || row?.card?.player?.teamId || '' %>" data-team-logo="<%= row?.card?.player?.teamLogo || '' %>" data-team-bg="<%= row?.card?.player?.teamBgColor || '' %>" data-opponent-power="<%= opposingRow?.power || 0 %>" data-trinket-family="<%= row?.card_snapshot?.trinket?.family || '' %>" data-trinket-effect="<%= row?.card_snapshot?.trinket?.family === 'zebra_stripes' ? Number(row.card_snapshot.trinket.effect || 0) : 0 %>">
+                <span class="arena-lineup-slot-name"><%= slot %></span>
+                <% if (row?.card) { %>
+                  <div class="arena-wut-card tier-<%= row.card.player.tier %>" data-flip-card><%- include('partials_wut_card', { card: displayCardFor(row), statusText: `Side ${side} \u00b7 ${row.fp == null ? 'committed' : `${row.fp} FP`}` }) %></div>
+                <% } else if (debugMatch.status === 'setup') { %>
+                  <button type="button" class="empty-card-slot assignment-zone" data-empty-player><strong><%= requiredPosition === 'F' ? 'Forward' : requiredPosition === 'D' ? 'Defense' : 'Goalie' %></strong><span>Choose this slot</span></button>
+                  <div class="arena-staged-card" data-staged-card hidden></div>
+                  <button type="button" class="lineup-remove" data-remove-card hidden>Remove staged card</button>
+                <% } else { %>
+                  <div class="empty-card-slot arena-empty-opponent-slot"></div>
+                <% } %>
+
+                <% if (row?.boost) { %>
+                  <div class="boost-slot assigned-boost tier-<%= row.boost.rarity %>"><%- include('partials_boost_content', { boost: row.boost }) %></div>
+                <% } else if (!row && debugMatch.status === 'setup') { %>
+                  <button type="button" class="boost-slot empty-boost-slot" data-empty-boost disabled><strong>Optional boost</strong><small>Stage a card first</small></button>
+                  <button type="button" class="lineup-remove" data-remove-boost hidden>Remove boost</button>
+                <% } else { %>
+                  <div class="boost-slot empty-boost-slot arena-empty-opponent-boost"><strong>No boost</strong></div>
+                <% } %>
+
+                <% if (row?.effect_log?.length) { %>
+                  <details class="wut-debug-log"><summary>Scoring log</summary><% row.effect_log.forEach(log => { %><small><%= log %></small><% }) %><strong>Would-be <%= Number(row.would_be_fp || 0).toFixed(1) %> &middot; Final <%= row.fp %></strong></details>
+                <% } %>
+              </article>
+            <% }) %>
+          </div>
+        </article>
+      <% }) %>
+    </div>
+
+    <% if (debugMatch.status === 'setup') { %>
+      <form method="post" action="/cards/arena/debug/place" class="arena-visual-lock-form" id="debugPlacementForm">
+        <input type="hidden" name="side"><input type="hidden" name="slot"><input type="hidden" name="card_id"><input type="hidden" name="boost_id"><input type="hidden" name="journeyman_key">
+        <div><strong data-debug-progress>Nothing staged</strong><p class="muted">Power rule: a responding card may be at most opposing Power +<%= wut.config.slotPowerAllowance %>. Boosts do not change Power.</p></div>
+        <button type="submit" disabled data-lock-placement>Commit Placement</button>
+      </form>
+
+      <section class="card cards-collection arena-match-collection" data-match-collection hidden>
+        <div class="cards-section-head"><div><p class="eyebrow">Available choices</p><h2 data-context-collection-title>Your Full Collection</h2></div><span class="pill" data-context-collection-count></span></div>
+        <p class="muted" data-context-collection-help></p>
+        <div class="collection-grid" data-collection-panel="players">
+          <% cards.forEach(card => { %>
+            <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0" data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-card-name="<%= card.player.name %>" data-power="<%= card.power || 1 %>" data-chemistry-key="<%= `${card.player.cardType === 'mythic' ? card.player.sourceSeason : card.player.edition}|${card.player.teamId || ''}` %>" data-team-name="<%= card.player.teamName || card.player.teamId || '' %>" data-team-logo="<%= card.player.teamLogo || '' %>" data-team-bg="<%= card.player.teamBgColor || '' %>" data-trinket-family="<%= card.trinket?.family || '' %>" data-trinket-icon="<%= WUT_TRINKET_ICONS[card.trinket?.family] || '' %>" data-trinket-rarity="<%= card.trinket?.rarity || '' %>" data-trinket-mode="<%= card.trinket?.effect?.mode || '' %>" data-load-bonus="<%= card.trinket?.effect?.loadBonus || 0 %>">
+              <%- include('partials_wut_card', { card, statusText: statusForCard(card) }) %>
+            </article>
+          <% }) %>
+        </div>
+        <div class="collection-grid arena-boost-collection" data-collection-panel="boosts" hidden>
+          <% boosts.forEach(boost => { const goalieBoost = ['save', 'shutout'].includes(boost.boost_type); %>
+            <button type="button" class="collection-boost tier-<%= boost.rarity %>" data-boost-id="<%= boost.id %>" data-load="<%= wut.config.rarityCosts[boost.rarity] || 1 %>" data-goalie="<%= goalieBoost ? '1' : '0' %>">
+              <%- include('partials_boost_content', { boost }) %>
+            </button>
+          <% }) %>
+        </div>
+      </section>
+    <% } %>
+    <% } %>
+  </main>
+
+  <script>
+    const statusEl = document.getElementById('cardsSelectionStatus');
+    const placementForm = document.getElementById('debugPlacementForm');
+    const matchCollection = document.querySelector('[data-match-collection]');
+    const collectionTitle = matchCollection?.querySelector('[data-context-collection-title]');
+    const collectionHelp = matchCollection?.querySelector('[data-context-collection-help]');
+    const collectionCount = matchCollection?.querySelector('[data-context-collection-count]');
+    const usedCardsBySide = <%- JSON.stringify(usedCardIdsBySide) %>;
+    const usedBoostsBySide = <%- JSON.stringify(usedBoostIdsBySide) %>;
+    const loadBySide = <%- JSON.stringify(loadBySide) %>;
+    const captainPatchBySide = <%- JSON.stringify(Object.fromEntries(['A', 'B'].map(side => [side, placementsFor(side).some(row => row.card_snapshot?.trinket?.family === 'team_crest')]))) %>;
+    const boostCapBySide = <%- JSON.stringify(boostCapBySide) %>;
+    let selectedSlot = null;
+    let selectedCard = null;
+    let selectedBoostSlot = null;
+    let selectedBoost = null;
+
+    const showStatus = (message, error = false) => {
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.hidden = !message;
+      statusEl.classList.toggle('is-error', error);
+    };
+    const clearSelections = () => {
+      selectedSlot?.querySelector('[data-empty-player]')?.classList.remove('is-selected');
+      selectedCard?.classList.remove('is-selected');
+      selectedBoostSlot?.querySelector('[data-empty-boost]')?.classList.remove('is-selected');
+      selectedBoost?.classList.remove('is-selected');
+      selectedSlot = selectedCard = selectedBoostSlot = selectedBoost = null;
+    };
+    const showCollectionPanel = panelName => {
+      matchCollection.hidden = false;
+      matchCollection.querySelectorAll('[data-collection-panel]').forEach(panel => { panel.hidden = panel.dataset.collectionPanel !== panelName; });
+    };
+    const cardFitsSlot = (slot, card) => {
+      const opposingPower = Number(slot?.dataset.opponentPower || 0);
+      return !opposingPower || Number(card?.dataset.power || 1) <= opposingPower + <%= wut.config.slotPowerAllowance %>;
+    };
+    const cardAvailableForSide = (card, side) => !usedCardsBySide[side].includes(Number(card.dataset.cardId));
+    const boostAvailableForSide = (boost, side) => !usedBoostsBySide[side].includes(Number(boost.dataset.boostId));
+    const capForSlot = slot => Math.max(Number(boostCapBySide[slot.dataset.side] || 5), <%= wut.config.boostLoadCap || 5 %> + Number(slot.dataset.loadBonus || 0));
+
+    const showCardsForSlot = slot => {
+      showCollectionPanel('players');
+      let available = 0;
+      matchCollection.querySelectorAll('[data-card-id]').forEach(card => {
+        const patchAvailable = card.dataset.trinketFamily !== 'team_crest' || !captainPatchBySide[slot.dataset.side];
+        const show = card.dataset.position === slot.dataset.position && cardFitsSlot(slot, card) && cardAvailableForSide(card, slot.dataset.side) && patchAvailable;
+        card.hidden = !show;
+        if (show) available += 1;
+      });
+      const positionName = slot.dataset.position === 'F' ? 'Forward' : slot.dataset.position === 'D' ? 'Defense' : 'Goalie';
+      collectionTitle.textContent = `${positionName} Cards for Side ${slot.dataset.side} ${slot.dataset.debugSlot}`;
+      const opposingPower = Number(slot.dataset.opponentPower || 0);
+      collectionHelp.textContent = opposingPower ? `The opposite card is Power ${opposingPower}; this slot allows up to Power ${opposingPower + <%= wut.config.slotPowerAllowance %>}.` : `Showing every ${positionName.toLowerCase()} in your collection available to this side.`;
+      collectionCount.textContent = `${available} available`;
+      matchCollection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    const showBoostsForSlot = slot => {
+      showCollectionPanel('boosts');
+      const wantsGoalie = slot.dataset.position === 'G';
+      let available = 0;
+      matchCollection.querySelectorAll('[data-boost-id]').forEach(boost => {
+        const legalLoad = loadBySide[slot.dataset.side] + Number(boost.dataset.load || 1) <= capForSlot(slot);
+        const show = (boost.dataset.goalie === '1') === wantsGoalie && boostAvailableForSide(boost, slot.dataset.side) && legalLoad;
+        boost.hidden = !show;
+        if (show) available += 1;
+      });
+      collectionTitle.textContent = `Boosts for Side ${slot.dataset.side} ${slot.dataset.debugSlot}`;
+      collectionHelp.textContent = 'Choose one compatible boost, or commit the card without one.';
+      collectionCount.textContent = `${available} available`;
+      matchCollection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    const refreshPlacement = () => {
+      if (!placementForm) return;
+      const stagedSlot = document.querySelector('[data-debug-slot][data-card-id]');
+      placementForm.elements.side.value = stagedSlot?.dataset.side || '';
+      placementForm.elements.slot.value = stagedSlot?.dataset.debugSlot || '';
+      placementForm.elements.card_id.value = stagedSlot?.dataset.cardId || '';
+      placementForm.elements.boost_id.value = stagedSlot?.dataset.boostId || '';
+      placementForm.elements.journeyman_key.value = stagedSlot?.dataset.journeymanKey || '';
+      const journeyReady = !stagedSlot || !['choose_own','choose_own_or_opposite','choose_any'].includes(stagedSlot.dataset.trinketMode) || Boolean(stagedSlot.dataset.journeymanKey) || stagedSlot.dataset.journeymanNoChoice === '1';
+      placementForm.querySelector('[data-lock-placement]').disabled = !stagedSlot || !journeyReady;
+      placementForm.querySelector('[data-lock-placement]').textContent = stagedSlot ? `Commit Side ${stagedSlot.dataset.side} ${stagedSlot.dataset.debugSlot}` : 'Commit Placement';
+      placementForm.querySelector('[data-debug-progress]').textContent = stagedSlot ? `Side ${stagedSlot.dataset.side} ${stagedSlot.dataset.debugSlot} staged` : 'Nothing staged';
+    };
+    const swapJourneymanLogo = (slot, choice = null) => {
+      const logo = slot.querySelector('[data-staged-card] .wut-front-logo');
+      if (!logo) return;
+      const nextLogo = choice?.dataset.teamLogo || slot.dataset.printedTeamLogo || logo.src;
+      const nextBg = choice?.dataset.teamBg || slot.dataset.printedTeamBg || '';
+      const token = String(Number(logo.dataset.swapToken || 0) + 1);
+      logo.dataset.swapToken = token;
+      logo.classList.add('is-team-logo-swapping');
+      window.setTimeout(() => {
+        if (logo.dataset.swapToken !== token) return;
+        logo.src = nextLogo;
+        if (nextBg) logo.style.setProperty('--team-bg', nextBg);
+        logo.classList.remove('is-team-logo-swapping');
+      }, 180);
+    };
+    const stageCard = (slot, card) => {
+      if (!slot || !card || slot.dataset.cardId) return;
+      if (document.querySelector('[data-debug-slot][data-card-id]')) return showStatus('Commit or remove the currently staged card first.', true);
+      if (slot.dataset.position !== card.dataset.position) return showStatus(`That card is not eligible for ${slot.dataset.debugSlot}.`, true);
+      if (card.dataset.trinketFamily === 'team_crest' && captainPatchBySide[slot.dataset.side]) return showStatus("Only one Captain's Patch can be active on each side.", true);
+      if (!cardAvailableForSide(card, slot.dataset.side)) return showStatus('That card is already committed on this side.', true);
+      if (!cardFitsSlot(slot, card)) return showStatus(`${slot.dataset.debugSlot} exceeds the opposing Power allowance.`, true);
+      slot.dataset.cardId = card.dataset.cardId;
+      slot.dataset.trinketFamily = card.dataset.trinketFamily || '';
+      slot.dataset.trinketIcon = card.dataset.trinketIcon || '';
+      if (slot.dataset.trinketFamily) {
+        slot.classList.remove('is-trinket-playing');
+        void slot.offsetWidth;
+        slot.classList.add('is-trinket-playing');
+        window.setTimeout(() => slot.classList.remove('is-trinket-playing'), 850);
+      }
+      const opposingSlot = document.querySelector(`[data-debug-slot="${slot.dataset.debugSlot}"][data-side="${slot.dataset.side === 'A' ? 'B' : 'A'}"]`);
+      const zebraReduction = opposingSlot?.dataset.trinketFamily === 'zebra_stripes' ? Number(opposingSlot.dataset.trinketEffect || 0) : 0;
+      const journeymanRarities = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+      const journeymanModes = ['random_all', 'random_own', 'choose_own', 'choose_own_or_opposite', 'choose_any'];
+      const effectiveJourneymanIndex = journeymanRarities.indexOf(card.dataset.trinketRarity) - zebraReduction;
+      slot.dataset.trinketMode = card.dataset.trinketFamily === 'journeyman' && zebraReduction
+        ? (effectiveJourneymanIndex >= 0 ? journeymanModes[effectiveJourneymanIndex] : '')
+        : card.dataset.trinketMode || '';
+      slot.dataset.chemistryKey = card.dataset.chemistryKey || '';
+      slot.dataset.teamName = card.dataset.teamName || '';
+      slot.dataset.teamLogo = card.dataset.teamLogo || '';
+      slot.dataset.teamBg = card.dataset.teamBg || '';
+      slot.dataset.printedTeamLogo = card.dataset.teamLogo || '';
+      slot.dataset.printedTeamBg = card.dataset.teamBg || '';
+      slot.dataset.loadBonus = card.dataset.loadBonus || '0';
+      const preview = slot.querySelector('[data-staged-card]');
+      const tier = [...card.classList].find(name => name.startsWith('tier-')) || 'tier-common';
+      preview.innerHTML = `<div class="arena-wut-card ${tier}">${card.querySelector('.arena-wut-card-inner').outerHTML}</div>`;
+      preview.hidden = false;
+      const mode = slot.dataset.trinketMode;
+      if (['choose_own','choose_own_or_opposite','choose_any'].includes(mode)) {
+        const allSlots = [...document.querySelectorAll('[data-debug-slot]')];
+        const own = allSlots.filter(item => item !== slot && item.dataset.side === slot.dataset.side && item.dataset.chemistryKey);
+        const opposite = allSlots.filter(item => item.dataset.side !== slot.dataset.side && item.dataset.chemistryKey && (mode === 'choose_any' || item.dataset.debugSlot === slot.dataset.debugSlot));
+        const sourceSeason = slot.dataset.chemistryKey.split('|')[0];
+        const pool = mode === 'choose_own' ? own : [...own, ...opposite];
+        const choices = [...new Map(pool.filter(item => item.dataset.chemistryKey !== slot.dataset.chemistryKey && (mode === 'choose_any' || item.dataset.chemistryKey.split('|')[0] === sourceSeason)).map(item => [item.dataset.chemistryKey, item])).values()];
+        slot.dataset.journeymanNoChoice = choices.length ? '0' : '1';
+        const label = document.createElement('label'); label.className = 'journeyman-choice'; label.textContent = 'Journeyman team ';
+        const select = document.createElement('select'); select.innerHTML = choices.length ? `<option value="">Choose team</option>${choices.map(item => `<option value="${item.dataset.chemistryKey}">${item.dataset.teamName || item.dataset.chemistryKey} · ${item.dataset.chemistryKey.split('|')[0]}</option>`).join('')}` : `<option value="">No eligible ${mode === 'choose_any' ? '' : 'same-season '}team in play yet</option>`;
+        select.addEventListener('change', () => {
+          slot.dataset.journeymanKey = select.value;
+          swapJourneymanLogo(slot, choices.find(item => item.dataset.chemistryKey === select.value));
+          refreshPlacement();
+        });
+        label.appendChild(select); preview.appendChild(label);
+      }
+      slot.querySelector('[data-empty-player]').hidden = true;
+      slot.querySelector('[data-remove-card]').hidden = false;
+      const boostButton = slot.querySelector('[data-empty-boost]');
+      boostButton.disabled = false;
+      boostButton.querySelector('small').textContent = 'Click, then choose a boost';
+      clearSelections();
+      matchCollection.hidden = true;
+      showStatus(`${card.dataset.cardName} staged in Side ${slot.dataset.side} ${slot.dataset.debugSlot}.`);
+      refreshPlacement();
+    };
+    const stageBoost = (slot, boost) => {
+      if (!slot?.dataset.cardId || !boost) return;
+      const wantsGoalie = slot.dataset.position === 'G';
+      if ((boost.dataset.goalie === '1') !== wantsGoalie) return showStatus('That boost does not fit this position.', true);
+      if (!boostAvailableForSide(boost, slot.dataset.side)) return showStatus('That boost is already committed on this side.', true);
+      if (loadBySide[slot.dataset.side] + Number(boost.dataset.load || 1) > capForSlot(slot)) return showStatus('That boost exceeds this side\'s remaining Boost Load.', true);
+      slot.dataset.boostId = boost.dataset.boostId;
+      slot.dataset.boostLoad = boost.dataset.load;
+      const button = slot.querySelector('[data-empty-boost]');
+      button.className = `boost-slot assigned-boost ${[...boost.classList].find(name => name.startsWith('tier-')) || ''}`;
+      button.innerHTML = boost.innerHTML;
+      slot.querySelector('[data-remove-boost]').hidden = false;
+      clearSelections();
+      matchCollection.hidden = true;
+      showStatus(`Boost staged on Side ${slot.dataset.side} ${slot.dataset.debugSlot}.`);
+      refreshPlacement();
+    };
+
+    document.querySelectorAll('[data-empty-player]').forEach(button => button.addEventListener('click', () => {
+      const slot = button.closest('[data-debug-slot]');
+      if (selectedCard) return stageCard(slot, selectedCard);
+      if (document.querySelector('[data-debug-slot][data-card-id]')) return showStatus('Commit or remove the currently staged card first.', true);
+      clearSelections(); selectedSlot = slot; button.classList.add('is-selected'); showStatus(`Choose a card for Side ${slot.dataset.side} ${slot.dataset.debugSlot}.`); showCardsForSlot(slot);
+    }));
+    document.querySelectorAll('[data-card-id]').forEach(card => card.addEventListener('click', () => {
+      if (!placementForm) return;
+      if (selectedSlot) return stageCard(selectedSlot, card);
+      if (document.querySelector('[data-debug-slot][data-card-id]')) return showStatus('Commit or remove the currently staged card first.', true);
+      clearSelections(); selectedCard = card; card.classList.add('is-selected'); showStatus(`Choose an open ${card.dataset.position} slot on either side for ${card.dataset.cardName}.`);
+    }));
+    document.querySelectorAll('[data-empty-boost]').forEach(button => button.addEventListener('click', () => {
+      const slot = button.closest('[data-debug-slot]');
+      if (!slot.dataset.cardId) return;
+      if (selectedBoost) return stageBoost(slot, selectedBoost);
+      clearSelections(); selectedBoostSlot = slot; button.classList.add('is-selected'); showStatus(`Choose a boost for Side ${slot.dataset.side} ${slot.dataset.debugSlot}.`); showBoostsForSlot(slot);
+    }));
+    document.querySelectorAll('[data-boost-id]').forEach(boost => boost.addEventListener('click', () => {
+      if (!placementForm) return;
+      if (selectedBoostSlot) return stageBoost(selectedBoostSlot, boost);
+      clearSelections(); selectedBoost = boost; boost.classList.add('is-selected'); showStatus('Choose the staged card\'s boost slot.');
+    }));
+    document.querySelectorAll('[data-remove-card]').forEach(button => button.addEventListener('click', () => {
+      const slot = button.closest('[data-debug-slot]');
+      delete slot.dataset.cardId; delete slot.dataset.boostId; delete slot.dataset.boostLoad; delete slot.dataset.trinketFamily; delete slot.dataset.trinketIcon; delete slot.dataset.trinketMode; delete slot.dataset.chemistryKey; delete slot.dataset.teamName; delete slot.dataset.teamLogo; delete slot.dataset.teamBg; delete slot.dataset.printedTeamLogo; delete slot.dataset.printedTeamBg; delete slot.dataset.loadBonus; delete slot.dataset.journeymanKey; delete slot.dataset.journeymanNoChoice;
+      const preview = slot.querySelector('[data-staged-card]'); preview.hidden = true; preview.innerHTML = '';
+      slot.querySelector('[data-empty-player]').hidden = false; button.hidden = true;
+      const boostButton = slot.querySelector('[data-empty-boost]'); boostButton.className = 'boost-slot empty-boost-slot'; boostButton.innerHTML = '<strong>Optional boost</strong><small>Stage a card first</small>'; boostButton.disabled = true;
+      slot.querySelector('[data-remove-boost]').hidden = true;
+      clearSelections(); matchCollection.hidden = true; showStatus('Staged placement removed.'); refreshPlacement();
+    }));
+    document.querySelectorAll('[data-remove-boost]').forEach(button => button.addEventListener('click', () => {
+      const slot = button.closest('[data-debug-slot]'); delete slot.dataset.boostId; delete slot.dataset.boostLoad;
+      const boostButton = slot.querySelector('[data-empty-boost]'); boostButton.className = 'boost-slot empty-boost-slot'; boostButton.innerHTML = '<strong>Optional boost</strong><small>Click, then choose a boost</small>'; button.hidden = true;
+      clearSelections(); matchCollection.hidden = true; refreshPlacement();
+    }));
+    document.querySelectorAll('[data-flip-card]').forEach(card => card.addEventListener('click', () => card.classList.toggle('is-flipped')));
+    placementForm?.addEventListener('submit', event => { if (!confirm('Commit this placement? It cannot be changed unless you reset the debug game.')) event.preventDefault(); });
+    refreshPlacement();
+
+    const revealBoard = document.querySelector('[data-reveal-board]');
+    if (revealBoard) {
+      const entries = [...revealBoard.querySelectorAll('[data-reveal-entry]')];
+      const outcome = revealBoard.querySelector('[data-arena-outcome]');
+      const running = {};
+      const updateScore = () => {
+        revealBoard.querySelectorAll('[data-total-for]').forEach(total => { total.textContent = Math.round(running[total.dataset.totalFor] || 0); });
+      };
+      const runReveal = async () => {
+        entries.forEach(entry => {
+          entry.classList.remove('is-revealed');
+          entry.querySelectorAll('.arena-reveal-step').forEach(step => { step.hidden = true; });
+          const playerTotal = entry.querySelector('.arena-player-fp');
+          if (playerTotal) playerTotal.hidden = true;
+        });
+        outcome.hidden = true;
+        updateScore();
+        for (const entry of entries) {
+          entry.classList.add('is-revealed');
+          for (const step of entry.querySelectorAll('.arena-reveal-step')) {
+            step.hidden = false;
+            const family = step.dataset.trinketFamily;
+            if (family) {
+              entry.dataset.triggerFamily = family;
+              entry.dataset.triggerDirection = step.dataset.effectDirection || 'self';
+              entry.classList.add('is-trinket-firing');
+              step.classList.add('is-triggering');
+              const targetLabel = family === 'specialist_tape' ? step.textContent.match(/Specialist \(([^)]+)\)/)?.[1] : '';
+              const targetStep = targetLabel
+                ? [...entry.querySelectorAll('.arena-reveal-step:not(.is-trinket)')].find(candidate => candidate.querySelector('span')?.textContent.trim().startsWith(targetLabel))
+                : family === 'booster_cable' ? entry.querySelector('.arena-reveal-step.is-boost') : null;
+              targetStep?.classList.add('is-trinket-targeted');
+              step._trinketTarget = targetStep;
+            }
+            const user = step.dataset.user;
+            running[user] = (running[user] || 0) + Number(step.dataset.points || 0);
+            updateScore();
+            await new Promise(resolve => setTimeout(resolve, family ? 800 : step.classList.contains('is-boost') ? 650 : 350));
+            step.classList.remove('is-triggering');
+            step._trinketTarget?.classList.remove('is-trinket-targeted');
+            delete step._trinketTarget;
+            entry.classList.remove('is-trinket-firing');
+            delete entry.dataset.triggerFamily;
+            delete entry.dataset.triggerDirection;
+          }
+          const playerTotal = entry.querySelector('.arena-player-fp');
+          if (playerTotal) playerTotal.hidden = false;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        revealBoard.querySelectorAll('[data-final-total]').forEach(total => { total.textContent = total.dataset.finalTotal; });
+        outcome.hidden = false;
+      };
+      runReveal();
+    }
+  </script>
+</body>
+</html>

@@ -73,6 +73,7 @@ import {
   getCardsConfig,
   getCardsAdminState,
   saveCardsConfig,
+  setWutFreeShopPurchases,
   setCardsOpen,
   setCardsLinkVisible,
   setCardsAllowRetroactiveAssignment,
@@ -99,8 +100,10 @@ import {
   resetCardsData,
   getArenaStateForUser,
   getArenaAdminState,
+  getArenaAdminMatchState,
   hasPendingArenaTurn,
   recalculateArenaEloFromHistory,
+  adminVoidArenaMatch,
   enterArenaQueue,
   assignArenaMatchups,
   commitArenaTurn,
@@ -108,7 +111,22 @@ import {
   getArenaMatchesNeedingScoring,
   completeArenaMatch,
   completeArenaReveal,
-  claimArenaWinnings
+  claimArenaWinnings,
+  claimWutMission,
+  getWutSystemsState,
+  setWutMissionBetOpportunities,
+  saveWutDeck,
+  buyWutDeckSlot,
+  buyWutTrinket,
+  rerollWutTrinketShop,
+  attachWutTrinket,
+  removeWutTrinket,
+  reconcileWutTrinketPositions,
+  calculateWutPower,
+  getWutDebugMatch,
+  queueWutDebugRescore,
+  resetWutDebugMatch,
+  commitWutDebugPlacement
 } from './db.js';
 import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries, getPlayers } from './services/wcplData.js';
 import { buildShotDoctorRunShots } from './services/shotDoctor.js';
@@ -122,22 +140,45 @@ import {
   CARD_COOLDOWNS,
   DEFAULT_BOOST_EFFECTS,
   applyChemistryBonus,
+  applyWutPositiveScoring,
+  boostFantasyBonus,
   buildFantasyBreakdown,
   buildCardPlayerCatalog,
   generateBoostPack,
   generatePlayerPack,
+  generateWutPlayerPack,
   generateWutStarterPack,
   chemistryMultiplierForCount,
+  captainPatchChemistry,
+  wutChemistryKey,
   getCardSeriesOptions,
   scoreCardSeries,
-  scoreHistoricalCardSample
+  scoreHistoricalCardSample,
+  resolveWutMatchingTrinkets
 } from './services/cards.js';
 import { HORSE_RACING_CONFIG } from './services/horseRacing.js';
+import {
+  adjacentWutSlots,
+  resolveJourneymanIdentity,
+  resolveZebraStripes,
+  trinketFitsWutPosition,
+  WUT_TRINKET_ADMIN_FIELDS
+} from './services/wutBalanceRules.js';
+import {
+  WUT_TRINKET_ICONS,
+  wutTitleCase,
+  wutTrinketDescription,
+  wutTrinketName
+} from './services/wutTrinketText.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 3000);
+app.locals.WUT_TRINKET_ICONS = WUT_TRINKET_ICONS;
+app.locals.wutTitleCase = wutTitleCase;
+app.locals.wutTrinketDescription = wutTrinketDescription;
+app.locals.wutTrinketName = wutTrinketName;
 initDb();
 
 // Keep time-based race transitions moving even when nobody has the page open.
@@ -306,6 +347,44 @@ async function filterLeaderPropPools(boards, { seasonId, week }) {
       })
     };
   });
+}
+
+async function buildWutMissionBetOpportunities({ seasonId, week }) {
+  // Once betting is locked, rebuild the complete published board rather than
+  // filtering markets that have since closed or completed. This matters when
+  // WUT is deployed/reset after the lock snapshot would normally be created.
+  const preserveLockedBoard = isWeekLocked(week);
+  const activeOdds = getOddsAdjustmentsForWeek(week);
+  const [series, closureState, rawPropBoards, seriesPropMarkets] = await Promise.all([
+    getUpcomingSeries(week, seasonId),
+    getBetClosureState({ seasonId, week }),
+    getPropBoards(week, seasonId, activeOdds),
+    buildWeeklyPropMarkets({ seasonId, week, odds: activeOdds, publishedOnly: true })
+  ]);
+  const basePropBoards = await filterLeaderPropPools(rawPropBoards, { seasonId, week });
+  const propBoards = propMarketsToBettingBoards(seriesPropMarkets, basePropBoards);
+  const opportunities = series
+    .filter(item => preserveLockedBoard || !closureState.completedSeriesKeys.has(item.series_key))
+    .map(item => ({
+      key: `series:${item.series_key}`,
+      kind: 'series',
+      divisionId: item.division_id,
+      label: `${item.away_team_name} at ${item.home_team_name}`
+    }));
+
+  for (const board of propBoards) {
+    if (!preserveLockedBoard && closureState.closedDivisionIds.has(board.division_id)) continue;
+    for (const category of board.categories || []) {
+      if (!category.prop_key || !(category.players || []).length) continue;
+      opportunities.push({
+        key: `prop:${category.prop_key}`,
+        kind: 'prop',
+        divisionId: board.division_id,
+        label: `${board.division_name || board.division_id} ${category.title}`
+      });
+    }
+  }
+  return opportunities;
 }
 
 function formatSigned(n) {
@@ -877,7 +956,12 @@ function decorateOwnedCard(card, catalogByKey) {
     catalogByKey.get(`${card.edition || 'S3'}|${card.division_id}|${card.player_key}`) ||
     catalogByKey.get(`${card.division_id}|${card.player_key}`) ||
     {};
-  const appearances = Object.values(card.fantasy_stats || {});
+  const appearanceEntries = Object.entries(card.fantasy_stats || {});
+  const appearances = appearanceEntries.map(([, appearance]) => appearance);
+  const wutMatchAppearances = appearanceEntries
+    .filter(([key]) => key.startsWith('arena-'))
+    .map(([, appearance]) => appearance);
+  const wutMatchFp = wutMatchAppearances.reduce((sum, appearance) => sum + Number(appearance?.fp || 0), 0);
   const statKeys = player.position === 'G'
     ? ['saves', 'shotsAgainst', 'goalsAgainst', 'shutouts']
     : ['goals', 'assists', 'shots', 'hits', 'blocks'];
@@ -898,6 +982,11 @@ function decorateOwnedCard(card, catalogByKey) {
       gamesPlayed: appearances.reduce((sum, appearance) => sum + Number(appearance?.gamesPlayed || 0), 0),
       fp: Number(card.total_fp_for_user || 0),
       stats: fantasyTotals
+    },
+    wutMatchStats: {
+      matchesPlayed: wutMatchAppearances.length,
+      fp: wutMatchFp,
+      fpPerMatch: wutMatchAppearances.length ? wutMatchFp / wutMatchAppearances.length : 0
     }
   };
 }
@@ -961,14 +1050,14 @@ async function scoreOwnedCardLineup({ settings, week, row, card, boost }) {
 }
 
 function chemistryBonusForCard({ lineup, ownedCards, catalogByKey, card }) {
-  const teamId = String(card?.player?.teamId || '').trim();
-  if (!teamId) return { count: 0, multiplier: 1 };
+  const chemistryKey = wutChemistryKey(card?.player);
+  if (!chemistryKey) return { count: 0, multiplier: 1 };
   let count = 0;
   for (const row of lineup || []) {
     if (!row.card_id) continue;
     const ownedCard = ownedCards.find(item => Number(item.id) === Number(row.card_id));
     const decorated = ownedCard ? decorateOwnedCard(ownedCard, catalogByKey) : null;
-    if (String(decorated?.player?.teamId || '').trim() === teamId) count += 1;
+    if (wutChemistryKey(decorated?.player) === chemistryKey) count += 1;
   }
   return { count, multiplier: chemistryMultiplierForCount(count, getCardsConfig().scoring) };
 }
@@ -1282,6 +1371,10 @@ async function finalizeCardsForWeek(week, nextWeek) {
     tier: player.tier,
     position: player.position,
     weightedFpPerGame: player.weightedFpPerGame,
+    expectedWutFpPerMatch: Number(player.expectedWutFpPerMatch || 0),
+    rarityGamesPlayed: Number(player.rarityGamesPlayed || 0),
+    rarityEligible: Boolean(player.rarityEligible),
+    rarityProvisional: Boolean(player.rarityProvisional),
     updatedAt: new Date().toISOString()
   }]));
   return finalizeCardsWeek({ week, nextWeek, results, calculatedTiers });
@@ -1352,9 +1445,9 @@ async function scorePendingArenaMatches(catalog = null) {
   const config = getCardsConfig();
   let resolved = 0;
   for (const match of getArenaMatchesNeedingScoring()) {
-    const rawScores = [];
+    let rawScores = [];
     for (const placement of match.placements) {
-      const owned = getCardsOwnedState(placement.user_id);
+      const owned = getCardsOwnedState(placement.owner_user_id || placement.user_id);
       const rawCard = owned.cards.find(card => Number(card.id) === Number(placement.card_id));
       const card = rawCard ? decorateOwnedCard(rawCard, catalogByKey) : null;
       const rawBoost = owned.boosts.find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
@@ -1362,40 +1455,170 @@ async function scorePendingArenaMatches(catalog = null) {
         ...rawBoost,
         effect: config.boostEffects?.[rawBoost.boost_type]?.[rawBoost.rarity] || rawBoost.effect || DEFAULT_BOOST_EFFECTS[rawBoost.boost_type]?.[rawBoost.rarity]
       } : null;
+      const snapshotTrinket = placement.card_snapshot?.trinket || null;
+      const legalTrinket = trinketFitsWutPosition(snapshotTrinket?.family, card?.player?.position || placement.card_snapshot?.position) ? snapshotTrinket : null;
       if (!card?.player?.position) {
-        rawScores.push({ placement, card: null, result: { fp: 0, exactFp: 0, gamesPlayed: 0, stats: {}, sampleMatchIds: [], syntheticGames: [], breakdown: [] } });
+        rawScores.push({ placement, card: null, boost: null, trinket: legalTrinket, logs: [], result: { fp: 0, exactFp: 0, gamesPlayed: 0, stats: {}, sampleMatchIds: [], syntheticGames: [], breakdown: [], gameFps: [] } });
         continue;
       }
       const result = await scoreHistoricalCardSample({
         player: card.player,
         position: card.player.position,
-        boost,
+        boost: Number(match.rules_version || 1) >= 2 ? null : boost,
         scoringConfig: config.scoring
       });
-      rawScores.push({ placement, card, result });
+      rawScores.push({ placement, card, boost, result, trinket: legalTrinket, logs: snapshotTrinket && !legalTrinket ? ['Illegal position trinket ignored.'] : [] });
     }
-    const scored = rawScores.map(entry => {
-      const teamId = String(entry.card?.player?.teamId || '').trim();
-      const teamCount = teamId
+    rawScores = resolveZebraStripes(rawScores.map(entry => ({
+      ...entry,
+      userId: Number(entry.placement.user_id),
+      slot: entry.placement.slot,
+      printedChemistryKey: entry.placement.card_snapshot?.chemistry_key || wutChemistryKey(entry.card?.player)
+    })), config.wut.trinketEffects);
+    for (const entry of rawScores) entry.chemistryKey = entry.printedChemistryKey;
+    for (const entry of rawScores.filter(item => item.trinket?.family === 'journeyman')) {
+      const locked = String(entry.placement.journeyman_key || '');
+      const seedText = `${match.id}|${entry.userId}|${entry.slot}|journeyman`;
+      let hash = 2166136261;
+      for (const char of seedText) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+      const deterministicRandom = () => (hash >>> 0) / 4294967296;
+      entry.chemistryKey = resolveJourneymanIdentity(entry, rawScores, locked, deterministicRandom);
+    }
+    const rawBoostGains = new Map(rawScores.map(entry => [entry, boostFantasyBonus(entry.result.stats, entry.boost)]));
+    const positive = [];
+    for (const entry of rawScores) {
+      const chemistryKey = entry.chemistryKey;
+      const crossSideJourneyman = entry.trinket?.family === 'journeyman' && entry.trinket.effect?.crossSide;
+      const chemistryGroup = chemistryKey
         ? rawScores.filter(other =>
-          Number(other.placement.user_id) === Number(entry.placement.user_id) &&
-          String(other.card?.player?.teamId || '').trim() === teamId
-        ).length
-        : 0;
-      const result = applyChemistryBonus(entry.result, {
-        count: teamCount,
-        multiplier: chemistryMultiplierForCount(teamCount, config.scoring)
+          (crossSideJourneyman || Number(other.placement.user_id) === Number(entry.placement.user_id)) &&
+          other.chemistryKey === chemistryKey
+        )
+        : [];
+      const teamCount = chemistryGroup.length;
+      const captainPatch = chemistryGroup
+        .filter(other => Number(other.placement.user_id) === Number(entry.placement.user_id) && other.trinket?.family === 'team_crest')
+        .sort((a, b) => Number(b.trinket?.effect || 0) - Number(a.trinket?.effect || 0))[0] || null;
+      const baseChemistryMultiplier = chemistryMultiplierForCount(teamCount, config.scoring);
+      const captainChemistry = captainPatchChemistry(baseChemistryMultiplier, captainPatch ? [captainPatch.trinket.effect] : []);
+      if (Number(match.rules_version || 1) < 2) {
+        const result = applyChemistryBonus(entry.result, { count: teamCount, multiplier: chemistryMultiplierForCount(teamCount, config.scoring) });
+        positive.push({ ...entry, teamCount, wouldBeFp: Number(result.exactFp || result.fp || 0), finalFp: Number(result.exactFp || result.fp || 0), result });
+        continue;
+      }
+      if (!entry.card) { positive.push({ ...entry, teamCount, wouldBeFp: 0, finalFp: 0 }); continue; }
+      const opponent = rawScores.find(other => Number(other.placement.user_id) !== Number(entry.placement.user_id) && other.placement.slot === entry.placement.slot);
+      const first = !opponent || new Date(entry.placement.committed_at) < new Date(opponent.placement.committed_at);
+      let bonusGameFps = [];
+      let bonusRolledGames = [];
+      if (entry.trinket?.family === 'lucky_charm' && (entry.result.gameFps || []).length) {
+        const bonus = await scoreHistoricalCardSample({
+          player: entry.card.player,
+          position: entry.card.player.position,
+          boost: null,
+          excludeMatchIds: entry.result.sampleMatchIds || [],
+          scoringConfig: config.scoring
+        });
+        bonusGameFps = bonus.gameFps || [];
+        bonusRolledGames = bonus.rolledGames || bonus.syntheticGames || [];
+      }
+      const positiveLayers = applyWutPositiveScoring({
+        baseExactFp: Number(entry.result.exactFp || entry.result.fp || 0), trinket: entry.trinket,
+        gameFps: entry.result.gameFps || [], bonusGameFps, breakdown: entry.result.breakdown || [],
+        isFirst: first, hasOpponent: Boolean(opponent), teamCount,
+        cardRarityRank: entry.placement.card_snapshot?.base_power || CARD_STARS[entry.placement.card_snapshot?.rarity] || 1,
+        opponentRarityRank: opponent?.placement?.card_snapshot?.base_power || CARD_STARS[opponent?.placement?.card_snapshot?.rarity] || null,
+        stats: entry.result.stats, boost: entry.boost, boostLoad: entry.placement.boost_load,
+        adjacentBoostGains: rawScores.filter(other => Number(other.userId) === Number(entry.userId) && adjacentWutSlots(entry.slot).includes(other.slot)).map(other => rawBoostGains.get(other)),
+        chemistryMultiplier: captainChemistry.multiplier
       });
+      entry.logs.push(...positiveLayers.logs);
+      const scoringEffects = [];
+      if (entry.trinket?.family === 'lucky_charm' || Number(positiveLayers.trinketGain || 0)) {
+        scoringEffects.push({
+          type: 'trinket',
+          family: entry.trinket?.family || '',
+          direction: Number(positiveLayers.trinketGain || 0) < 0 ? 'self-negative' : 'self',
+          triggered: entry.trinket?.family === 'lucky_charm' ? Boolean(positiveLayers.luckyCharm?.hit) : Number(positiveLayers.trinketGain || 0) !== 0,
+          label: positiveLayers.trinketLabel || 'Trinket',
+          points: Number(positiveLayers.trinketGain || 0),
+          rarity: entry.trinket?.rarity || 'common'
+        });
+      }
+      if (positiveLayers.boostGain) scoringEffects.push({
+        type: 'boost',
+        label: `${String(entry.boost?.rarity || '').replace(/\b\w/g, char => char.toUpperCase())} ${String(entry.boost?.boost_type || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase())} Boost`,
+        points: positiveLayers.boostGain,
+        rarity: entry.boost?.rarity || 'common'
+      });
+      const preChemistryFp = Number(positiveLayers.preChemistryFp || 0);
+      const baseChemistryGain = preChemistryFp * Math.max(0, baseChemistryMultiplier - 1);
+      const captainPatchGain = Math.max(0, Number(positiveLayers.chemistryGain || 0) - baseChemistryGain);
+      if (baseChemistryGain) scoringEffects.push({
+        type: 'chemistry',
+        label: `Chemistry (+${Number(((baseChemistryMultiplier - 1) * 100).toFixed(2))}%)`,
+        points: baseChemistryGain
+      });
+      if (captainPatchGain) scoringEffects.push({
+        type: 'trinket',
+        family: 'team_crest',
+        triggered: true,
+        label: `Captain's Patch (+${Number(captainChemistry.effect * 100).toFixed(0)}% chemistry)`,
+        points: captainPatchGain,
+        rarity: captainPatch?.trinket?.rarity || 'common'
+      });
+      if (entry.zebraReduction) scoringEffects.push({
+        type: 'trinket',
+        family: 'zebra_stripes',
+        direction: 'incoming',
+        triggered: true,
+        label: entry.trinket
+          ? `Zebra Stripes downgraded ${entry.originalTrinket?.rarity} to ${entry.trinket.rarity}`
+          : `Zebra Stripes nullified ${entry.originalTrinket?.rarity || ''} trinket`,
+        points: 0,
+        rarity: entry.zebraRarity || 'common'
+      });
+      if (entry.trinket?.family === 'zebra_stripes' && rawScores.some(other =>
+        Number(other.userId) !== Number(entry.userId) && other.slot === entry.slot && Number(other.zebraReduction || 0) > 0
+      )) scoringEffects.push({
+        type: 'trinket', family: 'zebra_stripes', direction: 'outgoing', triggered: true,
+        label: 'Zebra Stripes triggered', points: 0, rarity: entry.trinket.rarity || 'common'
+      });
+      positive.push({
+        ...entry,
+        teamCount,
+        wouldBeFp: positiveLayers.wouldBeFp,
+        finalFp: positiveLayers.wouldBeFp,
+        scoringEffects,
+        luckyCharm: positiveLayers.luckyCharm,
+        bonusGameFps,
+        bonusRolledGames
+      });
+    }
+    const interacted = resolveWutMatchingTrinkets(positive);
+    const scored = interacted.map(entry => {
+      const result = entry.result;
       return {
         ...entry.placement,
-        fp: Number(result.fp || 0),
-        exact_fp: Number(result.exactFp || result.fp || 0),
+        fp: Math.round(Math.max(0, entry.finalFp)),
+        exact_fp: Math.max(0, Number(entry.finalFp || 0)),
+        would_be_fp: Number(entry.wouldBeFp || 0),
         games_played: Number(result.gamesPlayed || 0),
         stats: result.stats || {},
         sample_match_ids: result.sampleMatchIds || [],
         synthetic_games: result.syntheticGames || [],
+        rolled_games: result.rolledGames || result.syntheticGames || [],
+        rolled_game_fps: result.gameFps || [],
+        bonus_rolled_games: entry.bonusRolledGames || [],
+        bonus_game_fps: entry.bonusGameFps || [],
+        lucky_charm: entry.luckyCharm || null,
+        reveal_data_version: 8,
         score_breakdown: result.breakdown || [],
-        card_rarity: entry.card?.player?.tier || 'common'
+        scoring_effects: entry.scoringEffects || [],
+        journeyman_key_effective: entry.trinket?.family === 'journeyman' && entry.chemistryKey !== entry.printedChemistryKey ? entry.chemistryKey : '',
+        card_rarity: entry.card?.player?.tier || 'common',
+        power: Number(entry.placement.power || 1), trinket: entry.trinket,
+        effect_log: entry.logs
       };
     });
     completeArenaMatch(match.id, scored);
@@ -1424,20 +1647,34 @@ async function processArena(now = new Date()) {
 }
 
 function decorateArenaMatch(match, allCards, boosts) {
+  const placements = (match.placements || []).map(row => {
+    const currentCard = allCards.find(item => Number(item.id) === Number(row.card_id)) || null;
+    const card = currentCard ? { ...currentCard, power: Number(row.power || currentCard.power || 1), trinket: row.card_snapshot?.trinket || row.trinket || currentCard.trinket || null } : null;
+    const boost = boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const needsSavePctBreakdown = card?.player?.position === 'G' && row.stats && !(row.score_breakdown || []).some(item => item.type === 'save_pct');
+    return {
+      ...row,
+      card,
+      boost,
+      score_breakdown: needsSavePctBreakdown
+        ? buildFantasyBreakdown(row.stats, 'G', boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: getCardsConfig().scoring })
+        : row.score_breakdown
+    };
+  });
+  const visualsByChemistry = new Map(placements.map(row => [row.card_snapshot?.chemistry_key, {
+    logo: row.card?.player?.teamLogo || '',
+    background: row.card?.player?.teamBgColor || '#111520',
+    name: row.card_snapshot?.team_name || row.card?.player?.teamName || row.card_snapshot?.team_id || ''
+  }]));
   return {
     ...match,
-    placements: (match.placements || []).map(row => {
-      const card = allCards.find(item => Number(item.id) === Number(row.card_id)) || null;
-      const boost = boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
-      const needsSavePctBreakdown = card?.player?.position === 'G' && row.stats && !(row.score_breakdown || []).some(item => item.type === 'save_pct');
-      return {
-        ...row,
-        card,
-        boost,
-        score_breakdown: needsSavePctBreakdown
-          ? buildFantasyBreakdown(row.stats, 'G', boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: getCardsConfig().scoring })
-          : row.score_breakdown
-      };
+    placements: placements.map(row => {
+      const printedKey = String(row.card_snapshot?.chemistry_key || '');
+      const adoptedKey = String(row.journeyman_key_effective || row.journeyman_key || '');
+      const adopted = adoptedKey && adoptedKey !== printedKey ? visualsByChemistry.get(adoptedKey) : null;
+      return adopted?.logo && row.card
+        ? { ...row, card: { ...row.card, matchTeamLogo: adopted.logo, matchTeamBgColor: adopted.background, matchTeamName: adopted.name } }
+        : row;
     })
   };
 }
@@ -1445,9 +1682,33 @@ function decorateArenaMatch(match, allCards, boosts) {
 async function buildArenaCardsHub(userId, query = {}) {
   const catalog = await processArena(new Date()) || await getCardsCatalog();
   const catalogByKey = cardsCatalogMap(catalog);
+  reconcileWutTrinketPositions(userId, arenaCatalogByIdentity(catalog));
   const owned = getCardsOwnedState(userId);
   const config = getCardsConfig();
-  const cards = owned.cards.map(card => decorateOwnedCard(card, catalogByKey));
+  const membership = getWutMembershipState(userId);
+  if (membership.starterOpened) {
+    const settings = getAdminSettings();
+    try {
+      const opportunities = await buildWutMissionBetOpportunities({
+        seasonId: settings.seasonId,
+        week: settings.currentWeek
+      });
+      setWutMissionBetOpportunities({
+        week: settings.currentWeek,
+        opportunities,
+        locked: isWeekLocked(settings.currentWeek)
+      });
+    } catch (err) {
+      console.error('Could not refresh WUT sportsbook mission options:', err);
+    }
+  }
+  const wut = membership.starterOpened ? getWutSystemsState(userId) : { wutCoins: 0, decks: [], trinkets: [], shop: null, config: getCardsConfig().wut };
+  const trinketsById = new Map((wut.trinkets || []).map(item => [Number(item.id), item]));
+  const cards = owned.cards.map(card => {
+    const decorated = decorateOwnedCard(card, catalogByKey);
+    const trinket = trinketsById.get(Number(card.trinket_id)) || null;
+    return { ...decorated, trinket, power: calculateWutPower(decorated.player?.tier, trinket?.rarity, wut.config) };
+  });
   const boosts = owned.boosts.map(boost => ({
     ...boost,
     effect: config.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect || DEFAULT_BOOST_EFFECTS[boost.boost_type]?.[boost.rarity]
@@ -1478,10 +1739,12 @@ async function buildArenaCardsHub(userId, query = {}) {
   cards.sort((a, b) => (CARD_STARS[b.player?.tier] || 0) - (CARD_STARS[a.player?.tier] || 0) || String(a.player?.name).localeCompare(String(b.player?.name)));
   return {
     arena,
-    wutMembership: getWutMembershipState(userId),
-    cards: cards.map(card => ({ ...card, arenaLocked: lockedCardIds.has(Number(card.id)) && card.player?.tier !== 'common' })),
+    wutMembership: membership,
+    wut,
+    cards: cards.map(card => ({ ...card, arenaLocked: false })),
     boosts: boosts.filter(boost => !boost.consumed).map(boost => ({ ...boost, arenaLocked: lockedBoostIds.has(Number(boost.id)) })),
     balance: getUserById(userId)?.balance || 0,
+    wutCoins: Number(wut.wutCoins || 0),
     adminArena: getArenaAdminState(),
     replayMatchId: Number(query.replay || query.reveal || 0) || null,
     revealMatchId: Number(query.reveal || 0) || null,
@@ -1512,6 +1775,10 @@ app.get('/cards', requireLogin, async (req, res, next) => {
   }
 });
 
+app.get('/cards/guide', requireLogin, (req, res) => {
+  res.render('cards_guide');
+});
+
 app.post('/cards/wut/join', requireLogin, (req, res) => {
   try {
     joinWut(req.session.userId);
@@ -1527,13 +1794,26 @@ app.post('/cards/wut/starter-pack', requireLogin, async (req, res) => {
     const membership = getWutMembershipState(req.session.userId);
     if (!membership.joined) throw new Error('Join WUT before opening your starter pack.');
     if (membership.starterOpened) throw new Error('Your WUT starter pack has already been opened.');
-    const items = generateWutStarterPack(await getCardsCatalog());
-    openWutStarterPack({ userId: req.session.userId, items });
-    req.session.flash = { type: 'success', message: 'Starter pack opened: 2 forwards, 2 defense, and 1 goalie added to your collection.' };
+    const catalog = await getCardsCatalog();
+    const config = getCardsConfig();
+    const items = generateWutStarterPack(catalog);
+    const bonusPackItems = generateWutPlayerPack({ packType: 'standard', catalog, config });
+    openWutStarterPack({ userId: req.session.userId, items, bonusPackItems });
+    req.session.flash = { type: 'success', message: 'Starter pack opened: 2F, 2D, 1G, two Common trinkets, and a free Standard pack waiting in the WUT Shop.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/cards');
+});
+
+app.post('/cards/missions/claim', requireLogin, requireWutReady, (req, res) => {
+  try {
+    const result = claimWutMission({ userId: req.session.userId, period: req.body.period, missionId: req.body.mission_id });
+    req.session.flash = { type: 'success', message: `${result.mission.reward} WUT Coins claimed from ${result.mission.title}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards#missions');
 });
 
 app.get('/cards/collection', requireLogin, requireWutReady, async (req, res, next) => {
@@ -1551,6 +1831,11 @@ app.get('/cards/arena/matches/:matchId', requireLogin, requireWutReady, async (r
     const match = [...payload.arena.activeMatches, ...payload.arena.readyMatches, ...payload.arena.history]
       .find(item => Number(item.id) === matchId);
     if (!match) return res.status(404).send('WUT match not found.');
+    if (Number(match.rules_version || 1) >= 2) {
+      const snapshotIds = new Set([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => Number(card.card_id)));
+      const snapshots = new Map([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
+      payload.cards = payload.cards.filter(card => snapshotIds.has(Number(card.id))).map(card => ({ ...card, power: snapshots.get(Number(card.id))?.power, trinket: snapshots.get(Number(card.id))?.trinket || null }));
+    }
     return res.render('cards_match', { ...payload, match });
   } catch (err) {
     return next(err);
@@ -1565,9 +1850,10 @@ app.get('/cards/arena/history', requireLogin, requireWutReady, async (req, res, 
   }
 });
 
-app.post('/cards/arena/enter', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/arena/enter', requireLogin, requireWutReady, async (req, res) => {
   try {
-    const entry = enterArenaQueue(req.session.userId);
+    const catalog = await getCardsCatalog();
+    const entry = enterArenaQueue(req.session.userId, req.body.deck_id, arenaCatalogByIdentity(catalog));
     req.session.flash = { type: 'success', message: entry.matchmakingTriggered ? 'Queue reached 10 players. Matchmaking ran immediately.' : 'WUT entry confirmed. Matchmaking will assign your opponent.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -1581,7 +1867,8 @@ app.post('/cards/arena/matches/:matchId/turn', requireLogin, requireWutReady, as
     const placements = Array.from({ length: count }, (_, index) => ({
       slot: req.body[`slot_${index}`],
       cardId: req.body[`card_id_${index}`],
-      boostId: req.body[`boost_id_${index}`] || null
+      boostId: req.body[`boost_id_${index}`] || null,
+      journeymanKey: req.body[`journeyman_key_${index}`] || ''
     }));
     const catalog = await getCardsCatalog();
     commitArenaTurn({
@@ -1611,7 +1898,7 @@ app.post('/cards/arena/matches/:matchId/reveal', requireLogin, requireWutReady, 
 app.post('/cards/arena/matches/:matchId/claim', requireLogin, requireWutReady, (req, res) => {
   try {
     const result = claimArenaWinnings(req.session.userId, req.params.matchId);
-    req.session.flash = { type: 'success', message: `${result.prize} Mushybux collected.` };
+    req.session.flash = { type: 'success', message: result.alreadyAwarded ? `${result.prize} WUT Coins were already awarded.` : `${result.prize} legacy Mushybux collected.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
@@ -1640,6 +1927,39 @@ app.post('/cards/arena/admin/recalculate-elo', requireAdmin, (req, res) => {
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/cards#arena-admin');
+});
+
+app.get('/cards/arena/debug', requireAdmin, requireWutReady, async (req, res, next) => {
+  try {
+    const payload = await buildArenaCardsHub(req.session.userId);
+    let debugMatch = getWutDebugMatch(req.session.userId);
+    if (!debugMatch) debugMatch = resetWutDebugMatch(req.session.userId);
+    const needsRevealData = debugMatch.status === 'completed' && debugMatch.placements.some(row =>
+      !Array.isArray(row.rolled_games) || !Array.isArray(row.scoring_effects) || Number(row.reveal_data_version || 0) < 8
+    );
+    if (needsRevealData && queueWutDebugRescore(req.session.userId)) {
+      await scorePendingArenaMatches();
+      debugMatch = getWutDebugMatch(req.session.userId);
+    }
+    debugMatch = decorateArenaMatch(debugMatch, payload.cards, payload.boosts);
+    res.render('cards_debug', { ...payload, debugMatch });
+  } catch (err) { next(err); }
+});
+
+app.post('/cards/arena/debug/reset', requireAdmin, requireWutReady, (req, res) => {
+  resetWutDebugMatch(req.session.userId);
+  req.session.flash = { type: 'success', message: 'Admin debug game reset.' };
+  res.redirect('/cards/arena/debug');
+});
+
+app.post('/cards/arena/debug/place', requireAdmin, requireWutReady, async (req, res) => {
+  try {
+    const catalog = await getCardsCatalog();
+    commitWutDebugPlacement({ adminUserId: req.session.userId, side: req.body.side, slot: req.body.slot,
+      cardId: req.body.card_id, boostId: req.body.boost_id || null, journeymanKey: req.body.journeyman_key || '', catalogByIdentity: arenaCatalogByIdentity(catalog) });
+    await scorePendingArenaMatches(catalog);
+  } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/cards/arena/debug');
 });
 
 app.post('/cards/legacy-lineup/calculate', requireLogin, async (req, res) => {
@@ -1783,6 +2103,8 @@ app.get('/cards/store', requireLogin, requireWutReady, async (req, res, next) =>
     res.render('cards_store', {
       config: getCardsConfig(),
       balance: getUserById(req.session.userId)?.balance || 0,
+      wut: getWutSystemsState(req.session.userId),
+      wutCoins: getWutSystemsState(req.session.userId).wutCoins,
       pendingPack: decoratedPack
     });
   } catch (err) {
@@ -1794,15 +2116,13 @@ app.post('/cards/store/buy', requireLogin, requireWutReady, async (req, res) => 
   try {
     const packKind = String(req.body.pack_kind || '');
     const packType = String(req.body.pack_type || '');
-    if (!['player', 'boost'].includes(packKind) || !['standard', 'premium', 'prestige'].includes(packType)) {
+    if (packKind !== 'player' || !['standard', 'premium', 'prestige'].includes(packType)) {
       throw new Error('Invalid pack selection.');
     }
     const config = getCardsConfig();
     const catalog = await getCardsCatalog();
-    const items = packKind === 'player'
-      ? generatePlayerPack({ packType, catalog, config })
-      : generateBoostPack({ packType, config });
-    const prices = packKind === 'player' ? config.playerPackPrices : config.boostPackPrices;
+    const items = generateWutPlayerPack({ packType, catalog, config });
+    const prices = config.playerPackPrices;
     createCardsPackPurchase({
       userId: req.session.userId,
       week: getAdminSettings().currentWeek,
@@ -1815,6 +2135,44 @@ app.post('/cards/store/buy', requireLogin, requireWutReady, async (req, res) => 
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/cards/store');
+});
+
+app.get('/cards/decks', requireLogin, requireWutReady, async (req, res, next) => {
+  try { res.render('cards_decks', await buildArenaCardsHub(req.session.userId)); } catch (err) { next(err); }
+});
+
+app.post('/cards/decks/save', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const catalog = await getCardsCatalog();
+    saveWutDeck({ userId: req.session.userId, deckId: req.body.deck_id || null, name: req.body.name,
+      activeCardIds: [].concat(req.body.active_card_ids || []), benchCardIds: [].concat(req.body.bench_card_ids || []),
+      catalogByIdentity: arenaCatalogByIdentity(catalog) });
+    req.session.flash = { type: 'success', message: 'WUT deck saved.' };
+  } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/cards/decks');
+});
+
+app.post('/cards/decks/slot', requireLogin, requireWutReady, (req, res) => {
+  try { buyWutDeckSlot(req.session.userId); req.session.flash = { type: 'success', message: 'Extra saved deck slot purchased.' }; }
+  catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/cards/decks');
+});
+
+app.post('/cards/trinkets/buy', requireLogin, requireWutReady, (req, res) => {
+  try { buyWutTrinket({ userId: req.session.userId, slot: req.body.slot }); req.session.flash = { type: 'success', message: 'Trinket added to inventory.' }; }
+  catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/store');
+});
+app.post('/cards/trinkets/reroll', requireLogin, requireWutReady, (req, res) => {
+  try { rerollWutTrinketShop({ userId: req.session.userId, currency: req.body.currency }); req.session.flash = { type: 'success', message: 'Trinket shop rerolled.' }; }
+  catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/store');
+});
+app.post('/cards/trinkets/attach', requireLogin, requireWutReady, async (req, res) => {
+  try { attachWutTrinket({ userId: req.session.userId, cardId: req.body.card_id, trinketId: req.body.trinket_id, catalogByIdentity: arenaCatalogByIdentity(await getCardsCatalog()) }); req.session.flash = { type: 'success', message: 'Trinket attached.' }; }
+  catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/collection');
+});
+app.post('/cards/trinkets/remove', requireLogin, requireWutReady, (req, res) => {
+  try { removeWutTrinket({ userId: req.session.userId, cardId: req.body.card_id, currency: req.body.currency }); req.session.flash = { type: 'success', message: 'Trinket removed.' }; }
+  catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/collection');
 });
 
 app.post('/cards/store/claim', requireLogin, requireWutReady, (req, res) => {
@@ -2226,11 +2584,42 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       cardStars: CARD_STARS,
       cardCooldowns: CARD_COOLDOWNS,
       boostEffects: cardsAdmin.config.boostEffects,
-      boostTypes: BOOST_TYPES
+      boostTypes: BOOST_TYPES,
+      trinketAdminFields: WUT_TRINKET_ADMIN_FIELDS
     });
   } catch (err) {
     next(err);
   }
+});
+
+app.get('/admin/cards/matches', requireAdmin, (req, res, next) => {
+  try {
+    const selectedUserId = Number(req.query.user_id) || null;
+    res.render('admin_cards_matches', {
+      arenaMatches: getArenaAdminMatchState({ userId: selectedUserId })
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/admin/cards/matches/:matchId/void', requireAdmin, (req, res) => {
+  try {
+    const result = adminVoidArenaMatch({
+      matchId: req.params.matchId,
+      adminUserId: req.session.userId,
+      reason: req.body.reason
+    });
+    const released = result.releasedBoostIds.length
+      ? ` ${result.releasedBoostIds.length} committed boost${result.releasedBoostIds.length === 1 ? '' : 's'} returned.`
+      : '';
+    const refunded = result.refundedMushybux ? ` ${result.refundedMushybux} Mushybux refunded.` : '';
+    req.session.flash = { type: 'success', message: `WUT match #${result.match.id} cancelled and voided.${released}${refunded}` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  const userId = Number(req.body.return_user_id) || '';
+  res.redirect(`/admin/cards/matches${userId ? `?user_id=${userId}` : ''}`);
 });
 
 
@@ -2347,10 +2736,17 @@ app.post('/admin/cards/retroactive-assignment', requireAdmin, (req, res) => {
 app.post('/admin/cards/config', requireAdmin, (req, res) => {
   try {
     saveCardsConfig(req.body);
-    req.session.flash = { type: 'success', message: 'Cards economy and scoring settings saved.' };
+    req.session.flash = { type: 'success', message: 'WUT economy, match rules, boosts, missions, and trinket balance saved.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/free-shop', requireAdmin, (req, res) => {
+  const enabled = String(req.body.enabled || '') === 'true';
+  setWutFreeShopPurchases(enabled);
+  req.session.flash = { type: 'success', message: enabled ? 'Free WUT shop purchases enabled for testing.' : 'Normal WUT shop pricing restored.' };
   res.redirect('/admin#cards-controls');
 });
 
@@ -2403,7 +2799,13 @@ app.post('/admin/cards/grant', requireAdmin, async (req, res) => {
     const catalog = await getCardsCatalog();
     const itemType = String(req.body.item_type || 'player');
     let item;
-    if (itemType === 'boost') {
+    if (itemType === 'trinket') {
+      item = {
+        itemType: 'trinket',
+        family: String(req.body.trinket_family || ''),
+        rarity: String(req.body.rarity || 'common')
+      };
+    } else if (itemType === 'boost') {
       const rarity = String(req.body.rarity || 'common');
       const boostType = String(req.body.boost_type || 'goal');
       item = {
@@ -2519,10 +2921,19 @@ app.post('/admin/void-series', requireAdmin, async (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/lock', requireAdmin, (req, res) => {
+app.post('/admin/lock', requireAdmin, async (req, res) => {
   const settings = getAdminSettings();
-  setWeekLocked(settings.currentWeek, true);
-  req.session.flash = { type: 'success', message: `Week ${settings.currentWeek} betting locked.` };
+  try {
+    const opportunities = await buildWutMissionBetOpportunities({
+      seasonId: settings.seasonId,
+      week: settings.currentWeek
+    });
+    setWutMissionBetOpportunities({ week: settings.currentWeek, opportunities, locked: true });
+    setWeekLocked(settings.currentWeek, true);
+    req.session.flash = { type: 'success', message: `Week ${settings.currentWeek} betting locked with ${opportunities.length} WUT mission option(s).` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: `Betting was not locked: ${err.message}` };
+  }
   res.redirect('/admin');
 });
 

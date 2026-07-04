@@ -1,18 +1,25 @@
 <%
   const visualFantasy = card?.fantasyAppearances || { gamesPlayed: 0, fp: 0, stats: {} };
+  const visualWutMatches = card?.wutMatchStats || { matchesPlayed: 0, fp: 0, fpPerMatch: 0 };
   const visualStats = visualFantasy.stats || {};
   const visualPlayer = card?.player || {};
   const visualEdition = String(visualPlayer.edition || '').trim().toUpperCase();
   const visualCardArt = String(visualPlayer.cardArt || visualPlayer.card_art || card?.card_art || visualEdition || 'S3').trim().toUpperCase();
   const visualEditionStats = visualPlayer.editionStats || visualPlayer.seasonStats?.[visualPlayer.edition] || {};
   const visualRarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
+  const visualTrinketIcons = WUT_TRINKET_ICONS;
+  const visualTrinketEffectText = wutTrinketDescription;
   const visualTitleCase = value => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+  const visualTrinketName = wutTrinketName;
   const visualName = (() => {
     const edition = String(visualPlayer.edition || '').trim();
     const name = String(visualPlayer.name || '').trim();
     return edition && name.toUpperCase().startsWith(`${edition.toUpperCase()} `) ? name.slice(edition.length).trim() : name;
   })();
-  const visualTeamName = visualPlayer.teamDisplayName || visualPlayer.teamName || visualPlayer.teamId || 'Team';
+  const visualPrintedTeamLogo = visualPlayer.teamLogo || '';
+  const visualTeamLogo = card?.matchTeamLogo || visualPrintedTeamLogo;
+  const visualTeamBgColor = card?.matchTeamBgColor || visualPlayer.teamBgColor;
+  const visualTeamName = card?.matchTeamName || visualPlayer.teamDisplayName || visualPlayer.teamName || visualPlayer.teamId || 'Team';
   const visualSeason = visualPlayer.cardType === 'mythic'
     ? `${visualPlayer.sourceSeason || ''}${String(visualPlayer.sourceStage || '').toLowerCase() === 'playoffs' ? ' PO' : ''}`
     : visualPlayer.edition;
@@ -20,15 +27,19 @@
 %>
 <div class="arena-wut-card-inner">
   <div class="arena-wut-card-face wut-card-face wut-card-front" data-card-edition="<%= visualCardArt %>">
+    <% if (card?.power) { %><span class="wut-power-badge" title="Power = card rarity value + attached trinket rarity value. Common 1 · Uncommon 2 · Rare 3 · Epic 4 · Legendary 5 · Mythic card 6. Boosts add no Power.">P<%= card.power %></span><% } %>
+    <% if (card?.trinket) { %><span class="wut-trinket-badge tier-<%= card.trinket.rarity %>" data-trinket-family="<%= card.trinket.family %>" title="<%= visualTrinketName(card.trinket.family) %> · <%= visualTitleCase(card.trinket.rarity) %> · +<%= visualRarityRank[card.trinket.rarity] %> Power
+<%= visualTrinketEffectText(card.trinket) %>"><%= visualTrinketIcons[card.trinket.family] || '◆' %></span><% } %>
     <div class="wut-front-badge <%= visualPlayer.cardType === 'mythic' ? 'is-position-only' : '' %>">
       <% if (visualPlayer.cardType !== 'mythic') { %><span><%= visualPlayer.edition %></span><% } %>
       <strong><%= visualPlayer.position %></strong>
     </div>
     <div class="wut-front-copy">
       <strong class="player-card-name"><%= visualName %></strong>
-      <span class="wut-front-stat">GP: <%= visualFantasy.gamesPlayed || 0 %> - FP: <%= visualFantasy.fp || 0 %></span>
+      <span class="wut-front-stat">MP: <%= visualWutMatches.matchesPlayed || 0 %> - FP/M: <%= Number(visualWutMatches.fpPerMatch || 0).toFixed(1) %></span>
     </div>
-    <% if (visualPlayer.teamLogo) { %><img class="wut-front-logo" src="<%= visualPlayer.teamLogo %>" alt="" style="--team-bg:<%= visualPlayer.teamBgColor %>"><% } %>
+    <% if (visualPrintedTeamLogo) { %><img class="wut-front-logo <%= card?.matchTeamLogo ? 'wut-front-logo-original' : '' %>" src="<%= visualPrintedTeamLogo %>" alt="" style="--team-bg:<%= visualPlayer.teamBgColor %>"><% } %>
+    <% if (card?.matchTeamLogo) { %><img class="wut-front-logo wut-front-logo-adopted" src="<%= visualTeamLogo %>" alt="" style="--team-bg:<%= visualTeamBgColor %>"><% } %>
   </div>
   <div class="arena-wut-card-face arena-wut-card-back wut-card-face wut-card-back" data-card-edition="<%= visualCardArt %>">
     <div class="wut-back-header">
@@ -60,7 +71,7 @@
     <% if (visualPlayer.cardType === 'mythic') { %>
       <div class="wut-back-flavor"><span><%= visualPlayer.flavorText || visualStatus %></span></div>
     <% } else { %>
-      <div class="wut-back-player"><strong><%= visualTeamName %></strong><small><%= visualStatus %></small><% if (visualPlayer.teamLogo) { %><img src="<%= visualPlayer.teamLogo %>" alt="" style="--team-bg:<%= visualPlayer.teamBgColor %>"><% } %></div>
+      <div class="wut-back-player"><strong><%= visualTeamName %></strong><small><%= visualStatus %></small><% if (visualTeamLogo) { %><img src="<%= visualTeamLogo %>" alt="" style="--team-bg:<%= visualTeamBgColor %>"><% } %></div>
     <% } %>
   </div>
 </div>

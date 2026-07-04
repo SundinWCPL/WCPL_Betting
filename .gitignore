@@ -10,6 +10,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 *.tmp
+tmp/
 
 # OS/editor junk
 .DS_Store
@@ -18,3 +19,8 @@ Thumbs.db
 .idea/
 
 data/
+!data/
+data/*
+!data/S1/
+data/S1/*
+!data/S1/s1_wut_synthetic_games.csv
