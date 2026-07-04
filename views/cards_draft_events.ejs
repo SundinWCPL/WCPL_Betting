@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WUT Draft Events</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const feeLabel = fee => fee.currency === 'free' || !fee.amount ? 'Free' : `${fee.amount} ${fee.currency === 'wut_coin' ? 'WUT Coins' : 'Mushybux'}`;
+    const phaseLabel = phase => phase.replaceAll('_', ' ');
+    const rewardLabel = reward => reward.type === 'player_pack' ? `${reward.quantity}× ${reward.packType} pack` : reward.type === 'wut_coins' ? `${reward.amount * reward.quantity} WUT Coins` : reward.type === 'random_trinket' ? `${reward.quantity}× ${reward.rarity === 'any' ? 'random' : reward.rarity} trinket` : `${reward.quantity}× ${String(reward.rarity)} ${String(reward.family || '').replaceAll('_', ' ')}`;
+  %>
+  <main class="container cards-page draft-lobby-page">
+    <section class="card page-title cards-title">
+      <div><p class="eyebrow">Live limited-format tournaments</p><h1>Booster Draft Events</h1><p>Draft a temporary collection, build a deck, and play for permanent prizes.</p></div>
+      <div class="cards-title-actions"><span class="cards-balance"><%= wutCoins %> WUT Coins</span><span class="pill"><%= mushybux %> Mushybux</span><a class="button-link ghost" href="/cards">← WUT Hub</a></div>
+    </section>
+
+    <% if (!draftEvents.length) { %><section class="card arena-empty"><h2>No Draft Events Scheduled</h2><p class="muted">Upcoming drafts will appear here when an admin publishes them.</p></section><% } %>
+    <div class="draft-lobby-grid">
+      <% draftEvents.forEach(event => { const fee = event.config.basic.entryFee; const activeEntrants = event.entrants.filter(row => row.status === 'active'); const full = event.config.basic.maximumEntrants != null && activeEntrants.length >= event.config.basic.maximumEntrants; %>
+        <article class="card draft-lobby-event <%= event.joined_by_user ? 'is-joined' : '' %>">
+          <div class="draft-lobby-event-head"><div><span class="pill"><%= phaseLabel(event.phase) %></span><% if (event.paused_at) { %> <span class="pill negative">paused</span><% } %><h2><%= event.config.basic.name %></h2></div><strong class="draft-entry-fee"><%= feeLabel(fee) %></strong></div>
+          <p><%= event.config.basic.description %></p>
+          <div class="draft-lobby-facts"><span><strong><%= activeEntrants.length %><%= event.config.basic.maximumEntrants ? `/${event.config.basic.maximumEntrants}` : '' %></strong> entered</span><span><strong><%= event.config.basic.minimumEntrants %></strong> minimum</span><span><strong><%= event.config.boosters.countPerPlayer %></strong> boosters</span><span><strong><%= event.config.tournament.format.replaceAll('_', ' ') %></strong> format</span><span><strong><%= event.config.draft.pickSeconds %>s</strong> picks</span></div>
+          <div class="draft-lobby-rules"><span>Each pack: <%= event.config.boosters.contents.players %> players · <%= event.config.boosters.contents.boosts %> boosts · <%= event.config.boosters.contents.trinkets %> trinkets</span><span>Starts: <%= event.config.scheduling.startsAt ? new Date(event.config.scheduling.startsAt).toLocaleString() : 'Admin-started' %></span></div>
+          <details><summary>Prizes & entrants</summary><div class="draft-lobby-details"><section><h3>Prizes</h3><% event.config.prizes.tiers.forEach(tier => { %><p><strong><%= tier.label %>:</strong> <%= tier.rewards.map(rewardLabel).join(' · ') || 'No reward' %></p><% }) %></section><section><h3>Entrants</h3><% if (!activeEntrants.length) { %><p class="muted">Be the first to join.</p><% } %><div class="draft-entrant-chips"><% activeEntrants.forEach(entrant => { %><span class="pill"><%= entrant.display_name %></span><% }) %></div></section></div></details>
+          <div class="draft-lobby-action">
+            <a class="button-link ghost" href="/cards/drafts/<%= event.id %>">Open Event</a>
+            <% if (event.joined_by_user) { %><span class="pill positive">You’re entered</span><% if (event.phase === 'signup_open' && event.config.signup.allowWithdrawal) { %><form method="post" action="/cards/drafts/<%= event.id %>/withdraw" onsubmit="return confirm('Withdraw from <%= event.config.basic.name.replaceAll("'", "\\'") %>? Your entry fee will be refunded.');"><button class="danger">Withdraw & Refund</button></form><% } %>
+            <% } else if (event.phase === 'signup_open' || (event.phase === 'signup_closed' && event.config.signup.allowLateSignup)) { %><form method="post" action="/cards/drafts/<%= event.id %>/join" onsubmit="return confirm('Join <%= event.config.basic.name.replaceAll("'", "\\'") %> for <%= feeLabel(fee) %>?');"><button <%= full || event.paused_at ? 'disabled' : '' %>><%= full ? 'Event Full' : event.paused_at ? 'Event Paused' : event.phase === 'signup_closed' ? `Late Join for ${feeLabel(fee)}` : `Join for ${feeLabel(fee)}` %></button></form>
+            <% } else { %><span class="pill"><%= event.phase === 'scheduled' ? 'Signup opens soon' : 'Signup closed' %></span><% } %>
+          </div>
+        </article>
+      <% }) %>
+    </div>
+  </main>
+</body>
+</html>

@@ -9,13 +9,18 @@ const dbPath = path.join(os.tmpdir(), `wcpl-wut-${process.pid}.json`);
 process.env.JSON_DB_PATH = dbPath;
 const db = await import('../db.js');
 const cards = await import('../services/cards.js');
+const draftEvents = await import('../services/wutDraftEvents.js');
 
 test.after(() => { try { fs.unlinkSync(dbPath); } catch {} });
 
-test('Power includes card and trinket rarity, never boosts', () => {
+test('Power uses card rarity plus the reduced trinket scale, never boosts', () => {
   assert.equal(db.calculateWutPower('common'), 1);
-  assert.equal(db.calculateWutPower('common', 'legendary'), 6);
-  assert.equal(db.calculateWutPower('legendary', 'legendary'), 10);
+  assert.equal(db.calculateWutPower('common', 'common'), 1);
+  assert.equal(db.calculateWutPower('common', 'uncommon'), 1.5);
+  assert.equal(db.calculateWutPower('common', 'rare'), 2);
+  assert.equal(db.calculateWutPower('common', 'epic'), 2.5);
+  assert.equal(db.calculateWutPower('common', 'legendary'), 3.5);
+  assert.equal(db.calculateWutPower('legendary', 'legendary'), 7.5);
   assert.equal(db.calculateWutPower('mythic'), 6);
 });
 
@@ -158,6 +163,23 @@ test('arena matchmaking globally minimizes ELO gaps and skips only the newest od
   assert.deepEqual(even.pairs.map(pair => pair.map(entry => entry.user_id)), [[2, 1], [3, 4]]);
 });
 
+test('arena matchmaking avoids prior opponents before minimizing ELO gaps', () => {
+  const entries = [
+    { id: 1, user_id: 1, elo: 1000, created_at: '2026-01-01T00:00:00.000Z' },
+    { id: 2, user_id: 2, elo: 1001, created_at: '2026-01-01T00:01:00.000Z' },
+    { id: 3, user_id: 3, elo: 1100, created_at: '2026-01-01T00:02:00.000Z' },
+    { id: 4, user_id: 4, elo: 1101, created_at: '2026-01-01T00:03:00.000Z' }
+  ];
+  const prior = new Set(['1:2', '3:4']);
+  const havePlayed = (a, b) => prior.has([a.user_id, b.user_id].sort((x, y) => x - y).join(':'));
+  const result = db.pairArenaQueueEntriesByElo(entries, entry => entry.elo, havePlayed);
+  assert.ok(result.pairs.every(([a, b]) => !havePlayed(a, b)), 'a complete fresh-opponent pairing exists');
+  assert.deepEqual(result.pairs.map(pair => pair.map(entry => entry.user_id)), [[1, 3], [2, 4]]);
+
+  const onlyPair = db.pairArenaQueueEntriesByElo(entries.slice(0, 2), entry => entry.elo, havePlayed);
+  assert.deepEqual(onlyPair.pairs.map(pair => pair.map(entry => entry.user_id)), [[1, 2]], 'a rematch is allowed when no alternative exists');
+});
+
 test('committed match cards are removed from that player’s available deck', () => {
   const available = cards.availableWutMatchCards(
     [{ id: 10 }, { id: 11 }, { id: 12 }],
@@ -227,6 +249,621 @@ test('new WUT users receive the complete starter bundle', () => {
   assert.equal(completedDebug.status, 'completed');
   assert.equal(completedDebug.winner_side, 'A');
   assert.equal(db.getWutMembershipState(1).wutCoins, 0, 'debug games never award currency');
+});
+
+function createDraftTournamentFixture({ name, entrantCount, tournament, match = {}, deckbuilding = {} }) {
+  const userIds = [1];
+  for (let index = 1; index < entrantCount; index += 1) {
+    const user = db.addUser({ username: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${index}-${Date.now()}`, password: 'test-password', displayName: `${name} Player ${index + 1}` });
+    db.joinWut(user.id);
+    db.openWutStarterPack({ userId: user.id, items: ['F', 'F', 'D', 'D', 'G'].map((position, cardIndex) => ({ itemType: 'player', rolledTier: 'common', position, cardIdentity: `S3|${name}|USER${index}|${cardIndex}`, catalogKey: `S3|${name}|USER${index}|${cardIndex}`, edition: 'S3', divisionId: name, playerKey: `${index}-${cardIndex}` })) });
+    userIds.push(user.id);
+  }
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name, entryFee: { currency: 'free', amount: 0 }, minimumEntrants: entrantCount, maximumEntrants: entrantCount, allowOddEntrants: true, visibility: 'private' },
+      safetyBench: { mode: 'random_shared', rarityMin: 'common', rarityMax: 'common' },
+      boosters: { countPerPlayer: 1, contents: { players: 1, boosts: 0, trinkets: 0 }, rarityOdds: { players: { common: 100 } }, pool: { allowDuplicateInBooster: false, allowDuplicateInEvent: true } },
+      draft: { pickSeconds: 30, autopick: { enabled: true, priority: ['player', 'rarity', 'random'] } },
+      deckbuilding: { seconds: 300, activeMinimum: 1, activeMaximum: 1, ...deckbuilding },
+      tournament: { automaticNextRound: true, betweenRoundSeconds: 0, ...tournament },
+      match: { turnSeconds: 300, openingTimeout: 'forfeit', laterTimeout: 'forfeit', boostLoadCap: 5, boostsMode: 'tournament_consumable', simultaneousMatches: true, ...match },
+      prizes: { tiers: [] }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  userIds.forEach(userId => db.joinWutDraftEvent({ eventId: event.id, userId }));
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  const pool = [
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|${name}|F${index}`, displayName: `${name} F${index}`, edition: 'S3', position: 'F', tier: 'common' })),
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|${name}|D${index}`, displayName: `${name} D${index}`, edition: 'S3', position: 'D', tier: 'common' })),
+    ...Array.from({ length: 2 }, (_, index) => ({ cardIdentity: `S3|${name}|G${index}`, displayName: `${name} G${index}`, edition: 'S3', position: 'G', tier: 'common' }))
+  ];
+  const config = db.getCardsConfig();
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards: pool, rules: { scoring: config.scoring, boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues, slotPowerAllowance: config.wut.slotPowerAllowance } }, adminUserId: 1 });
+  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
+  while (db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase === 'draft') db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
+  let current = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  for (const userId of userIds) {
+    const inventory = current.inventories[String(userId)];
+    const drafted = inventory.cards.find(card => !(inventory.safety_bench_card_ids || []).map(Number).includes(Number(card.id)));
+    db.saveWutDraftEventDeck({ eventId: event.id, userId, activeCardIds: [drafted.id] });
+  }
+  return { eventId: event.id, userIds };
+}
+
+test('draft event foundation persists configurable events, presets, phases, and audit logs', () => {
+  const nightly = db.getWutDraftEventPresets().find(preset => preset.key === 'nightly-booster-draft');
+  assert.ok(nightly?.system);
+  assert.equal(nightly.config.boosters.countPerPlayer, 3, 'Nightly values belong to a preset, not engine constants');
+
+  const config = draftEvents.normalizeWutDraftEventConfig({
+    basic: {
+      name: 'Seven Player Trinket Madness', entryFee: { currency: 'free', amount: 999 },
+      minimumEntrants: 3, maximumEntrants: 7, allowOddEntrants: true, visibility: 'private', allowManualStartBelowMinimum: true
+    },
+    safetyBench: { mode: 'random_shared', rarityMin: 'common', rarityMax: 'uncommon' },
+    boosters: {
+      countPerPlayer: 4, contents: { players: 4, boosts: 2, trinkets: 5 },
+      rarityOdds: {
+        players: { common: 100 }, boosts: { rare: 100 }, trinkets: { legendary: 100 }
+      }
+    },
+    draft: { pickSeconds: 25, passDirections: ['right'] },
+    tournament: { format: 'round_robin', roundRobin: { meetings: 2 } },
+    match: { turnSeconds: 300, boostsMode: 'refresh_each_match' },
+    prizes: { tiers: [{ key: 'participants', label: 'Everyone', participant: true, rewards: [{ type: 'wut_coins', amount: 25 }] }] }
+  });
+  assert.equal(config.basic.entryFee.amount, 0);
+  assert.deepEqual(config.draft.passDirections, ['right', 'right', 'right', 'right']);
+  assert.deepEqual(config.boosters.contents, { players: 4, boosts: 2, trinkets: 5 });
+  assert.equal(config.tournament.roundRobin.meetings, 2);
+
+  const preset = db.saveWutDraftEventPreset({
+    name: 'Trinket Madness', description: 'Reusable odd-player event', config, adminUserId: 1
+  });
+  const event = db.createWutDraftEvent({ presetId: preset.id, adminUserId: 1 });
+  assert.equal(event.phase, 'scheduled');
+  assert.equal(event.config.basic.maximumEntrants, 7);
+  assert.deepEqual(event.inventories, {});
+  assert.ok(event.logs.some(entry => entry.type === 'event_created'));
+  assert.ok(event.logs.some(entry => entry.type === 'preset_loaded'));
+  assert.equal(db.getWutDraftEvents().some(item => item.id === event.id), false, 'private events stay out of public listings');
+  assert.equal(db.getWutDraftEvents({ includePrivate: true }).some(item => item.id === event.id), true);
+
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  const paused = db.pauseWutDraftEvent({ eventId: event.id, adminUserId: 1, reason: 'Intermission' });
+  assert.ok(paused.paused_at);
+  assert.throws(() => db.startWutDraftEvent({ eventId: event.id, environment: { cards: [] }, adminUserId: 1 }), /Resume/);
+  const resumed = db.resumeWutDraftEvent({ eventId: event.id, adminUserId: 1 });
+  assert.equal(resumed.paused_at, null);
+  const starting = db.startWutDraftEvent({ eventId: event.id, environment: { cards: [{ cardIdentity: 'S3|TEST|one', tier: 'common' }], rules: { marker: 'frozen' } }, adminUserId: 1 });
+  assert.equal(starting.phase, 'starting');
+  assert.equal(starting.environment_snapshot.rules.marker, 'frozen');
+  assert.ok(starting.logs.some(entry => entry.type === 'event_paused'));
+  assert.ok(starting.logs.some(entry => entry.type === 'event_resumed'));
+  assert.throws(() => db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'tournament', adminUserId: 1 }), /Cannot move/);
+});
+
+test('every seat receives the same per-round draft booster composition blueprint', () => {
+  const config = draftEvents.normalizeWutDraftEventConfig({
+    boosters: {
+      countPerPlayer: 2, contents: { players: 6, boosts: 3, trinkets: 1 },
+      rarityOdds: {
+        players: { common: 60, rare: 30, epic: 10 },
+        boosts: { rare: 80, legendary: 20 },
+        trinkets: { uncommon: 100 }
+      },
+      guarantees: { rarePlusPlayerPerBooster: true }
+    },
+    draft: { passDirections: ['left', 'right'] }
+  });
+  const rolls = [0.01, 0.2, 0.4, 0.7, 0.8, 0.95, 0.1, 0.9, 0.2, 0.4];
+  let rollIndex = 0;
+  const templates = draftEvents.buildWutDraftBoosterRoundTemplates(config, () => rolls[(rollIndex++) % rolls.length]);
+  assert.equal(templates.length, 2);
+  for (const template of templates) {
+    assert.deepEqual(
+      template.slots.reduce((counts, slot) => ({ ...counts, [slot.itemType]: (counts[slot.itemType] || 0) + 1 }), {}),
+      { player: 6, boost: 3, trinket: 1 }
+    );
+    assert.ok(template.slots.some(slot => slot.itemType === 'player' && ['rare', 'epic', 'legendary'].includes(slot.rarity)));
+    const packs = draftEvents.instantiateWutDraftBoosterTemplate(template, [1, 2, 3, 4, 5]);
+    assert.equal(packs.length, 5);
+    assert.ok(packs.every(pack => JSON.stringify(pack.composition) === JSON.stringify(packs[0].composition)));
+  }
+  assert.deepEqual(templates.map(template => template.passDirection), ['left', 'right']);
+});
+
+test('draft signup charges once, withdrawal and cancellation refund once, and start freezes the environment', () => {
+  const startingCoins = db.getWutMembershipState(1).wutCoins;
+  db.adjustWutCoinBalance({ userId: 1, amount: 1000, note: 'Draft flow test', adminUserId: 1 });
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: {
+        name: 'Refundable Draft Test', entryFee: { currency: 'wut_coin', amount: 200 },
+        minimumEntrants: 2, maximumEntrants: 4, allowOddEntrants: true,
+        allowManualStartBelowMinimum: true, visibility: 'public'
+      }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1, now: new Date('2026-07-04T18:00:00Z') });
+  assert.equal(db.getWutMembershipState(1).wutCoins, startingCoins + 800);
+  assert.throws(() => db.joinWutDraftEvent({ eventId: event.id, userId: 1 }), /already entered/);
+
+  db.withdrawWutDraftEvent({ eventId: event.id, userId: 1, now: new Date('2026-07-04T18:01:00Z') });
+  assert.equal(db.getWutMembershipState(1).wutCoins, startingCoins + 1000);
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1, now: new Date('2026-07-04T18:02:00Z') });
+  assert.equal(db.getWutMembershipState(1).wutCoins, startingCoins + 800);
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+
+  const environment = { cards: [{ cardIdentity: 'S3|D1|frozen', tier: 'rare' }], rules: { scoring: { goal: 10 } } };
+  const started = db.startWutDraftEvent({ eventId: event.id, environment, adminUserId: 1, now: new Date('2026-07-04T18:03:00Z') });
+  environment.cards[0].tier = 'common';
+  assert.equal(started.environment_snapshot.cards[0].tier, 'rare');
+  assert.throws(() => db.startWutDraftEvent({ eventId: event.id, environment, adminUserId: 1 }), /only start after signup closes|already has/);
+
+  db.pauseWutDraftEvent({ eventId: event.id, adminUserId: 1, reason: 'Recovery pause' });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'cancelled', adminUserId: 1, reason: 'Admin recovery test', now: new Date('2026-07-04T18:04:00Z') });
+  assert.equal(db.getWutMembershipState(1).wutCoins, startingCoins + 1000);
+  const cancelled = db.getWutDraftEventLobby({ eventId: event.id })[0];
+  assert.equal(cancelled.phase, 'cancelled');
+  assert.equal(cancelled.entrants.filter(row => row.status === 'cancelled').length, 1);
+  assert.ok(cancelled.logs.some(row => row.type === 'pause_overridden_for_cancellation'));
+  assert.ok(cancelled.logs.some(row => row.type === 'event_cancelled_refunds'));
+});
+
+test('admin Draft Event match recovery can void or force a forfeit deterministically', () => {
+  const voided = { id: 10, status: 'active', player_ids: [7, 8], winner_user_id: null };
+  const voidResult = draftEvents.resolveWutDraftEventMatchRecord(voided, { action: 'void', adminUserId: 1, reason: 'Soft lock', now: new Date('2026-07-04T20:00:00Z') });
+  assert.equal(voided.status, 'voided');
+  assert.equal(voided.void_reason, 'Soft lock');
+  assert.equal(voidResult.type, 'match_voided');
+
+  const forfeited = { id: 11, status: 'scoring', player_ids: [7, 8] };
+  const forfeitResult = draftEvents.resolveWutDraftEventMatchRecord(forfeited, { action: 'forfeit', forfeitingUserId: 8, adminUserId: 1, reason: 'Disconnected', now: new Date('2026-07-04T20:01:00Z') });
+  assert.equal(forfeited.status, 'completed');
+  assert.equal(forfeited.winner_user_id, 7);
+  assert.equal(forfeited.forfeit_user_id, 8);
+  assert.deepEqual(forfeited.scores, { 7: 1, 8: 0 });
+  assert.equal(forfeitResult.type, 'match_forfeit_forced');
+  assert.throws(() => draftEvents.resolveWutDraftEventMatchRecord({ id: 12, status: 'completed', player_ids: [7, 8] }, { action: 'void' }), /Only unresolved/);
+});
+
+test('shared Safety Bench voting distributes identical temporary cards without touching permanent collections', () => {
+  const voter = db.addUser({ username: 'draft-bench-voter', password: 'test-password', displayName: 'Draft Bench Voter' });
+  db.joinWut(voter.id);
+  db.openWutStarterPack({
+    userId: voter.id,
+    items: ['F', 'F', 'D', 'D', 'G'].map((position, index) => ({
+      itemType: 'player', rolledTier: 'common', position,
+      cardIdentity: `S3|BENCHUSER|${index}`, catalogKey: `S3|BENCHUSER|${index}`,
+      edition: 'S3', divisionId: 'BENCHUSER', playerKey: String(index)
+    }))
+  });
+  const permanentBefore = db.getCardsOwnedState(1).cards.length + db.getCardsOwnedState(voter.id).cards.length;
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name: 'Bench Vote Test', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 4, allowOddEntrants: true, visibility: 'public' },
+      safetyBench: { mode: 'shared_vote', votingSeconds: 60, rarityMin: 'common', rarityMax: 'common' },
+      boosters: { rarityOdds: { players: { common: 100 }, boosts: { common: 100 }, trinkets: { common: 100 } } }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: voter.id });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  const cards = [
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|POOL|F${index}`, displayName: `Forward ${index}`, edition: 'S3', position: 'F', tier: 'common', stars: 1 })),
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|POOL|D${index}`, displayName: `Defense ${index}`, edition: 'S3', position: 'D', tier: 'common', stars: 1 })),
+    ...Array.from({ length: 2 }, (_, index) => ({ cardIdentity: `S3|POOL|G${index}`, displayName: `Goalie ${index}`, edition: 'S3', position: 'G', tier: 'common', stars: 1 }))
+  ];
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards, rules: {} }, adminUserId: 1 });
+  const voting = db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.999 });
+  assert.equal(voting.phase, 'bench_vote');
+  assert.equal(voting.bench.candidates.length, 10);
+  const byPosition = position => voting.bench.candidates.filter(candidate => candidate.position === position).map(candidate => candidate.card.cardIdentity);
+  const selections = { F: byPosition('F').slice(0, 2), D: byPosition('D').slice(0, 2), G: byPosition('G').slice(0, 1) };
+  db.voteWutDraftSafetyBench({ eventId: event.id, userId: 1, selections });
+  db.voteWutDraftSafetyBench({ eventId: event.id, userId: voter.id, selections });
+  assert.throws(() => db.voteWutDraftSafetyBench({ eventId: event.id, userId: 1, selections: { ...selections, F: selections.F.slice(0, 1) } }), /exactly 2/);
+  const completed = db.finishWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.5 });
+  assert.equal(completed.phase, 'draft');
+  assert.equal(completed.bench.winners.length, 5);
+  const firstInventory = completed.inventories['1'];
+  const secondInventory = completed.inventories[String(voter.id)];
+  assert.equal(firstInventory.cards.length, 5);
+  assert.deepEqual(firstInventory.cards.map(card => card.card_identity), secondInventory.cards.map(card => card.card_identity));
+  assert.notDeepEqual(firstInventory.cards.map(card => card.id), secondInventory.cards.map(card => card.id));
+  assert.equal(db.getCardsOwnedState(1).cards.length + db.getCardsOwnedState(voter.id).cards.length, permanentBefore);
+  const retried = db.finishWutDraftSafetyBench({ eventId: event.id, adminUserId: 1 });
+  assert.equal(retried.inventories['1'].cards.length, 5, 'retrying completion cannot duplicate temporary cards');
+});
+
+test('expired Safety Bench voting resolves from its persisted deadline after a clock restart', () => {
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name: 'Bench Deadline Test', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 4, allowOddEntrants: true, allowManualStartBelowMinimum: true, visibility: 'public' },
+      safetyBench: { mode: 'shared_vote', votingSeconds: 5, rarityMin: 'common', rarityMax: 'common' },
+      boosters: { rarityOdds: { players: { common: 100 }, boosts: { common: 100 }, trinkets: { common: 100 } } }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  const cards = [
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|CLOCK|F${index}`, displayName: `Clock F${index}`, edition: 'S3', position: 'F', tier: 'common' })),
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|CLOCK|D${index}`, displayName: `Clock D${index}`, edition: 'S3', position: 'D', tier: 'common' })),
+    ...Array.from({ length: 2 }, (_, index) => ({ cardIdentity: `S3|CLOCK|G${index}`, displayName: `Clock G${index}`, edition: 'S3', position: 'G', tier: 'common' }))
+  ];
+  const startedAt = new Date('2026-07-04T21:00:00Z');
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards, rules: {} }, adminUserId: 1, now: startedAt });
+  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, now: startedAt, random: () => 0.5 });
+  assert.equal(db.processWutDraftEvents(new Date('2026-07-04T21:00:04Z')).includes(event.id), false);
+  assert.equal(db.processWutDraftEvents(new Date('2026-07-04T21:00:06Z')).includes(event.id), true);
+  const resolved = db.getWutDraftEventLobby({ eventId: event.id })[0];
+  assert.equal(resolved.phase, 'draft');
+  assert.equal(resolved.inventories['1'].cards.length, 5);
+  assert.equal(db.processWutDraftEvents(new Date('2026-07-04T21:00:10Z')).includes(event.id), false);
+});
+
+test('visual booster draft keeps every seat composition-identical while picks pass and inventories stay event-scoped', () => {
+  const opponent = db.addUser({ username: 'compact-draft-user', password: 'test-password', displayName: 'Compact Draft User' });
+  db.joinWut(opponent.id);
+  db.openWutStarterPack({
+    userId: opponent.id,
+    items: ['F', 'F', 'D', 'D', 'G'].map((position, index) => ({
+      itemType: 'player', rolledTier: 'common', position,
+      cardIdentity: `S3|COMPACTUSER|${index}`, catalogKey: `S3|COMPACTUSER|${index}`,
+      edition: 'S3', divisionId: 'COMPACTUSER', playerKey: String(index)
+    }))
+  });
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name: 'Compact Visual Draft', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 2, allowOddEntrants: true, visibility: 'public' },
+      safetyBench: { mode: 'disabled' },
+      boosters: {
+        countPerPlayer: 1, contents: { players: 1, boosts: 1, trinkets: 1 },
+        rarityOdds: { players: { common: 100 }, boosts: { rare: 100 }, trinkets: { uncommon: 100 } },
+        pool: { allowDuplicateInBooster: false, allowDuplicateInEvent: false }
+      },
+      draft: { pickSeconds: 30, passDirections: ['left'], autopick: { enabled: true, priority: ['rarity', 'player', 'trinket', 'boost', 'random'] } },
+      deckbuilding: { seconds: 30, activeMinimum: 1, activeMaximum: 1 }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: opponent.id });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  const cards = [0, 1].map(index => ({ cardIdentity: `S3|COMPACT|P${index}`, displayName: `Compact Player ${index}`, edition: 'S3', position: index ? 'D' : 'F', tier: 'common' }));
+  const config = db.getCardsConfig();
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards, rules: { boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues } }, adminUserId: 1 });
+  const drafting = db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.25 });
+  assert.equal(drafting.phase, 'draft');
+  const packs = drafting.draft.boosters;
+  assert.equal(packs.length, 2);
+  const composition = pack => pack.items.map(item => `${item.item_type}:${item.rarity}`);
+  assert.deepEqual(composition(packs[0]), composition(packs[1]));
+  assert.notEqual(packs[0].items.find(item => item.item_type === 'player').card_identity, packs[1].items.find(item => item.item_type === 'player').card_identity);
+
+  const firstPack = packs.find(pack => Number(pack.current_owner_user_id) === 1);
+  db.pickWutDraftItem({ eventId: event.id, userId: 1, itemId: firstPack.items[0].id, now: new Date('2026-07-04T22:00:00Z') });
+  const forced = db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, now: new Date('2026-07-04T22:00:01Z'), random: () => 0.1 });
+  assert.equal(forced.picks.length, 1);
+  assert.equal(forced.event.draft.current_pick, 2);
+  assert.ok(forced.event.draft.pass_log.every(row => row.direction === 'left'));
+  while (db.getWutDraftEventLobby({ eventId: event.id })[0].phase === 'draft') {
+    db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, now: new Date('2026-07-04T22:00:02Z'), random: () => 0.1 });
+  }
+  const completed = db.getWutDraftEventLobby({ eventId: event.id })[0];
+  assert.equal(completed.phase, 'deckbuilding');
+  assert.equal(completed.draft.picks.length, 6);
+  for (const userId of [1, opponent.id]) {
+    const inventory = completed.inventories[String(userId)];
+    assert.equal(inventory.cards.length + inventory.boosts.length + inventory.trinkets.length, 3);
+  }
+  assert.equal(db.processWutDraftEvents(new Date('2026-07-04T22:00:33Z')).includes(event.id), true);
+  const tournament = db.getWutDraftEventLobby({ eventId: event.id })[0];
+  assert.equal(tournament.phase, 'tournament');
+  assert.ok([1, opponent.id].every(userId => tournament.decks[String(userId)]?.automatic));
+});
+
+test('Event Decks use only drafted cards, snapshot temporary trinkets, and lock without touching permanent inventory', () => {
+  const permanentBefore = db.getCardsOwnedState(1).cards.length;
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name: 'Event Deck Test', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 2, allowOddEntrants: true, allowManualStartBelowMinimum: true, visibility: 'private' },
+      safetyBench: { mode: 'disabled' },
+      boosters: {
+        countPerPlayer: 1, contents: { players: 5, boosts: 1, trinkets: 1 },
+        rarityOdds: { players: { common: 100 }, boosts: { common: 100 }, trinkets: { common: 100 } },
+        pool: { allowDuplicateInBooster: false, allowDuplicateInEvent: false }
+      },
+      draft: { pickSeconds: 30, autopick: { enabled: true, priority: ['player', 'trinket', 'boost', 'rarity', 'random'] } },
+      deckbuilding: { seconds: 300, activeMinimum: 5, activeMaximum: 5, lockDeckForTournament: true }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  const playerPool = Array.from({ length: 5 }, (_, index) => ({
+    cardIdentity: `S3|EVENTDECK|${index}`, displayName: `Event Player ${index}`, edition: 'S3',
+    position: index < 2 ? 'F' : index < 4 ? 'D' : 'G', tier: 'common', stars: 1
+  }));
+  const config = db.getCardsConfig();
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards: playerPool, rules: { boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues } }, adminUserId: 1 });
+  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.1 });
+  while (db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase === 'draft') {
+    db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, random: () => 0.1 });
+  }
+  let building = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  const inventory = building.inventories['1'];
+  assert.equal(inventory.cards.length, 5);
+  assert.equal(inventory.trinkets.length, 1);
+  const skater = inventory.cards.find(card => card.player_snapshot.position !== 'G');
+  db.attachWutDraftEventTrinket({ eventId: event.id, userId: 1, cardId: skater.id, trinketId: inventory.trinkets[0].id });
+  building = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  assert.equal(building.inventories['1'].cards.find(card => card.id === skater.id).power, 1);
+  assert.throws(() => db.saveWutDraftEventDeck({ eventId: event.id, userId: 1, activeCardIds: inventory.cards.slice(0, 4).map(card => card.id) }), /between 5 and 5/);
+  const saved = db.saveWutDraftEventDeck({ eventId: event.id, userId: 1, activeCardIds: inventory.cards.map(card => card.id) });
+  assert.equal(saved.event.phase, 'complete', 'a one-player recovery event finishes without generating a fake matchup');
+  assert.equal(saved.deck.active_snapshots.find(card => card.event_item_id === skater.id).trinket.id, inventory.trinkets[0].id);
+  assert.equal(saved.deck.active_snapshots.find(card => card.event_item_id === skater.id).power, 1);
+  assert.throws(() => db.detachWutDraftEventTrinket({ eventId: event.id, userId: 1, cardId: skater.id }), /locked/);
+  assert.equal(db.getCardsOwnedState(1).cards.length, permanentBefore);
+});
+
+test('Draft Event tournament reuses real lineup turns, scores temporary cards, and produces standings', () => {
+  const opponent = db.addUser({ username: 'event-match-user', password: 'test-password', displayName: 'Event Match User' });
+  db.joinWut(opponent.id);
+  db.openWutStarterPack({ userId: opponent.id, items: ['F', 'F', 'D', 'D', 'G'].map((position, index) => ({ itemType: 'player', rolledTier: 'common', position, cardIdentity: `S3|EVENTMATCHUSER|${index}`, catalogKey: `S3|EVENTMATCHUSER|${index}`, edition: 'S3', divisionId: 'EVENTMATCHUSER', playerKey: String(index) })) });
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name: 'Two Player Tournament', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 2, allowOddEntrants: true, visibility: 'private' },
+      safetyBench: { mode: 'random_shared', rarityMin: 'common', rarityMax: 'common' },
+      boosters: { countPerPlayer: 1, contents: { players: 1, boosts: 0, trinkets: 0 }, rarityOdds: { players: { common: 100 } }, pool: { allowDuplicateInBooster: false, allowDuplicateInEvent: true } },
+      draft: { pickSeconds: 30, autopick: { enabled: true, priority: ['player', 'rarity', 'random'] } },
+      deckbuilding: { seconds: 300, activeMinimum: 1, activeMaximum: 1 },
+      tournament: { format: 'round_robin', automaticNextRound: true, betweenRoundSeconds: 0, roundRobin: { meetings: 1, byeCountsAsWin: true } },
+      match: { turnSeconds: 300, openingTimeout: 'forfeit', laterTimeout: 'forfeit', boostLoadCap: 5, boostsMode: 'tournament_consumable' },
+      prizes: { tiers: [
+        { key: 'champion', label: 'Champion', places: [1], rewards: [{ type: 'wut_coins', amount: 123, quantity: 1 }, { type: 'specific_trinket', family: 'safety_net', rarity: 'rare', quantity: 1 }] },
+        { key: 'players', label: 'All Players', participant: true, rewards: [{ type: 'player_pack', packType: 'standard', quantity: 1 }, { type: 'random_trinket', rarity: 'common', quantity: 1 }] }
+      ] }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: opponent.id });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  const pool = [
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|TOURNEY|F${index}`, displayName: `Tourney F${index}`, edition: 'S3', position: 'F', tier: 'common' })),
+    ...Array.from({ length: 4 }, (_, index) => ({ cardIdentity: `S3|TOURNEY|D${index}`, displayName: `Tourney D${index}`, edition: 'S3', position: 'D', tier: 'common' })),
+    ...Array.from({ length: 2 }, (_, index) => ({ cardIdentity: `S3|TOURNEY|G${index}`, displayName: `Tourney G${index}`, edition: 'S3', position: 'G', tier: 'common' }))
+  ];
+  const config = db.getCardsConfig();
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards: pool, rules: { scoring: config.scoring, boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues, slotPowerAllowance: config.wut.slotPowerAllowance } }, adminUserId: 1 });
+  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
+  while (db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase === 'draft') db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
+  let state = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  for (const userId of [1, opponent.id]) {
+    const inventory = state.inventories[String(userId)];
+    const drafted = inventory.cards.find(card => !(inventory.safety_bench_card_ids || []).map(Number).includes(Number(card.id)));
+    db.saveWutDraftEventDeck({ eventId: event.id, userId, activeCardIds: [drafted.id] });
+  }
+  state = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  assert.equal(state.phase, 'tournament');
+  assert.equal(state.tournament.matches.length, 1);
+  const matchId = state.tournament.matches[0].id;
+  while (true) {
+    const view = db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 });
+    if (view.match.status !== 'active') break;
+    const userId = view.match.current_player_id; const required = view.match.cards_required_this_turn;
+    const snapshots = [...view.match.deck_snapshots[String(userId)].active, ...view.match.deck_snapshots[String(userId)].bench];
+    const occupied = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
+    const used = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
+    const choices = [];
+    for (const slot of ['F1', 'F2', 'D1', 'D2', 'G'].filter(slot => !occupied.has(slot))) {
+      const position = slot === 'G' ? 'G' : slot[0];
+      const card = snapshots.find(item => item.position === position && !used.has(Number(item.card_id)) && !choices.some(choice => Number(choice.cardId) === Number(item.card_id)));
+      if (card) choices.push({ slot, cardId: card.card_id });
+      if (choices.length === required) break;
+    }
+    db.commitWutDraftEventTurn({ eventId: event.id, matchId, userId, placements: choices });
+  }
+  let match = db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 }).match;
+  assert.equal(match.status, 'scoring');
+  db.completeArenaMatch(match.arena_match_key, match.placements.map(row => ({ ...row, fp: Number(row.user_id) === 1 ? 10 : 5 })));
+  state = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  assert.equal(state.phase, 'complete');
+  assert.equal(state.tournament.standings[0].user_id, 1);
+  assert.equal(state.tournament.standings[0].wins, 1);
+  match = db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 }).match;
+  assert.equal(match.status, 'ready');
+  db.completeWutDraftEventReveal({ eventId: event.id, matchId, userId: 1 });
+  db.completeWutDraftEventReveal({ eventId: event.id, matchId, userId: opponent.id });
+  assert.equal(db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 }).match.status, 'completed');
+  const winnerCoinsBefore = db.getWutMembershipState(1).wutCoins;
+  const opponentPendingBefore = db.getPendingCardsPack(opponent.id);
+  assert.equal(opponentPendingBefore.source, 'starter_bonus');
+  const prizePack = packType => [
+    ...Array.from({ length: 3 }, (_, index) => ({ itemType: 'player', rolledTier: 'common', position: index ? 'D' : 'F', cardIdentity: `S3|PRIZE|${packType}|${index}`, catalogKey: `S3|PRIZE|${packType}|${index}`, edition: 'S3', divisionId: 'PRIZE', playerKey: `${packType}-${index}` })),
+    { itemType: 'boost', boostType: 'goal', rarity: 'common', effect: { per: 1, bonus: 1 } },
+    { itemType: 'boost', boostType: 'grit', rarity: 'common', effect: { per: 1, bonus: 1 } }
+  ];
+  const awarded = db.awardWutDraftEventPrizes({ eventId: event.id, generatePack: prizePack, random: () => 0.1 });
+  assert.equal(awarded.alreadyAwarded, false);
+  assert.equal(awarded.awards.length, 6);
+  assert.equal(db.getWutMembershipState(1).wutCoins, winnerCoinsBefore + 123);
+  const finished = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  assert.equal(finished.phase, 'prizes_awarded');
+  assert.deepEqual(finished.inventories, {});
+  assert.equal(Object.keys(finished.archived_inventories).length, 2);
+  assert.ok(finished.cleanup.temporary_items_removed_at);
+  assert.ok(db.getWutSystemsState(1).trinkets.some(item => item.source === 'draft_event_prize' && item.family === 'safety_net' && item.rarity === 'rare'));
+  const retry = db.awardWutDraftEventPrizes({ eventId: event.id, generatePack: () => { throw new Error('must not reroll'); } });
+  assert.equal(retry.alreadyAwarded, true);
+  assert.equal(db.getWutMembershipState(1).wutCoins, winnerCoinsBefore + 123);
+  db.claimCardsPack(opponent.id, opponentPendingBefore.id);
+  const promotedPrize = db.getPendingCardsPack(opponent.id);
+  assert.equal(promotedPrize.source, 'draft_event_prize');
+  assert.equal(promotedPrize.draft_event_id, event.id);
+  assert.equal(db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 }).match.status, 'completed', 'match replays survive temporary-inventory cleanup');
+});
+
+test('all Draft Event tournament formats advance cleanly with odd-player byes and no Swiss rematches', () => {
+  const cases = [
+    { name: 'Audit Round Robin', entrants: 3, tournament: { format: 'round_robin', roundRobin: { meetings: 1, byeCountsAsWin: true } }, expectedRounds: 3 },
+    { name: 'Audit Swiss', entrants: 4, tournament: { format: 'swiss', swiss: { rounds: 3, avoidRematches: true, byeCountsAsWin: true } }, expectedRounds: 3 },
+    { name: 'Audit Elimination', entrants: 7, tournament: { format: 'single_elimination', elimination: { seeding: 'draft_order', thirdPlaceMatch: true, consolationMatch: true } }, expectedRounds: 3 },
+    { name: 'Audit Top Cut', entrants: 4, tournament: { format: 'swiss_top_cut', topCut: { swissRounds: 1, advancing: 2, seeding: 'standings' } }, expectedRounds: 2 }
+  ];
+  for (const fixture of cases) {
+    const { eventId } = createDraftTournamentFixture({ name: fixture.name, entrantCount: fixture.entrants, tournament: fixture.tournament });
+    let guard = 0;
+    while (db.getWutDraftEventLobby({ eventId, includePrivate: true })[0].phase === 'tournament' && guard++ < 30) {
+      const event = db.getWutDraftEventLobby({ eventId, includePrivate: true })[0];
+      const active = event.tournament.matches.filter(match => match.status === 'active');
+      assert.ok(active.length, `${fixture.name} should always expose an active match while its tournament is live`);
+      for (const match of active) db.resolveWutDraftEventMatch({ eventId, matchId: match.id, action: 'forfeit', forfeitingUserId: match.player_ids[1], adminUserId: 1 });
+    }
+    const completed = db.getWutDraftEventLobby({ eventId, includePrivate: true })[0];
+    assert.equal(completed.phase, 'complete', `${fixture.name} should complete`);
+    assert.equal(completed.tournament.rounds.length, fixture.expectedRounds);
+    if (fixture.tournament.format === 'round_robin') {
+      assert.ok(completed.tournament.rounds.every(round => round.bye_user_ids.length === 1));
+      assert.equal(new Set(completed.tournament.matches.map(match => match.player_ids.map(Number).sort((a, b) => a - b).join(':'))).size, 3);
+    }
+    if (fixture.tournament.format === 'swiss') {
+      const pairKeys = completed.tournament.matches.map(match => match.player_ids.map(Number).sort((a, b) => a - b).join(':'));
+      assert.equal(new Set(pairKeys).size, pairKeys.length, 'Swiss should avoid rematches when a legal alternative exists');
+    }
+    if (fixture.tournament.format === 'single_elimination') {
+      const finalMatches = completed.tournament.rounds.at(-1).match_ids.map(id => completed.tournament.matches.find(match => Number(match.id) === Number(id)));
+      assert.deepEqual(finalMatches.map(match => match.bracket_role).sort(), ['championship', 'consolation', 'third_place']);
+    }
+    if (fixture.tournament.format === 'swiss_top_cut') assert.deepEqual(completed.tournament.rounds.map(round => round.stage), ['swiss', 'elimination']);
+  }
+});
+
+test('sequential Draft Event matches, timeout forfeits, and paused timers recover deterministically', () => {
+  const sequential = createDraftTournamentFixture({ name: 'Audit Sequential', entrantCount: 4, tournament: { format: 'round_robin', roundRobin: { meetings: 1 } }, match: { simultaneousMatches: false } });
+  let event = db.getWutDraftEventLobby({ eventId: sequential.eventId, includePrivate: true })[0];
+  assert.equal(event.tournament.matches.filter(match => match.status === 'active').length, 1);
+  assert.equal(event.tournament.matches.filter(match => match.status === 'pending').length, 1);
+  const first = event.tournament.matches.find(match => match.status === 'active');
+  db.resolveWutDraftEventMatch({ eventId: sequential.eventId, matchId: first.id, action: 'forfeit', forfeitingUserId: first.player_ids[1], adminUserId: 1 });
+  event = db.getWutDraftEventLobby({ eventId: sequential.eventId, includePrivate: true })[0];
+  assert.equal(event.tournament.matches.filter(match => match.status === 'active').length, 1, 'the next sequential match should activate immediately');
+
+  const timed = createDraftTournamentFixture({ name: 'Audit Timeout', entrantCount: 2, tournament: { format: 'round_robin', roundRobin: { meetings: 1 } }, match: { openingTimeout: 'forfeit' } });
+  event = db.getWutDraftEventLobby({ eventId: timed.eventId, includePrivate: true })[0];
+  const timedMatch = event.tournament.matches[0];
+  const originalDeadline = new Date(timedMatch.turn_deadline);
+  const pausedAt = new Date(originalDeadline.getTime() - 120000);
+  db.pauseWutDraftEvent({ eventId: timed.eventId, adminUserId: 1, reason: 'Timer audit', now: pausedAt });
+  db.resumeWutDraftEvent({ eventId: timed.eventId, adminUserId: 1, now: new Date(pausedAt.getTime() + 60000) });
+  event = db.getWutDraftEventLobby({ eventId: timed.eventId, includePrivate: true })[0];
+  const shiftedDeadline = new Date(event.tournament.matches[0].turn_deadline);
+  assert.equal(shiftedDeadline.getTime() - originalDeadline.getTime(), 60000);
+  db.processWutDraftEvents(new Date(shiftedDeadline.getTime() + 1));
+  event = db.getWutDraftEventLobby({ eventId: timed.eventId, includePrivate: true })[0];
+  assert.equal(event.phase, 'complete');
+  assert.equal(event.tournament.matches[0].forfeit_user_id, timedMatch.first_player_id);
+});
+
+test('scheduled Draft Events open, close, and support a permission-safe automatic start', () => {
+  const user = db.addUser({ username: `scheduled-draft-${Date.now()}`, password: 'test-password', displayName: 'Scheduled Draft Player' });
+  db.joinWut(user.id);
+  db.openWutStarterPack({ userId: user.id, items: ['F', 'F', 'D', 'D', 'G'].map((position, index) => ({ itemType: 'player', rolledTier: 'common', position, cardIdentity: `S3|SCHEDULED|${index}`, catalogKey: `S3|SCHEDULED|${index}`, edition: 'S3', divisionId: 'SCHEDULED', playerKey: String(index) })) });
+  const opens = new Date('2026-08-01T18:00:00Z'); const closes = new Date('2026-08-01T18:05:00Z'); const starts = new Date('2026-08-01T18:10:00Z');
+  const event = db.createWutDraftEvent({ adminUserId: 1, config: {
+    basic: { name: 'Scheduled Lifecycle Audit', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 2, allowOddEntrants: true, automaticStart: true, visibility: 'private' },
+    signup: { automaticClose: true }, safetyBench: { mode: 'disabled' },
+    boosters: { countPerPlayer: 1, contents: { players: 1, boosts: 0, trinkets: 0 }, rarityOdds: { players: { common: 100 } }, pool: { allowDuplicateInBooster: false, allowDuplicateInEvent: true } },
+    scheduling: { signupOpensAt: opens.toISOString(), signupClosesAt: closes.toISOString(), startsAt: starts.toISOString() }
+  } });
+  assert.throws(() => db.rescheduleWutDraftEvent({ eventId: event.id, adminUserId: 1, signupOpensAt: starts, signupClosesAt: opens, startsAt: closes }), /chronological/);
+  db.rescheduleWutDraftEvent({ eventId: event.id, adminUserId: 1, signupOpensAt: opens, signupClosesAt: closes, startsAt: starts });
+  assert.ok(db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].logs.some(row => row.type === 'event_rescheduled'));
+  assert.equal(db.processWutDraftEvents(new Date(opens.getTime() - 1)).includes(event.id), false);
+  db.processWutDraftEvents(opens);
+  assert.equal(db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase, 'signup_open');
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 }); db.joinWutDraftEvent({ eventId: event.id, userId: user.id });
+  db.processWutDraftEvents(closes);
+  assert.equal(db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase, 'signup_closed');
+  const pool = [0, 1].map(index => ({ cardIdentity: `S3|SCHEDULEPOOL|${index}`, displayName: `Schedule ${index}`, edition: 'S3', position: index ? 'D' : 'F', tier: 'common' }));
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards: pool, rules: {} }, adminUserId: null, system: true, now: starts });
+  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: null, system: true, now: starts, random: () => 0.2 });
+  assert.equal(db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase, 'draft');
+});
+
+test('unlocked Draft Event decks can sideboard only during a configured round intermission', () => {
+  const fixture = createDraftTournamentFixture({
+    name: 'Audit Sideboard', entrantCount: 2,
+    tournament: { format: 'swiss', automaticNextRound: true, betweenRoundSeconds: 60, swiss: { rounds: 2, avoidRematches: false } },
+    deckbuilding: { lockDeckForTournament: false, sideboardingBetweenRounds: true, lockTrinketAttachments: false, allowTrinketReassignment: true }
+  });
+  let event = db.getWutDraftEventLobby({ eventId: fixture.eventId, includePrivate: true })[0];
+  assert.throws(() => db.saveWutDraftEventDeck({ eventId: fixture.eventId, userId: fixture.userIds[0], activeCardIds: event.decks[String(fixture.userIds[0])].active_card_ids }), /not open/);
+  const match = event.tournament.matches.find(item => item.status === 'active');
+  db.resolveWutDraftEventMatch({ eventId: fixture.eventId, matchId: match.id, action: 'forfeit', forfeitingUserId: match.player_ids[1], adminUserId: 1 });
+  event = db.getWutDraftEventLobby({ eventId: fixture.eventId, includePrivate: true })[0];
+  assert.ok(event.tournament.pending_round_plan);
+  const ids = event.decks[String(fixture.userIds[0])].active_card_ids;
+  db.saveWutDraftEventDeck({ eventId: fixture.eventId, userId: fixture.userIds[0], activeCardIds: ids });
+  event = db.getWutDraftEventLobby({ eventId: fixture.eventId, includePrivate: true })[0];
+  assert.ok(event.logs.some(row => row.type === 'event_deck_sideboarded'));
+  db.processWutDraftEvents(new Date(new Date(event.tournament.next_round_at).getTime() + 1));
+  event = db.getWutDraftEventLobby({ eventId: fixture.eventId, includePrivate: true })[0];
+  assert.equal(event.tournament.round, 2);
+  assert.throws(() => db.saveWutDraftEventDeck({ eventId: fixture.eventId, userId: fixture.userIds[0], activeCardIds: ids }), /not open/);
+});
+
+test('dropping a live Draft Event entrant forfeits the current match and removes future pairings', () => {
+  const fixture = createDraftTournamentFixture({ name: 'Audit Drop', entrantCount: 3, tournament: { format: 'round_robin', roundRobin: { meetings: 1 } } });
+  let event = db.getWutDraftEventLobby({ eventId: fixture.eventId, includePrivate: true })[0];
+  const current = event.tournament.matches.find(match => match.status === 'active');
+  const droppedId = current.player_ids[1];
+  db.dropWutDraftEventEntrant({ eventId: fixture.eventId, userId: droppedId, adminUserId: 1, reason: 'Disconnected from event' });
+  event = db.getWutDraftEventLobby({ eventId: fixture.eventId, includePrivate: true })[0];
+  assert.equal(event.entrants.find(row => Number(row.user_id) === Number(droppedId)).status, 'dropped');
+  assert.equal(event.tournament.matches.find(match => match.id === current.id).forfeit_user_id, droppedId);
+  let guard = 0;
+  while (event.phase === 'tournament' && guard++ < 10) {
+    for (const match of event.tournament.matches.filter(item => item.status === 'active')) db.resolveWutDraftEventMatch({ eventId: fixture.eventId, matchId: match.id, action: 'forfeit', forfeitingUserId: match.player_ids[1], adminUserId: 1 });
+    event = db.getWutDraftEventLobby({ eventId: fixture.eventId, includePrivate: true })[0];
+  }
+  assert.equal(event.phase, 'complete');
+  assert.ok(event.tournament.matches.filter(match => match.id !== current.id).every(match => !match.player_ids.map(Number).includes(Number(droppedId))));
+});
+
+test('invalid booster rarity pools fail preflight without half-transitioning the event', () => {
+  const event = db.createWutDraftEvent({
+    adminUserId: 1,
+    config: {
+      basic: { name: 'Bad Pool Test', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 2, allowOddEntrants: true, allowManualStartBelowMinimum: true, visibility: 'private' },
+      safetyBench: { mode: 'disabled' },
+      boosters: { countPerPlayer: 1, contents: { players: 1, boosts: 0, trinkets: 0 }, rarityOdds: { players: { legendary: 100 } } }
+    }
+  });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_open', adminUserId: 1 });
+  db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
+  db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
+  db.startWutDraftEvent({ eventId: event.id, environment: { cards: [{ cardIdentity: 'S3|BAD|1', displayName: 'Only Common', edition: 'S3', position: 'F', tier: 'common' }], rules: {} }, adminUserId: 1 });
+  assert.throws(() => db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.5 }), /Not enough unique legendary/);
+  const unchanged = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
+  assert.equal(unchanged.phase, 'starting');
+  assert.equal(unchanged.draft.boosters.length, 0);
 });
 
 test('trinket shops are personal and rotate at WUT midnight', () => {
@@ -437,6 +1074,7 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
       rewards: { winner: 77, loser: 31, forfeitLoser: 4 },
       deckSlotCosts: { 4: 501, 5: 1001, 6: 2001, 7: 3501, 8: 5001 },
       trinketPrices: { common: 111, uncommon: 251, rare: 601, epic: 1501, legendary: 4001 },
+      trinketPowerValues: { common: 0, uncommon: 0.5, rare: 1, epic: 1.5, legendary: 2.5 },
       trinketRemovalWut: { common: 26, uncommon: 76, rare: 151, epic: 301, legendary: 751 },
       trinketRemovalMushy: { common: 101, uncommon: 251, rare: 501, epic: 1001, legendary: 2501 },
       shopReroll: { wut: 251, mushy: 751 },
@@ -451,6 +1089,7 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
   assert.equal(saved.config.wut.slotPowerAllowance, 2);
   assert.equal(saved.config.wut.boostLoadCap, 6);
   assert.equal(saved.config.wut.trinketPrices.common, 111);
+  assert.equal(saved.config.wut.trinketPowerValues.legendary, 2.5);
   assert.equal(saved.config.wut.shopReroll.mushy, 751);
   assert.equal(saved.config.wut.missionRewards.daily_play_three, 41);
   assert.equal(saved.config.wut.trinketEffects.safety_net.rare, 0.615);

@@ -194,6 +194,7 @@
           <span class="pill <%= settings.cardsOpen ? 'positive' : 'negative' %>"><%= settings.cardsOpen ? 'Open' : 'Closed' %></span>
           <span class="pill"><%= settings.cardsLinkVisible ? 'Link Visible' : 'Link Hidden' %></span>
           <span class="pill <%= cardsAdmin.config.wut.freeShopPurchases ? 'positive' : '' %>"><%= cardsAdmin.config.wut.freeShopPurchases ? 'Free Shop Testing' : 'Normal Shop Prices' %></span>
+          <a class="button-link ghost" href="/admin/cards/drafts">Draft Events</a>
           <a class="button-link ghost" href="/admin/cards/matches">Match Admin</a>
           <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminCardsControlsBody">Show</button>
         </div>
@@ -279,6 +280,7 @@
         </fieldset>
         <fieldset class="cards-rarity-fieldset">
           <legend>Match Rules & Rewards</legend>
+          <p class="muted">Trinket Power is added to the card's own rarity Power. Decimals are supported.</p>
           <div class="cards-scoring-config-grid">
             <label>Matching-slot Power allowance<input type="number" min="0" step="1" name="wut[slotPowerAllowance]" value="<%= cardsAdmin.config.wut.slotPowerAllowance %>"></label>
             <label>Base lineup Boost Load<input type="number" min="0" step="1" name="wut[boostLoadCap]" value="<%= cardsAdmin.config.wut.boostLoadCap %>"></label>
@@ -289,6 +291,7 @@
             <label>Paused clock starts (0–23)<input type="number" min="0" max="23" step="1" name="arena[pauseStartHour]" value="<%= cardsAdmin.arenaConfig.pauseStartHour %>"></label>
             <label>Paused clock ends (0–23)<input type="number" min="0" max="23" step="1" name="arena[pauseEndHour]" value="<%= cardsAdmin.arenaConfig.pauseEndHour %>"></label>
             <label>Maximum active matches/user<input type="number" min="1" step="1" name="arena[maxActiveMatches]" value="<%= cardsAdmin.arenaConfig.maxActiveMatches %>"></label>
+            <% wutRarities.forEach(rarity => { %><label><span class="tier-text-<%= rarity %>"><%= wutTitleCase(rarity) %> trinket Power</span><input type="number" min="0" step="0.5" name="wut[trinketPowerValues][<%= rarity %>]" value="<%= cardsAdmin.config.wut.trinketPowerValues[rarity] %>"></label><% }) %>
           </div>
         </fieldset>
         <fieldset class="cards-rarity-fieldset">

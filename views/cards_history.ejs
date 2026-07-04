@@ -28,12 +28,13 @@
         : row.card;
     };
     const focusedMatch = arena.history.find(match => Number(match.id) === Number(replayMatchId)) || null;
+    const draftContext = typeof eventContext === 'undefined' ? null : eventContext;
     const leftUserId = focusedMatch ? Number(currentUser.id) : null;
     const rightUserId = focusedMatch ? Number(focusedMatch.opponent.id) : null;
   %>
   <main class="container cards-page arena-page">
     <section class="card page-title cards-title">
-      <div><a class="button-link ghost" href="/cards">← WUT</a><p class="eyebrow arena-history-eyebrow">Permanent record</p><h1>Match History</h1><p>Review final scores and replay every reveal.</p></div>
+      <div><a class="button-link ghost" href="<%= draftContext ? `/cards/drafts/${draftContext.id}#tournament` : '/cards' %>">← <%= draftContext ? draftContext.name : 'WUT' %></a><p class="eyebrow arena-history-eyebrow"><%= draftContext ? 'Draft Event result' : 'Permanent record' %></p><h1><%= draftContext ? `Tournament Match #${focusedMatch?.id || ''}` : 'Match History' %></h1><p>Review the final score and replay the reveal.</p></div>
       <span class="pill"><%= arena.history.length %> completed</span>
     </section>
 
@@ -69,7 +70,7 @@
           <% if (focusedMatch.winner_user_id == null) { %><h2>Draw</h2>
           <% } else if (Number(focusedMatch.winner_user_id) === Number(currentUser.id)) { %>
             <h2>You Won!</h2>
-            <% if (Number(focusedMatch.rules_version || 1) >= 2) { %><span class="pill"><%= focusedMatch.wut_rewards?.[String(currentUser.id)] || 0 %> WUT Coins awarded</span><% } else if (!focusedMatch.winnings_claimed_at) { %><form method="post" action="/cards/arena/matches/<%= focusedMatch.id %>/claim"><button>Collect legacy winnings</button></form><% } else { %><span class="pill">Winnings collected</span><% } %>
+            <% if (draftContext) { %><span class="pill positive">Tournament win</span><% } else if (Number(focusedMatch.rules_version || 1) >= 2) { %><span class="pill"><%= focusedMatch.wut_rewards?.[String(currentUser.id)] || 0 %> WUT Coins awarded</span><% } else if (!focusedMatch.winnings_claimed_at) { %><form method="post" action="/cards/arena/matches/<%= focusedMatch.id %>/claim"><button>Collect legacy winnings</button></form><% } else { %><span class="pill">Winnings collected</span><% } %>
           <% } else { %><h2>You lost. Better luck next time.</h2><% } %>
         </div>
       </section>
@@ -80,7 +81,7 @@
       <% if (!arena.history.length) { %><p class="muted">Completed matches will appear here.</p><% } %>
       <% arena.history.forEach(match => { %>
         <% const ownRating = match.players.find(player => Number(player.id) === Number(currentUser.id)); %>
-        <div class="arena-history-row"><span><strong>#<%= match.id %> vs <%= match.opponent.displayName %></strong><small><%= match.scores[String(currentUser.id)] %>–<%= match.scores[String(match.opponent.id)] %> · <%= Number(match.winner_user_id) === Number(currentUser.id) ? 'Win' : match.winner_user_id == null ? 'Draw' : 'Loss' %><%= match.forfeit_user_id ? ' · timeout forfeit' : '' %><%= ownRating?.eloChange == null ? '' : ` · ELO ${ownRating.eloBefore} → ${ownRating.elo} (${ownRating.eloChange >= 0 ? '+' : ''}${ownRating.eloChange})` %></small></span><a class="button-link ghost" href="/cards/arena/history?replay=<%= match.id %>#arena-results">Replay Reveal</a></div>
+        <div class="arena-history-row"><span><strong>#<%= match.id %> vs <%= match.opponent.displayName %></strong><small><%= match.scores[String(currentUser.id)] %>–<%= match.scores[String(match.opponent.id)] %> · <%= Number(match.winner_user_id) === Number(currentUser.id) ? 'Win' : match.winner_user_id == null ? 'Draw' : 'Loss' %><%= match.forfeit_user_id ? ' · timeout forfeit' : '' %><%= ownRating?.eloChange == null ? '' : ` · ELO ${ownRating.eloBefore} → ${ownRating.elo} (${ownRating.eloChange >= 0 ? '+' : ''}${ownRating.eloChange})` %></small></span><a class="button-link ghost" href="<%= draftContext ? `/cards/drafts/${draftContext.id}/matches/${match.id}/results#arena-results` : `/cards/arena/history?replay=${match.id}#arena-results` %>">Replay Reveal</a></div>
       <% }) %>
     </section>
   </main>

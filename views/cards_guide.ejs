@@ -36,7 +36,7 @@
           <li><strong>MP</strong> is the number of WUT matches in which that copy has scored. <strong>FP/M</strong> is its average Fantasy Points per WUT match.</li>
           <li>Click a collection card to flip it. Its back shows the season stat line and accumulated WUT results.</li>
           <li>Rarity is calculated within position. S1 and S2 share a pool; S3 has its own pool and requires at least six games to enter the rankings.</li>
-          <li><strong>Power = card rarity value + attached trinket rarity value.</strong> Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, and Mythic cards = 6. Trinkets use Common through Legendary; boosts add no Power.</li>
+          <li><strong>Power = card rarity value + trinket Power.</strong> Cards are Common 1, Uncommon 2, Rare 3, Epic 4, Legendary 5, and Mythic 6. Trinkets add Common +0, Uncommon +0.5, Rare +1, Epic +1.5, or Legendary +2.5. Boosts add no Power.</li>
         </ul>
       </section>
 
@@ -74,9 +74,9 @@
         </ul>
       </section>
 
-      <section class="card" id="trinkets">
+      <section class="card wut-guide-wide" id="trinkets">
         <p class="eyebrow">Permanent build identity</p><h2>Trinkets</h2>
-        <p>Trinkets add Power and a rarity-scaled effect. Hover any trinket icon for its exact rules. Attaching one is semi-permanent: removal costs WUT Coins or Mushybux.</p>
+        <p>Trinkets add a rarity-scaled effect and up to 2.5 Power. A Common trinket adds no Power but still provides its effect. Attaching one is semi-permanent: removal costs WUT Coins or Mushybux.</p>
         <ul>
           <li><strong>Roll control:</strong> Lucky Charm, Safety Net, and Glass Skates.</li>
           <li><strong>Scoring builds:</strong> Specialist, Generalist, Underdog Patch, First Strike, and Counterpunch Gloves.</li>
@@ -84,6 +84,24 @@
           <li><strong>Counterplay:</strong> Hex Charm, Warding Charm, Siphon Stone, and Zebra Stripes.</li>
           <li>Only Specialist and Generalist are skater-only. Only one Captain's Patch can be active in a lineup.</li>
         </ul>
+        <div class="wut-trinket-encyclopedia" data-trinket-encyclopedia>
+          <div class="cards-section-head"><div><p class="eyebrow">All 15 trinkets</p><h3>Trinket Encyclopedia</h3><p class="muted">Choose an icon to compare all five rarities.</p></div></div>
+          <div class="wut-trinket-encyclopedia-icons" role="tablist" aria-label="Trinkets">
+            <% Object.keys(WUT_TRINKET_ICONS).forEach((family, index) => { %>
+              <button type="button" class="wut-trinket-encyclopedia-pick <%= index === 0 ? 'is-selected' : '' %>" data-trinket-family-pick="<%= family %>" role="tab" aria-selected="<%= index === 0 ? 'true' : 'false' %>" title="<%= wutTrinketName(family) %>"><span class="wut-trinket-icon"><%= WUT_TRINKET_ICONS[family] %></span><small><%= wutTrinketName(family) %></small></button>
+            <% }) %>
+          </div>
+          <% Object.keys(WUT_TRINKET_ICONS).forEach((family, index) => { %>
+            <div class="wut-trinket-encyclopedia-panel" data-trinket-family-panel="<%= family %>" <%= index === 0 ? '' : 'hidden' %>>
+              <h3><span><%= WUT_TRINKET_ICONS[family] %></span> <%= wutTrinketName(family) %></h3>
+              <div class="wut-trinket-rarity-list">
+                <% ['common','uncommon','rare','epic','legendary'].forEach(rarity => { const effect = wutConfig.trinketEffects[family][rarity]; %>
+                  <div class="wut-trinket-rarity-row"><span class="wut-trinket-icon tier-<%= rarity %>"><%= WUT_TRINKET_ICONS[family] %></span><div><strong class="tier-text-<%= rarity %>"><%= wutTitleCase(rarity) %> · +<%= wutConfig.trinketPowerValues[rarity] %> Power</strong><p><%= wutTrinketDescription({ family, rarity, effect }) %></p></div></div>
+                <% }) %>
+              </div>
+            </div>
+          <% }) %>
+        </div>
       </section>
 
       <section class="card" id="economy">
@@ -110,5 +128,20 @@
       </section>
     </div>
   </main>
+  <script>
+    document.querySelectorAll('[data-trinket-encyclopedia]').forEach(encyclopedia => {
+      encyclopedia.addEventListener('click', event => {
+        const pick = event.target.closest('[data-trinket-family-pick]');
+        if (!pick) return;
+        const family = pick.dataset.trinketFamilyPick;
+        encyclopedia.querySelectorAll('[data-trinket-family-pick]').forEach(button => {
+          const selected = button === pick;
+          button.classList.toggle('is-selected', selected);
+          button.setAttribute('aria-selected', selected ? 'true' : 'false');
+        });
+        encyclopedia.querySelectorAll('[data-trinket-family-panel]').forEach(panel => { panel.hidden = panel.dataset.trinketFamilyPanel !== family; });
+      });
+    });
+  </script>
 </body>
 </html>

@@ -25,13 +25,15 @@
     };
     const playerName = id => match.players.find(player => Number(player.id) === Number(id))?.displayName || 'Player';
     const statusForCard = card => `Available in this match snapshot · Power ${card.power || 1}`;
-    const lineupStatus = match.status === 'ready' ? 'Lineups locked' : match.status === 'completed' ? 'Match complete' : match.is_your_turn ? `Your turn · commit ${match.cards_required_this_turn}` : `${playerName(match.current_player_id)} is choosing`;
+    const lineupStatus = match.status === 'pending' ? 'Waiting for the previous tournament match' : match.status === 'ready' ? 'Lineups locked' : match.status === 'completed' ? 'Match complete' : match.is_your_turn ? `Your turn · commit ${match.cards_required_this_turn}` : `${playerName(match.current_player_id)} is choosing`;
+    const draftContext = typeof eventContext === 'undefined' ? null : eventContext;
+    const matchBase = draftContext ? `/cards/drafts/${draftContext.id}/matches/${match.id}` : `/cards/arena/matches/${match.id}`;
   %>
   <main class="container cards-page arena-match-page">
     <section class="card page-title cards-title">
       <div>
-        <div class="arena-page-nav"><a class="button-link ghost" href="/cards">← WUT</a><a class="button-link ghost" href="/cards/arena/history">Match History</a></div>
-        <p class="eyebrow">WUT Match #<%= match.id %></p>
+        <div class="arena-page-nav"><a class="button-link ghost" href="<%= draftContext ? `/cards/drafts/${draftContext.id}` : '/cards' %>">← <%= draftContext ? 'Draft Event' : 'WUT' %></a><a class="button-link ghost" href="<%= draftContext ? `/cards/drafts/${draftContext.id}#tournament` : '/cards/arena/history' %>"><%= draftContext ? 'Standings' : 'Match History' %></a></div>
+        <p class="eyebrow"><%= draftContext ? `${draftContext.name} · Round ${match.round}` : 'WUT' %> Match #<%= match.id %></p>
         <h1>You vs <%= match.opponent.displayName %></h1>
         <p class="eyebrow"><%= arena.rating %> ELO vs <%= match.opponent.elo %> ELO</p>
         <p><%= playerName(match.first_player_id) %> won the coin flip. Once a turn is locked, every committed card and boost is permanent.</p>
@@ -48,10 +50,10 @@
       <section class="card arena-ready-list">
         <p class="eyebrow">Both lineups complete</p>
         <h2>Lineups Locked — Show Results</h2>
-        <form method="post" action="/cards/arena/matches/<%= match.id %>/reveal"><button>Show Results</button></form>
+        <form method="post" action="<%= matchBase %>/reveal"><button>Show Results</button></form>
       </section>
     <% } else if (match.status === 'completed') { %>
-      <section class="card arena-ready-list"><h2>This match is complete.</h2><a class="button-link" href="/cards/arena/history?replay=<%= match.id %>#arena-results">Replay Results</a></section>
+      <section class="card arena-ready-list"><h2>This match is complete.</h2><a class="button-link" href="<%= draftContext ? `/cards/drafts/${draftContext.id}/matches/${match.id}/results#arena-results` : `/cards/arena/history?replay=${match.id}#arena-results` %>">Replay Results</a></section>
     <% } %>
 
     <section class="card arena-visual-board">
@@ -84,7 +86,7 @@
       </div>
 
       <% if (match.is_your_turn) { %>
-        <form method="post" action="/cards/arena/matches/<%= match.id %>/turn" class="arena-visual-lock-form" id="arenaTurnForm">
+        <form method="post" action="<%= matchBase %>/turn" class="arena-visual-lock-form" id="arenaTurnForm">
           <input type="hidden" name="count" value="<%= match.cards_required_this_turn %>">
           <div data-turn-inputs></div>
           <div><strong data-turn-progress>0/<%= match.cards_required_this_turn %> cards staged</strong><p class="muted">Power rule: a responding card may be at most opposing Power +<%= wut.config.slotPowerAllowance %>. Boosts do not change Power.</p><strong>Boost Load: <span data-boost-load><%= match.boost_load_used %></span>/<%= match.boost_load_cap %></strong></div>

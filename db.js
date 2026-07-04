@@ -9,6 +9,21 @@ import {
   trinketFitsWutPosition
 } from './services/wutBalanceRules.js';
 import {
+  NIGHTLY_WUT_DRAFT_PRESET,
+  normalizeWutDraftEventConfig,
+  createWutDraftEventRecord,
+  transitionWutDraftEventRecord,
+  pauseWutDraftEventRecord,
+  resumeWutDraftEventRecord,
+  appendWutDraftEventLog,
+  resolveWutDraftEventMatchRecord,
+  selectWutDraftBenchPool,
+  resolveWutDraftBenchWinners,
+  buildWutDraftBoosterRoundTemplates,
+  materializeWutDraftBoosterRound,
+  chooseWutDraftAutopick
+} from './services/wutDraftEvents.js';
+import {
   HORSE_RACING_CONFIG,
   getHorseRaceCardDateKey,
   getHorseRaceDateKey,
@@ -28,6 +43,7 @@ const ARENA_ELO_K_FACTOR = 32;
 const ARENA_MATCHMAKING_MINUTES = 30;
 const ARENA_QUEUE_TRIGGER = 10;
 const WUT_RARITY_COST = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
+const WUT_TRINKET_POWER = { common: 0, uncommon: 0.5, rare: 1, epic: 1.5, legendary: 2.5 };
 const WUT_TRINKET_FAMILIES = Object.keys(WUT_LAUNCH_TRINKET_EFFECTS);
 const WUT_TRINKET_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const WUT_MISSION_REWARD_DEFAULTS = { daily_play_three: 30, daily_first_win: 20, daily_rotating: 30, weekly_profit_500: 100, weekly_category_coverage: 125, weekly_rotating: 125 };
@@ -140,6 +156,7 @@ function defaultState() {
         wut: {
           freeShopPurchases: false,
           rarityCosts: WUT_RARITY_COST,
+          trinketPowerValues: WUT_TRINKET_POWER,
           slotPowerAllowance: Number(process.env.WUT_SLOT_POWER_ALLOWANCE || 1),
           boostLoadCap: Number(process.env.WUT_BOOST_LOAD_CAP || 5),
           rewards: { winner: Number(process.env.WUT_WIN_REWARD || 60), loser: Number(process.env.WUT_LOSS_REWARD || 25), forfeitLoser: 0 },
@@ -173,6 +190,16 @@ function defaultState() {
       wutTransactions: [],
       missionPeriods: [],
       missionBetOpportunities: [],
+      draftEvents: {
+        events: [],
+        presets: [{
+          id: 1, key: NIGHTLY_WUT_DRAFT_PRESET.key, name: NIGHTLY_WUT_DRAFT_PRESET.name,
+          description: NIGHTLY_WUT_DRAFT_PRESET.description, system: true,
+          config: JSON.parse(JSON.stringify(NIGHTLY_WUT_DRAFT_PRESET.config)), created_at: null, updated_at: null
+        }],
+        nextEventId: 1,
+        nextPresetId: 2
+      },
       arena: {
         config: {
           entryFee: ARENA_ENTRY_FEE,
@@ -478,6 +505,7 @@ function ensureCardsState() {
         ...defaults.config.wut,
         ...(state.cards?.config?.wut || {}),
         rarityCosts: { ...defaults.config.wut.rarityCosts, ...(state.cards?.config?.wut?.rarityCosts || {}) },
+        trinketPowerValues: { ...defaults.config.wut.trinketPowerValues, ...(state.cards?.config?.wut?.trinketPowerValues || {}) },
         rewards: { ...defaults.config.wut.rewards, ...(state.cards?.config?.wut?.rewards || {}) },
         deckSlotCosts: { ...defaults.config.wut.deckSlotCosts, ...(state.cards?.config?.wut?.deckSlotCosts || {}) },
         trinketPrices: { ...defaults.config.wut.trinketPrices, ...(state.cards?.config?.wut?.trinketPrices || {}) },
@@ -550,8 +578,46 @@ function ensureCardsState() {
   }
   state.cards.trinkets = Array.isArray(state.cards.trinkets) ? state.cards.trinkets : [];
   state.cards.trinketShops = Array.isArray(state.cards.trinketShops) ? state.cards.trinketShops : [];
+  for (const shop of state.cards.trinketShops) {
+    for (const offer of shop.offers || []) {
+      offer.power_cost = Number(state.cards.config.wut.trinketPowerValues[offer.rarity] ?? WUT_TRINKET_POWER[offer.rarity] ?? 0);
+    }
+  }
   state.cards.missionPeriods = Array.isArray(state.cards.missionPeriods) ? state.cards.missionPeriods : [];
   state.cards.missionBetOpportunities = Array.isArray(state.cards.missionBetOpportunities) ? state.cards.missionBetOpportunities : [];
+  const savedDraftEvents = state.cards.draftEvents && typeof state.cards.draftEvents === 'object' ? state.cards.draftEvents : {};
+  state.cards.draftEvents = {
+    events: Array.isArray(savedDraftEvents.events) ? savedDraftEvents.events : [],
+    presets: Array.isArray(savedDraftEvents.presets) ? savedDraftEvents.presets : [],
+    nextEventId: Number(savedDraftEvents.nextEventId || 1),
+    nextPresetId: Number(savedDraftEvents.nextPresetId || 1)
+  };
+  if (!state.cards.draftEvents.presets.some(preset => preset.key === NIGHTLY_WUT_DRAFT_PRESET.key)) {
+    state.cards.draftEvents.presets.push({
+      id: state.cards.draftEvents.nextPresetId++, key: NIGHTLY_WUT_DRAFT_PRESET.key,
+      name: NIGHTLY_WUT_DRAFT_PRESET.name, description: NIGHTLY_WUT_DRAFT_PRESET.description,
+      system: true, config: normalizeWutDraftEventConfig(NIGHTLY_WUT_DRAFT_PRESET.config),
+      created_at: nowIso(), updated_at: nowIso()
+    });
+  }
+  state.cards.draftEvents.nextEventId = Math.max(state.cards.draftEvents.nextEventId, ...state.cards.draftEvents.events.map(event => Number(event.id || 0) + 1));
+  state.cards.draftEvents.nextPresetId = Math.max(state.cards.draftEvents.nextPresetId, ...state.cards.draftEvents.presets.map(preset => Number(preset.id || 0) + 1));
+  for (const event of state.cards.draftEvents.events) {
+    event.entrants = Array.isArray(event.entrants) ? event.entrants : [];
+    event.inventories = event.inventories && typeof event.inventories === 'object' ? event.inventories : {};
+    event.bench = { candidates: [], votes: [], winners: [], deadline_at: null, completed_at: null, ...(event.bench || {}) };
+    event.draft = { boosters: [], picks: [], pass_log: [], round_templates: [], seat_user_ids: [], pending_user_ids: [], current_booster: 0, current_pick: 0, deadline_at: null, completed_at: null, ...(event.draft || {}) };
+    event.deckbuilding = { deadline_at: null, completed_at: null, ...(event.deckbuilding || {}) };
+    event.tournament = { round: 0, rounds: [], matches: [], standings: [], completed_at: null, nextMatchId: 1, next_round_at: null, ...(event.tournament || {}) };
+    event.tournament.nextMatchId = Math.max(Number(event.tournament.nextMatchId || 1), ...(event.tournament.matches || []).map(match => Number(match.id || 0) + 1));
+    event.prizes = { awards: [], awarded_at: null, ...(event.prizes || {}) };
+    event.cleanup = { temporary_items_removed_at: null, ...(event.cleanup || {}) };
+    event.archived_inventories = event.archived_inventories && typeof event.archived_inventories === 'object' ? event.archived_inventories : {};
+    event.archived_decks = event.archived_decks && typeof event.archived_decks === 'object' ? event.archived_decks : {};
+    event.nextTemporaryItemId = Math.max(Number(event.nextTemporaryItemId || 1), ...Object.values(event.inventories).flatMap(inventory => inventory?.cards || []).map(item => Number(item.id || 0) + 1));
+    event.nextDraftPackId = Math.max(Number(event.nextDraftPackId || 1), ...(event.draft.boosters || []).map(pack => Number(pack.id || 0) + 1));
+    event.nextDraftItemId = Math.max(Number(event.nextDraftItemId || 1), ...(event.draft.boosters || []).flatMap(pack => pack.items || []).map(item => Number(item.id || 0) + 1));
+  }
   if (chemistryRulesVersion < 2) {
     for (const trinket of state.cards.trinkets.filter(item => item.family === 'team_crest')) {
       trinket.effect = configuredTrinketEffect('team_crest', trinket.rarity);
@@ -2050,6 +2116,1372 @@ export function getCardsConfig() {
   return JSON.parse(JSON.stringify(state.cards.config));
 }
 
+function requireWutDraftAdmin(adminUserId) {
+  const admin = state.users.find(user => Number(user.id) === Number(adminUserId));
+  if (!admin || admin.role !== 'admin') throw new Error('Admin access is required for WUT Draft Event controls.');
+  return admin;
+}
+
+function storedWutDraftEvent(eventId) {
+  ensureCardsState();
+  const event = state.cards.draftEvents.events.find(item => Number(item.id) === Number(eventId));
+  if (!event) throw new Error('WUT Draft Event not found.');
+  return event;
+}
+
+export function getWutDraftEventPresets() {
+  ensureCardsState();
+  return state.cards.draftEvents.presets
+    .map(preset => JSON.parse(JSON.stringify(preset)))
+    .sort((a, b) => Number(Boolean(b.system)) - Number(Boolean(a.system)) || String(a.name).localeCompare(String(b.name)));
+}
+
+export function saveWutDraftEventPreset({ presetId = null, name, description = '', config, adminUserId, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  ensureCardsState();
+  const normalized = normalizeWutDraftEventConfig(config);
+  const cleanName = String(name || normalized.basic.name || '').trim().slice(0, 100);
+  if (!cleanName) throw new Error('Preset name is required.');
+  let preset = presetId == null ? null : state.cards.draftEvents.presets.find(item => Number(item.id) === Number(presetId));
+  if (preset?.system) throw new Error('System presets cannot be overwritten. Save a new preset instead.');
+  if (!preset) {
+    preset = {
+      id: state.cards.draftEvents.nextPresetId++, key: null, system: false,
+      created_by: Number(adminUserId), created_at: now.toISOString()
+    };
+    state.cards.draftEvents.presets.push(preset);
+  }
+  preset.name = cleanName;
+  preset.description = String(description || '').trim().slice(0, 1000);
+  preset.config = normalized;
+  preset.updated_at = now.toISOString();
+  saveState();
+  return JSON.parse(JSON.stringify(preset));
+}
+
+export function createWutDraftEvent({ config = null, presetId = null, adminUserId, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  ensureCardsState();
+  const preset = presetId == null ? null : state.cards.draftEvents.presets.find(item => Number(item.id) === Number(presetId));
+  if (presetId != null && !preset) throw new Error('WUT Draft Event preset not found.');
+  const eventConfig = config || preset?.config;
+  if (!eventConfig) throw new Error('Draft event configuration is required.');
+  const event = createWutDraftEventRecord({
+    id: state.cards.draftEvents.nextEventId++, config: eventConfig,
+    presetId: preset?.id || null, adminUserId, now
+  });
+  if (preset) appendWutDraftEventLog(event, 'preset_loaded', { preset_id: preset.id, preset_name: preset.name }, { actorUserId: adminUserId, now });
+  state.cards.draftEvents.events.push(event);
+  saveState();
+  return JSON.parse(JSON.stringify(event));
+}
+
+export function getWutDraftEvents({ includePrivate = false } = {}) {
+  ensureCardsState();
+  return state.cards.draftEvents.events
+    .filter(event => includePrivate || event.config?.basic?.visibility === 'public')
+    .map(event => JSON.parse(JSON.stringify(event)))
+    .sort((a, b) => new Date(a.config?.scheduling?.startsAt || a.created_at).getTime() - new Date(b.config?.scheduling?.startsAt || b.created_at).getTime());
+}
+
+export function getWutDraftEvent(eventId, { includePrivate = false } = {}) {
+  const event = storedWutDraftEvent(eventId);
+  if (!includePrivate && event.config?.basic?.visibility !== 'public') throw new Error('WUT Draft Event not found.');
+  return JSON.parse(JSON.stringify(event));
+}
+
+function wutDraftEventView(event, userId = null) {
+  const entrant = (event.entrants || []).find(item => Number(item.user_id) === Number(userId) && item.status === 'active') || null;
+  return {
+    ...JSON.parse(JSON.stringify(event)),
+    entrants: (event.entrants || []).map(item => {
+      const user = state.users.find(candidate => Number(candidate.id) === Number(item.user_id));
+      return { ...JSON.parse(JSON.stringify(item)), display_name: user?.display_name || user?.username || `Player ${item.user_id}` };
+    }),
+    active_entrant_count: (event.entrants || []).filter(item => item.status === 'active').length,
+    joined_by_user: Boolean(entrant),
+    user_entrant: entrant ? JSON.parse(JSON.stringify(entrant)) : null
+  };
+}
+
+export function getWutDraftEventLobby({ eventId = null, userId = null, includePrivate = false } = {}) {
+  ensureCardsState();
+  const events = eventId == null
+    ? state.cards.draftEvents.events
+    : [storedWutDraftEvent(eventId)];
+  return events
+    .filter(event => includePrivate || event.config?.basic?.visibility === 'public')
+    .map(event => wutDraftEventView(event, userId))
+    .sort((a, b) => new Date(a.config?.scheduling?.startsAt || a.created_at).getTime() - new Date(b.config?.scheduling?.startsAt || b.created_at).getTime());
+}
+
+function chargeWutDraftEntry(event, userId, now) {
+  const { currency, amount } = event.config.basic.entryFee;
+  const paidAmount = Number(amount || 0);
+  if (currency === 'free' || paidAmount <= 0) return { currency: 'free', amount: 0, transaction_id: null };
+  if (currency === 'wut_coin') {
+    const membership = wutMembership(userId);
+    changeWutCoins(membership, -paidAmount, 'draft_event_entry', { draft_event_id: event.id });
+    return { currency, amount: paidAmount, transaction_id: state.cards.wutTransactions.at(-1)?.id || null };
+  }
+  const user = state.users.find(item => Number(item.id) === Number(userId));
+  if (!user) throw new Error('User not found.');
+  if (Number(user.balance || 0) < paidAmount) throw new Error('Insufficient Mushybux.');
+  user.balance = Number(user.balance || 0) - paidAmount;
+  const transaction = {
+    id: state.nextTransactionId++, user_id: Number(userId), week: Number(state.settings.currentWeek || 1),
+    amount: -paidAmount, kind: 'draft_event_entry', category: 'cards', draft_event_id: event.id,
+    note: `Entry to ${event.config.basic.name}`, created_at: now.toISOString()
+  };
+  state.transactions.push(transaction);
+  return { currency, amount: paidAmount, transaction_id: transaction.id };
+}
+
+function refundWutDraftEntrant(event, entrant, reason, now) {
+  if (!entrant || entrant.refunded_at || Number(entrant.payment?.amount || 0) <= 0) return 0;
+  const amount = Number(entrant.payment.amount);
+  if (entrant.payment.currency === 'wut_coin') {
+    const membership = state.cards.wutMemberships.find(item => Number(item.user_id) === Number(entrant.user_id));
+    if (!membership) throw new Error(`Cannot refund WUT Coins to missing membership for user ${entrant.user_id}.`);
+    changeWutCoins(membership, amount, 'draft_event_refund', { draft_event_id: event.id, reason });
+    entrant.refund_transaction_id = state.cards.wutTransactions.at(-1)?.id || null;
+  } else if (entrant.payment.currency === 'mushybux') {
+    const user = state.users.find(item => Number(item.id) === Number(entrant.user_id));
+    if (!user) throw new Error(`Cannot refund Mushybux to missing user ${entrant.user_id}.`);
+    user.balance = Number(user.balance || 0) + amount;
+    const transaction = {
+      id: state.nextTransactionId++, user_id: Number(user.id), week: Number(state.settings.currentWeek || 1),
+      amount, kind: 'draft_event_refund', category: 'cards', draft_event_id: event.id,
+      note: `Refund for ${event.config.basic.name}: ${reason}`, created_at: now.toISOString()
+    };
+    state.transactions.push(transaction);
+    entrant.refund_transaction_id = transaction.id;
+  }
+  entrant.refunded_at = now.toISOString();
+  entrant.refund_reason = reason;
+  return amount;
+}
+
+export function joinWutDraftEvent({ eventId, userId, now = new Date() }) {
+  ensureCardsState();
+  const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('This Draft Event is paused.');
+  const lateSignup = event.phase === 'signup_closed' && event.config.signup.allowLateSignup;
+  if (event.phase !== 'signup_open' && !lateSignup) throw new Error('Signup is not open for this Draft Event.');
+  wutMembership(userId);
+  if ((event.entrants || []).some(item => Number(item.user_id) === Number(userId) && item.status === 'active')) throw new Error('You are already entered in this Draft Event.');
+  const activeCount = (event.entrants || []).filter(item => item.status === 'active').length;
+  const maximum = event.config.basic.maximumEntrants;
+  if (maximum != null && activeCount >= Number(maximum)) throw new Error('This Draft Event is full.');
+  const payment = chargeWutDraftEntry(event, userId, now);
+  const entrant = {
+    user_id: Number(userId), status: 'active', joined_at: now.toISOString(), withdrawn_at: null,
+    dropped_at: null, payment, refunded_at: null, refund_transaction_id: null
+  };
+  event.entrants.push(entrant);
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, lateSignup ? 'player_joined_late' : 'player_joined', { user_id: Number(userId), payment }, { actorUserId: userId, now });
+  saveState();
+  return wutDraftEventView(event, userId);
+}
+
+export function withdrawWutDraftEvent({ eventId, userId, now = new Date() }) {
+  ensureCardsState();
+  const event = storedWutDraftEvent(eventId);
+  if (event.phase !== 'signup_open' || !event.config.signup.allowWithdrawal) throw new Error('Withdrawal is not available for this Draft Event.');
+  const entrant = (event.entrants || []).find(item => Number(item.user_id) === Number(userId) && item.status === 'active');
+  if (!entrant) throw new Error('You are not entered in this Draft Event.');
+  entrant.status = 'withdrawn';
+  entrant.withdrawn_at = now.toISOString();
+  const refunded = refundWutDraftEntrant(event, entrant, 'Player withdrew before signup closed', now);
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'player_withdrew', { user_id: Number(userId), refunded }, { actorUserId: userId, now });
+  saveState();
+  return wutDraftEventView(event, userId);
+}
+
+export function dropWutDraftEventEntrant({ eventId, userId, adminUserId, reason = '', now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  const entrant = (event.entrants || []).find(item => Number(item.user_id) === Number(userId) && item.status === 'active');
+  if (!entrant) throw new Error('That player is not an active entrant.');
+  entrant.status = 'dropped';
+  entrant.dropped_at = now.toISOString();
+  entrant.drop_reason = String(reason || 'Dropped by an administrator.').trim().slice(0, 180);
+  const beforeStart = ['scheduled', 'signup_open', 'signup_closed'].includes(event.phase);
+  const refunded = beforeStart ? refundWutDraftEntrant(event, entrant, entrant.drop_reason, now) : 0;
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'player_dropped', { user_id: Number(userId), reason: entrant.drop_reason, refunded }, { actorUserId: adminUserId, now });
+  if (event.phase === 'tournament') {
+    const unresolved = (event.tournament.matches || []).filter(match => ['pending', 'active', 'scoring'].includes(match.status) && match.player_ids.map(Number).includes(Number(userId)));
+    for (const match of unresolved) {
+      const resolution = resolveWutDraftEventMatchRecord(match, { action: 'forfeit', forfeitingUserId: userId, adminUserId, reason: entrant.drop_reason, now });
+      appendWutDraftEventLog(event, resolution.type, resolution.details, { actorUserId: adminUserId, now });
+    }
+    recalculateWutDraftStandings(event); activateNextWutDraftRoundMatch(event, now); advanceWutDraftTournament(event, now);
+  }
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+export function startWutDraftEvent({ eventId, environment, adminUserId, system = false, now = new Date() }) {
+  if (!system) requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('Resume the event before changing phases.');
+  if (event.phase !== 'signup_closed') throw new Error('A Draft Event can only start after signup closes.');
+  if (event.environment_snapshot) throw new Error('This Draft Event already has a frozen environment snapshot.');
+  const activeEntrants = (event.entrants || []).filter(item => item.status === 'active');
+  if (activeEntrants.length < Number(event.config.basic.minimumEntrants) && !event.config.basic.allowManualStartBelowMinimum) {
+    throw new Error(`This event needs at least ${event.config.basic.minimumEntrants} entrants.`);
+  }
+  if (!event.config.basic.allowOddEntrants && activeEntrants.length % 2) throw new Error('This event requires an even number of entrants.');
+  if (!environment || !Array.isArray(environment.cards)) throw new Error('A valid frozen WUT environment is required.');
+  event.environment_snapshot = JSON.parse(JSON.stringify({ ...environment, captured_at: now.toISOString() }));
+  ensureWutDraftInventories(event);
+  transitionWutDraftEventRecord(event, 'starting', { actorUserId: adminUserId, reason: 'Environment frozen', now });
+  appendWutDraftEventLog(event, 'environment_snapshotted', { card_count: event.environment_snapshot.cards.length }, { actorUserId: adminUserId, now });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+function ensureWutDraftInventories(event) {
+  for (const entrant of (event.entrants || []).filter(item => item.status === 'active')) {
+    const key = String(entrant.user_id);
+    event.inventories[key] = {
+      cards: [], boosts: [], trinkets: [], safety_bench_card_ids: [],
+      ...(event.inventories[key] || {})
+    };
+  }
+}
+
+function setWutDraftPickDeadline(event, now) {
+  event.draft.deadline_at = new Date(now.getTime() + Number(event.config.draft.pickSeconds) * 1000).toISOString();
+  event.deadlines.draft_pick = event.draft.deadline_at;
+}
+
+function preparedWutDraftOpening(event, random = Math.random) {
+  const templates = buildWutDraftBoosterRoundTemplates(event.config, random);
+  const seats = (event.entrants || []).filter(item => item.status === 'active').map(item => Number(item.user_id));
+  if (!seats.length) throw new Error('At least one active entrant is required to begin drafting.');
+  const packs = materializeWutDraftBoosterRound({
+    template: templates[0], entrantIds: seats, cards: event.environment_snapshot.cards,
+    boostEffects: event.environment_snapshot.rules?.boostEffects || state.cards.config.boostEffects,
+    trinketEffects: event.environment_snapshot.rules?.trinketEffects || state.cards.config.wut.trinketEffects,
+    poolRules: event.config.boosters.pool, usedCardIdentities: new Set(), random
+  });
+  return { templates, seats, packs };
+}
+
+function generateWutDraftRound(event, boosterNumber, { now = new Date(), random = Math.random, preparedPacks = null } = {}) {
+  const template = event.draft.round_templates.find(item => Number(item.boosterNumber) === Number(boosterNumber));
+  if (!template) throw new Error(`Draft booster ${boosterNumber} has no shared composition template.`);
+  const usedCardIdentities = new Set((event.draft.boosters || []).flatMap(pack => [
+    ...(pack.items || []).filter(item => item.item_type === 'player').map(item => item.card_identity),
+    ...(pack.history || []).filter(item => item.item?.item_type === 'player').map(item => item.item.card_identity)
+  ]).filter(Boolean));
+  const packs = (preparedPacks || materializeWutDraftBoosterRound({
+    template,
+    entrantIds: event.draft.seat_user_ids,
+    cards: event.environment_snapshot.cards,
+    boostEffects: event.environment_snapshot.rules?.boostEffects || state.cards.config.boostEffects,
+    trinketEffects: event.environment_snapshot.rules?.trinketEffects || state.cards.config.wut.trinketEffects,
+    poolRules: event.config.boosters.pool,
+    usedCardIdentities,
+    random
+  })).map(pack => ({
+    ...pack, id: Number(event.nextDraftPackId++), opened_at: now.toISOString(),
+    items: pack.items.map(item => ({ ...item, id: Number(event.nextDraftItemId++) }))
+  }));
+  event.draft.boosters.push(...packs);
+  event.draft.current_booster = Number(boosterNumber);
+  event.draft.current_pick = 1;
+  event.draft.pending_user_ids = [...event.draft.seat_user_ids];
+  setWutDraftPickDeadline(event, now);
+  appendWutDraftEventLog(event, 'booster_generated', {
+    booster_number: Number(boosterNumber), pack_ids: packs.map(pack => pack.id),
+    composition: template.slots.map(slot => ({ item_type: slot.itemType, rarity: slot.rarity })),
+    direction: template.passDirection
+  }, { now });
+}
+
+function initializeWutDraft(event, { now = new Date(), random = Math.random, actorUserId = null, prepared = null } = {}) {
+  if (event.phase !== 'draft') throw new Error('The event must be in its draft phase before boosters are generated.');
+  if (event.draft.round_templates?.length) return event;
+  const opening = prepared || preparedWutDraftOpening(event, random);
+  ensureWutDraftInventories(event);
+  event.draft.round_templates = opening.templates;
+  event.draft.seat_user_ids = opening.seats;
+  event.draft.boosters = [];
+  event.draft.picks = [];
+  event.draft.pass_log = [];
+  generateWutDraftRound(event, 1, { now, random, preparedPacks: opening.packs });
+  appendWutDraftEventLog(event, 'draft_started', { seats: event.draft.seat_user_ids, booster_count: event.draft.round_templates.length }, { actorUserId, now });
+  return event;
+}
+
+function temporaryItemFromDraft(event, item, userId, now) {
+  const base = {
+    id: Number(event.nextTemporaryItemId++), item_type: item.item_type, rarity: item.rarity,
+    source: 'booster_draft', drafted_by_user_id: Number(userId), drafted_at: now.toISOString()
+  };
+  if (item.item_type === 'player') return {
+    ...base, card_identity: item.card_identity, player_snapshot: JSON.parse(JSON.stringify(item.player_snapshot)),
+    power: Number(event.environment_snapshot.rules?.rarityCosts?.[item.rarity] || state.cards.config.wut.rarityCosts?.[item.rarity] || 1)
+  };
+  if (item.item_type === 'boost') return { ...base, boost_type: item.boost_type, effect: JSON.parse(JSON.stringify(item.effect || {})), consumed: false };
+  return { ...base, family: item.family, effect: JSON.parse(JSON.stringify(item.effect || {})), attached_card_id: null };
+}
+
+function passWutDraftPacks(event, now) {
+  const roundPacks = event.draft.boosters.filter(pack => Number(pack.booster_number) === Number(event.draft.current_booster));
+  if (roundPacks.every(pack => !pack.items.length)) {
+    for (const pack of roundPacks) { pack.emptied_at ||= now.toISOString(); pack.awaiting_pass = false; }
+    if (event.draft.current_booster < event.draft.round_templates.length) {
+      generateWutDraftRound(event, event.draft.current_booster + 1, { now });
+      return;
+    }
+    event.draft.completed_at = now.toISOString();
+    event.draft.deadline_at = null;
+    event.draft.pending_user_ids = [];
+    delete event.deadlines.draft_pick;
+    transitionWutDraftEventRecord(event, 'deckbuilding', { reason: 'All boosters exhausted', now });
+    event.deckbuilding.deadline_at = new Date(now.getTime() + Number(event.config.deckbuilding.seconds) * 1000).toISOString();
+    event.deadlines.deckbuilding = event.deckbuilding.deadline_at;
+    appendWutDraftEventLog(event, 'draft_completed', { pick_count: event.draft.picks.length }, { now });
+    return;
+  }
+  const seats = event.draft.seat_user_ids;
+  const direction = roundPacks[0]?.pass_direction || 'left';
+  for (const pack of roundPacks) {
+    const previousOwner = Number(pack.current_owner_user_id);
+    const ownerIndex = seats.indexOf(previousOwner);
+    const nextIndex = (ownerIndex + (direction === 'right' ? -1 : 1) + seats.length) % seats.length;
+    const nextOwner = Number(seats[nextIndex]);
+    pack.current_owner_user_id = nextOwner;
+    pack.awaiting_pass = false;
+    pack.pass_count = Number(pack.pass_count || 0) + 1;
+    const passage = { booster_number: event.draft.current_booster, pick_number: event.draft.current_pick, pack_id: pack.id, from_user_id: previousOwner, to_user_id: nextOwner, direction, passed_at: now.toISOString() };
+    event.draft.pass_log.push(passage);
+    appendWutDraftEventLog(event, 'booster_passed', passage, { now });
+  }
+  event.draft.current_pick += 1;
+  event.draft.pending_user_ids = [...seats];
+  setWutDraftPickDeadline(event, now);
+}
+
+function commitWutDraftPick(event, { userId, itemId, autopick = false, now = new Date() }) {
+  if (event.paused_at) throw new Error('This Draft Event is paused.');
+  if (event.phase !== 'draft' || event.draft.completed_at) throw new Error('The Booster Draft is not active.');
+  const playerId = Number(userId);
+  if (!event.draft.pending_user_ids.map(Number).includes(playerId)) throw new Error('You have already picked for this pass step.');
+  const pack = event.draft.boosters.find(item =>
+    Number(item.booster_number) === Number(event.draft.current_booster) &&
+    Number(item.current_owner_user_id) === playerId && !item.awaiting_pass && item.items.length
+  );
+  if (!pack) throw new Error('No active booster is assigned to this player.');
+  const itemIndex = pack.items.findIndex(item => Number(item.id) === Number(itemId));
+  if (itemIndex < 0) throw new Error('That item is not available in your current booster.');
+  const [item] = pack.items.splice(itemIndex, 1);
+  const inventory = event.inventories[String(playerId)];
+  const temporaryItem = temporaryItemFromDraft(event, item, playerId, now);
+  if (temporaryItem.item_type === 'player') inventory.cards.push(temporaryItem);
+  else if (temporaryItem.item_type === 'boost') inventory.boosts.push(temporaryItem);
+  else inventory.trinkets.push(temporaryItem);
+  pack.awaiting_pass = true;
+  if (!pack.items.length) pack.emptied_at = now.toISOString();
+  const pick = {
+    number: event.draft.picks.length + 1, booster_number: event.draft.current_booster,
+    pick_number: event.draft.current_pick, pack_id: pack.id, user_id: playerId,
+    item: JSON.parse(JSON.stringify(item)), temporary_item_id: temporaryItem.id,
+    autopick: Boolean(autopick), picked_at: now.toISOString()
+  };
+  pack.history.push(pick);
+  event.draft.picks.push(pick);
+  event.draft.pending_user_ids = event.draft.pending_user_ids.filter(id => Number(id) !== playerId);
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, autopick ? 'item_autopicked' : 'item_drafted', {
+    user_id: playerId, pack_id: pack.id, booster_number: pick.booster_number,
+    pick_number: pick.pick_number, item_id: item.id, item_type: item.item_type, rarity: item.rarity
+  }, { actorUserId: autopick ? null : playerId, now });
+  if (!event.draft.pending_user_ids.length) passWutDraftPacks(event, now);
+  return pick;
+}
+
+export function beginWutDraftEvent({ eventId, adminUserId, now = new Date(), random = Math.random }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  const preparedDraft = event.draft.round_templates?.length ? null : preparedWutDraftOpening(event, random);
+  if (event.phase === 'starting') transitionWutDraftEventRecord(event, 'draft', { actorUserId: adminUserId, reason: 'Draft started by administrator', now });
+  initializeWutDraft(event, { now, random, actorUserId: adminUserId, prepared: preparedDraft });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+export function pickWutDraftItem({ eventId, userId, itemId, now = new Date() }) {
+  ensureCardsState();
+  const event = storedWutDraftEvent(eventId);
+  if (!event.draft.seat_user_ids.map(Number).includes(Number(userId))) throw new Error('Only Draft Event entrants can pick.');
+  const pick = commitWutDraftPick(event, { userId, itemId, now });
+  saveState();
+  return { event: wutDraftEventView(event, userId), pick: JSON.parse(JSON.stringify(pick)) };
+}
+
+export function forceWutDraftAutopick({ eventId, userId = null, adminUserId, now = new Date(), random = Math.random }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  const targets = userId == null ? [...event.draft.pending_user_ids] : [Number(userId)];
+  const picks = [];
+  for (const target of targets) {
+    if (!event.draft.pending_user_ids.map(Number).includes(Number(target))) continue;
+    const pack = event.draft.boosters.find(item => Number(item.booster_number) === Number(event.draft.current_booster) && Number(item.current_owner_user_id) === Number(target) && !item.awaiting_pass);
+    const item = chooseWutDraftAutopick(pack?.items || [], event.config.draft.autopick.priority, random);
+    if (!item) throw new Error(`No item is available to autopick for player ${target}.`);
+    picks.push(commitWutDraftPick(event, { userId: target, itemId: item.id, autopick: true, now }));
+  }
+  saveState();
+  return { event: wutDraftEventView(event, adminUserId), picks: JSON.parse(JSON.stringify(picks)) };
+}
+
+export function extendWutDraftPickDeadline({ eventId, adminUserId, seconds, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.phase !== 'draft' || !event.draft.deadline_at) throw new Error('A Booster Draft pick timer is not active.');
+  const amount = Math.max(1, Math.min(86400, Math.round(Number(seconds) || 0)));
+  event.draft.deadline_at = new Date(new Date(event.draft.deadline_at).getTime() + amount * 1000).toISOString();
+  event.deadlines.draft_pick = event.draft.deadline_at;
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'draft_timer_extended', { seconds: amount, deadline_at: event.draft.deadline_at }, { actorUserId: adminUserId, now });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+function wutDraftInventoryFor(event, userId) {
+  const inventory = event.inventories?.[String(userId)];
+  if (!inventory) throw new Error('No temporary Event Collection exists for this player.');
+  return inventory;
+}
+
+function wutDraftFrozenRarityPower(event, rarity) {
+  return Number(event.environment_snapshot?.rules?.rarityCosts?.[rarity] || state.cards.config.wut.rarityCosts?.[rarity] || 1);
+}
+
+function wutDraftFrozenTrinketPower(event, rarity) {
+  return Number(event.environment_snapshot?.rules?.trinketPowerValues?.[rarity] ?? state.cards.config.wut.trinketPowerValues?.[rarity] ?? WUT_TRINKET_POWER[rarity] ?? 0);
+}
+
+function wutDraftDeckCardSnapshot(event, inventory, card) {
+  const trinket = card.trinket_id == null ? null : inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id));
+  return {
+    event_item_id: Number(card.id), card_identity: card.card_identity,
+    position: card.player_snapshot.position, rarity: card.rarity || card.player_snapshot.tier,
+    base_power: wutDraftFrozenRarityPower(event, card.rarity || card.player_snapshot.tier),
+    power: Number(card.power || wutDraftFrozenRarityPower(event, card.rarity || card.player_snapshot.tier)),
+    player: JSON.parse(JSON.stringify(card.player_snapshot)),
+    trinket: trinket ? { id: Number(trinket.id), family: trinket.family, rarity: trinket.rarity, effect: JSON.parse(JSON.stringify(trinket.effect || {})) } : null
+  };
+}
+
+function validateAndStoreWutDraftDeck(event, userId, activeCardIds, { now = new Date(), automatic = false } = {}) {
+  const playerId = Number(userId);
+  const inventory = wutDraftInventoryFor(event, playerId);
+  const requested = [...new Set((activeCardIds || []).map(Number).filter(Number.isFinite))];
+  const minimum = Number(event.config.deckbuilding.activeMinimum);
+  const maximum = Number(event.config.deckbuilding.activeMaximum);
+  if (requested.length < minimum || requested.length > maximum) throw new Error(`Event Active Deck must contain between ${minimum} and ${maximum} cards.`);
+  const cardsById = new Map(inventory.cards.map(card => [Number(card.id), card]));
+  const activeCards = requested.map(id => cardsById.get(id));
+  if (activeCards.some(card => !card)) throw new Error('The Event Active Deck contains a card outside this temporary collection.');
+  const benchIdSet = new Set((inventory.safety_bench_card_ids || []).map(Number));
+  if (requested.some(id => benchIdSet.has(id))) throw new Error('Shared Safety Bench cards cannot be placed in the Event Active Deck.');
+  const activeSnapshots = activeCards.map(card => wutDraftDeckCardSnapshot(event, inventory, card));
+  if (activeSnapshots.filter(card => card.trinket?.family === 'team_crest').length > 1) throw new Error("Only one Captain's Patch can be active in an Event lineup.");
+  const benchIds = [...benchIdSet];
+  const benchSnapshots = benchIds.map(id => cardsById.get(id)).filter(Boolean).map(card => wutDraftDeckCardSnapshot(event, inventory, card));
+  if (event.config.safetyBench.mode !== 'disabled') {
+    const positions = benchSnapshots.map(card => card.position).sort().join('');
+    if (benchSnapshots.length !== 5 || positions !== 'DDFFG') throw new Error('The shared Event Safety Bench must remain exactly 2F / 2D / 1G.');
+  }
+  event.decks[String(playerId)] = {
+    user_id: playerId, active_card_ids: requested, safety_bench_card_ids: benchIds,
+    active_snapshots: activeSnapshots, safety_bench_snapshots: benchSnapshots,
+    submitted_at: now.toISOString(), automatic: Boolean(automatic), locked: Boolean(event.config.deckbuilding.lockDeckForTournament)
+  };
+  appendWutDraftEventLog(event, automatic ? 'event_deck_autosubmitted' : 'event_deck_submitted', { user_id: playerId, active_card_ids: requested }, { actorUserId: automatic ? null : playerId, now });
+  return event.decks[String(playerId)];
+}
+
+function automaticWutDraftDeck(event, userId, now) {
+  const inventory = wutDraftInventoryFor(event, userId);
+  const rarityRank = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5 };
+  const benchIds = new Set((inventory.safety_bench_card_ids || []).map(Number));
+  const ordered = inventory.cards.filter(card => !benchIds.has(Number(card.id))).sort((a, b) =>
+    Number(benchIds.has(Number(a.id))) - Number(benchIds.has(Number(b.id))) ||
+    (rarityRank[b.rarity || b.player_snapshot.tier] || 0) - (rarityRank[a.rarity || a.player_snapshot.tier] || 0) ||
+    Number(a.id) - Number(b.id)
+  );
+  const maximum = Number(event.config.deckbuilding.activeMaximum);
+  const selected = [];
+  let hasCaptainPatch = false;
+  for (const card of ordered) {
+    const trinket = card.trinket_id == null ? null : inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id));
+    if (trinket?.family === 'team_crest' && hasCaptainPatch) continue;
+    selected.push(card.id);
+    if (trinket?.family === 'team_crest') hasCaptainPatch = true;
+    if (selected.length >= maximum) break;
+  }
+  return validateAndStoreWutDraftDeck(event, userId, selected, { now, automatic: true });
+}
+
+function finishWutDraftDeckbuildingRecord(event, { now = new Date(), adminUserId = null, autosubmitMissing = false } = {}) {
+  if (event.deckbuilding.completed_at) return event;
+  if (event.phase !== 'deckbuilding') throw new Error('Event deckbuilding is not active.');
+  const seats = wutDraftActiveEntrantIds(event);
+  if (autosubmitMissing) for (const userId of seats) if (!event.decks[String(userId)]) automaticWutDraftDeck(event, userId, now);
+  const missing = seats.filter(userId => !event.decks[String(userId)]);
+  if (missing.length) return event;
+  event.deckbuilding.completed_at = now.toISOString();
+  event.deckbuilding.deadline_at = null;
+  delete event.deadlines.deckbuilding;
+  transitionWutDraftEventRecord(event, 'tournament', { actorUserId: adminUserId, reason: autosubmitMissing ? 'Deckbuilding timer expired' : 'All Event Decks submitted', now });
+  initializeWutDraftTournament(event, now);
+  appendWutDraftEventLog(event, 'deckbuilding_completed', { deck_count: seats.length, autosubmit_missing: Boolean(autosubmitMissing) }, { actorUserId: adminUserId, now });
+  return event;
+}
+
+function wutDraftEntrantIds(event) {
+  return (event.draft.seat_user_ids || event.entrants.filter(item => item.status === 'active').map(item => item.user_id)).map(Number);
+}
+
+function wutDraftActiveEntrantIds(event) {
+  const active = new Set((event.entrants || []).filter(item => item.status === 'active').map(item => Number(item.user_id)));
+  return wutDraftEntrantIds(event).filter(userId => active.has(Number(userId)));
+}
+
+function wutDraftMatchSnapshot(snapshot) {
+  const player = snapshot.player || {};
+  const season = player.cardType === 'mythic' ? player.sourceSeason : player.edition;
+  return {
+    card_id: Number(snapshot.event_item_id), card_identity: snapshot.card_identity,
+    position: snapshot.position || player.position, rarity: snapshot.rarity || player.tier,
+    team_id: player.teamId || '', team_name: player.teamDisplayName || player.teamName || player.teamId || '',
+    season: season || '', chemistry_key: `${season || ''}|${player.teamId || ''}`,
+    display_name: player.displayName || player.name || '', base_power: Number(snapshot.base_power || 1),
+    power: Number(snapshot.power || snapshot.base_power || 1), trinket: snapshot.trinket ? JSON.parse(JSON.stringify(snapshot.trinket)) : null
+  };
+}
+
+function wutDraftDeckSnapshot(event, userId) {
+  const deck = event.decks[String(Number(userId))];
+  if (!deck) throw new Error(`Player ${userId} does not have a locked Event Deck.`);
+  return {
+    active: (deck.active_snapshots || []).map(wutDraftMatchSnapshot),
+    bench: (deck.safety_bench_snapshots || []).map(wutDraftMatchSnapshot)
+  };
+}
+
+function wutDraftRoundRobinPairings(userIds, meetings) {
+  const players = [...userIds];
+  if (players.length % 2) players.push(null);
+  const rounds = [];
+  for (let meeting = 0; meeting < meetings; meeting += 1) {
+    const wheel = [...players];
+    for (let round = 0; round < wheel.length - 1; round += 1) {
+      const pairs = [];
+      const byes = [];
+      for (let index = 0; index < wheel.length / 2; index += 1) {
+        const first = wheel[index]; const second = wheel[wheel.length - 1 - index];
+        if (first == null || second == null) byes.push(Number(first ?? second));
+        else pairs.push(meeting % 2 ? [Number(second), Number(first)] : [Number(first), Number(second)]);
+      }
+      rounds.push({ stage: 'round_robin', pairs, byes });
+      wheel.splice(1, 0, wheel.pop());
+    }
+  }
+  return rounds;
+}
+
+function wutDraftStableTie(eventId, userId) {
+  let hash = 2166136261;
+  for (const char of `${eventId}|${userId}|standing`) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return hash >>> 0;
+}
+
+function wutDraftResolvedMatch(match) {
+  return ['ready', 'completed'].includes(match.status) || (match.status === 'completed' && match.forfeit_user_id != null);
+}
+
+function recalculateWutDraftStandings(event) {
+  const ids = wutDraftEntrantIds(event);
+  const table = new Map(ids.map(userId => [userId, {
+    user_id: userId, played: 0, wins: 0, losses: 0, draws: 0, byes: 0,
+    fp_for: 0, fp_against: 0, fp_differential: 0, opponent_wins: 0, rank: 0,
+    tie: wutDraftStableTie(event.id, userId)
+  }]));
+  for (const round of event.tournament.rounds || []) for (const userId of round.bye_user_ids || []) {
+    const row = table.get(Number(userId)); if (!row) continue;
+    row.byes += 1;
+    const counts = round.stage === 'round_robin' ? event.config.tournament.roundRobin.byeCountsAsWin : event.config.tournament.swiss.byeCountsAsWin;
+    if (counts) row.wins += 1;
+  }
+  for (const match of (event.tournament.matches || []).filter(wutDraftResolvedMatch)) {
+    const [a, b] = match.player_ids.map(Number); const first = table.get(a); const second = table.get(b);
+    if (!first || !second) continue;
+    const aScore = Number(match.scores?.[String(a)] || 0); const bScore = Number(match.scores?.[String(b)] || 0);
+    first.played += 1; second.played += 1; first.fp_for += aScore; first.fp_against += bScore; second.fp_for += bScore; second.fp_against += aScore;
+    if (match.winner_user_id == null) { first.draws += 1; second.draws += 1; }
+    else if (Number(match.winner_user_id) === a) { first.wins += 1; second.losses += 1; }
+    else { second.wins += 1; first.losses += 1; }
+  }
+  for (const row of table.values()) row.fp_differential = row.fp_for - row.fp_against;
+  for (const match of (event.tournament.matches || []).filter(wutDraftResolvedMatch)) for (const userId of match.player_ids.map(Number)) {
+    const opponentId = match.player_ids.map(Number).find(id => id !== userId);
+    table.get(userId).opponent_wins += Number(table.get(opponentId)?.wins || 0);
+  }
+  const format = event.config.tournament.format;
+  const tiebreakers = format === 'round_robin'
+    ? event.config.tournament.roundRobin.tiebreakers
+    : event.config.tournament.swiss.tiebreakers;
+  const ordered = [...table.values()].sort((a, b) => {
+    const primary = b.wins - a.wins || b.draws - a.draws;
+    if (primary) return primary;
+    for (const rule of tiebreakers || []) {
+      if (rule === 'head_to_head') {
+        const meetings = (event.tournament.matches || []).filter(match => wutDraftResolvedMatch(match) && match.player_ids.map(Number).includes(a.user_id) && match.player_ids.map(Number).includes(b.user_id));
+        const aWins = meetings.filter(match => Number(match.winner_user_id) === a.user_id).length;
+        const bWins = meetings.filter(match => Number(match.winner_user_id) === b.user_id).length;
+        if (aWins !== bWins) return bWins - aWins;
+      }
+      if (rule === 'opponent_wins' && a.opponent_wins !== b.opponent_wins) return b.opponent_wins - a.opponent_wins;
+      if (rule === 'fp_differential' && a.fp_differential !== b.fp_differential) return b.fp_differential - a.fp_differential;
+      if (rule === 'fp_scored' && a.fp_for !== b.fp_for) return b.fp_for - a.fp_for;
+      if (rule === 'random' && a.tie !== b.tie) return a.tie - b.tie;
+    }
+    return b.opponent_wins - a.opponent_wins || b.fp_differential - a.fp_differential || b.fp_for - a.fp_for || a.tie - b.tie;
+  });
+  ordered.forEach((row, index) => { row.rank = index + 1; });
+  event.tournament.standings = ordered;
+  return ordered;
+}
+
+function wutDraftSwissPairings(event, userIds) {
+  const standings = recalculateWutDraftStandings(event).filter(row => userIds.includes(Number(row.user_id)));
+  const previous = new Set((event.tournament.matches || []).map(match => match.player_ids.map(Number).sort((a, b) => a - b).join(':')));
+  const previousByes = new Set((event.tournament.rounds || []).flatMap(round => round.bye_user_ids || []).map(Number));
+  const waiting = standings.map(row => Number(row.user_id)); const byes = [];
+  if (waiting.length % 2) {
+    const bye = [...waiting].reverse().find(id => !previousByes.has(id)) ?? waiting.at(-1);
+    waiting.splice(waiting.indexOf(bye), 1); byes.push(bye);
+  }
+  const pairs = [];
+  while (waiting.length) {
+    const first = waiting.shift();
+    let opponentIndex = event.config.tournament.swiss.avoidRematches ? waiting.findIndex(second => !previous.has([first, second].sort((a, b) => a - b).join(':'))) : 0;
+    if (opponentIndex < 0) opponentIndex = 0;
+    pairs.push([first, waiting.splice(opponentIndex, 1)[0]]);
+  }
+  return { stage: 'swiss', pairs, byes };
+}
+
+function wutDraftSeededPlayers(event, userIds, mode) {
+  const rows = recalculateWutDraftStandings(event);
+  if (mode === 'standings') return rows.filter(row => userIds.includes(Number(row.user_id))).map(row => Number(row.user_id));
+  if (mode === 'wut_elo') return [...userIds].sort((a, b) => arenaRating(b) - arenaRating(a) || a - b);
+  if (mode === 'draft_order') return [...userIds].sort((a, b) => event.draft.seat_user_ids.indexOf(a) - event.draft.seat_user_ids.indexOf(b));
+  if (mode === 'signup_order') return [...userIds].sort((a, b) => event.entrants.findIndex(row => Number(row.user_id) === a) - event.entrants.findIndex(row => Number(row.user_id) === b));
+  if (mode === 'admin') {
+    const eligible = new Set(userIds.map(Number));
+    const assigned = (event.config.tournament.elimination.adminSeedUserIds || []).map(Number).filter(userId => eligible.has(userId));
+    return [...assigned, ...userIds.map(Number).filter(userId => !assigned.includes(userId))];
+  }
+  return [...userIds].sort((a, b) => wutDraftStableTie(event.id, a) - wutDraftStableTie(event.id, b));
+}
+
+function wutDraftEliminationPairings(seeded) {
+  const pairs = []; const byes = [];
+  let bracketSize = 1; while (bracketSize < seeded.length) bracketSize *= 2;
+  const slots = [...seeded, ...Array(bracketSize - seeded.length).fill(null)];
+  for (let index = 0; index < bracketSize / 2; index += 1) {
+    const first = slots[index]; const second = slots[bracketSize - 1 - index];
+    if (first == null || second == null) byes.push(Number(first ?? second)); else pairs.push([Number(first), Number(second)]);
+  }
+  return { stage: 'elimination', pairs, byes, finalRound: seeded.length <= 2, roles: pairs.map(() => seeded.length <= 2 ? 'championship' : 'main') };
+}
+
+function wutDraftTurnDeadline(event, now) {
+  const milliseconds = Number(event.config.match.turnSeconds) * 1000;
+  return (event.config.match.overnightPause ? addArenaActiveTime(now, milliseconds) : new Date(now.getTime() + milliseconds)).toISOString();
+}
+
+function createWutDraftTournamentMatch(event, playerIds, round, now, active = true, bracketRole = 'main') {
+  const [first, second] = playerIds.map(Number);
+  const id = Number(event.tournament.nextMatchId++);
+  const match = {
+    id, draft_event_id: Number(event.id), arena_match_key: `draft-${event.id}-${id}`,
+    round: round.number, stage: round.stage, bracket_role: bracketRole, player_ids: [first, second],
+    first_player_id: wutDraftStableTie(`${event.id}|${round.number}`, first) < wutDraftStableTie(`${event.id}|${round.number}`, second) ? first : second,
+    turn_index: 0, turn_deadline: active ? wutDraftTurnDeadline(event, now) : null, rules_version: 2,
+    deck_snapshots: { [String(first)]: wutDraftDeckSnapshot(event, first), [String(second)]: wutDraftDeckSnapshot(event, second) },
+    placements: [], status: active ? 'active' : 'pending', scores: null, winner_user_id: null, revealed_by: [],
+    boost_load_cap: Number(event.config.match.boostLoadCap), boosts_mode: event.config.match.boostsMode,
+    rules_snapshot: JSON.parse(JSON.stringify(event.environment_snapshot?.rules || {})), created_at: now.toISOString(), resolved_at: null, completed_at: null
+  };
+  event.tournament.matches.push(match); round.match_ids.push(id);
+  return match;
+}
+
+function startWutDraftTournamentRound(event, plan, now) {
+  const active = new Set(wutDraftActiveEntrantIds(event));
+  const filteredPairs = []; const filteredByes = (plan.byes || []).filter(userId => active.has(Number(userId)));
+  const filteredRoles = [];
+  (plan.pairs || []).forEach((pair, index) => {
+    const eligible = pair.map(Number).filter(userId => active.has(userId));
+    if (eligible.length === 2) { filteredPairs.push(eligible); filteredRoles.push(plan.roles?.[index] || 'main'); }
+    else if (eligible.length === 1) filteredByes.push(eligible[0]);
+  });
+  plan = { ...plan, pairs: filteredPairs, byes: [...new Set(filteredByes)], roles: filteredRoles };
+  const round = { number: Number(event.tournament.round || 0) + 1, stage: plan.stage, final_round: Boolean(plan.finalRound), status: 'active', match_ids: [], bye_user_ids: plan.byes || [], started_at: now.toISOString(), completed_at: null };
+  event.tournament.round = round.number; event.tournament.rounds.push(round); event.tournament.next_round_at = null;
+  plan.pairs.forEach((pair, index) => createWutDraftTournamentMatch(event, pair, round, now, event.config.match.simultaneousMatches || index === 0, plan.roles?.[index] || 'main'));
+  appendWutDraftEventLog(event, 'tournament_round_started', { round: round.number, stage: round.stage, match_ids: round.match_ids, bye_user_ids: round.bye_user_ids }, { now });
+  recalculateWutDraftStandings(event);
+  if (!round.match_ids.length) advanceWutDraftTournament(event, now, { force: true });
+  return round;
+}
+
+function activateNextWutDraftRoundMatch(event, now) {
+  if (event.config.match.simultaneousMatches) return null;
+  const round = event.tournament.rounds.at(-1); if (!round) return null;
+  const hasLive = round.match_ids.some(id => event.tournament.matches.find(match => Number(match.id) === Number(id))?.status === 'active');
+  if (hasLive) return null;
+  const next = round.match_ids.map(id => event.tournament.matches.find(match => Number(match.id) === Number(id))).find(match => match?.status === 'pending');
+  if (!next) return null;
+  next.status = 'active'; next.turn_deadline = wutDraftTurnDeadline(event, now); next.started_at = now.toISOString();
+  appendWutDraftEventLog(event, 'tournament_match_started', { round: round.number, match_id: next.id }, { now });
+  return next;
+}
+
+function initializeWutDraftTournament(event, now = new Date()) {
+  if (event.tournament.rounds.length || event.tournament.completed_at) return event;
+  event.tournament.nextMatchId ||= 1;
+  const ids = wutDraftActiveEntrantIds(event);
+  if (ids.length < 2) {
+    event.tournament.standings = ids.map((userId, index) => ({ user_id: userId, rank: index + 1, played: 0, wins: 0, losses: 0, draws: 0, byes: 0, fp_for: 0, fp_against: 0, fp_differential: 0, opponent_wins: 0 }));
+    event.tournament.completed_at = now.toISOString(); transitionWutDraftEventRecord(event, 'complete', { reason: 'Only one entrant remained', now }); return event;
+  }
+  const format = event.config.tournament.format;
+  if (format === 'round_robin') {
+    event.tournament.round_robin_plan = wutDraftRoundRobinPairings(ids, event.config.tournament.roundRobin.meetings);
+    startWutDraftTournamentRound(event, event.tournament.round_robin_plan[0], now);
+  } else if (format === 'single_elimination') {
+    event.tournament.elimination_players = wutDraftSeededPlayers(event, ids, event.config.tournament.elimination.seeding);
+    startWutDraftTournamentRound(event, wutDraftEliminationPairings(event.tournament.elimination_players), now);
+  } else startWutDraftTournamentRound(event, wutDraftSwissPairings(event, ids), now);
+  return event;
+}
+
+function finishWutDraftTournament(event, now) {
+  recalculateWutDraftStandings(event); event.tournament.completed_at = now.toISOString(); event.tournament.next_round_at = null;
+  transitionWutDraftEventRecord(event, 'complete', { reason: 'Tournament completed', now });
+  appendWutDraftEventLog(event, 'tournament_completed', { standings: event.tournament.standings.map(row => ({ user_id: row.user_id, rank: row.rank })) }, { now });
+}
+
+function advanceWutDraftTournament(event, now = new Date(), { force = false } = {}) {
+  if (event.phase !== 'tournament') return false;
+  const round = event.tournament.rounds.at(-1); if (!round || round.status === 'completed') return false;
+  const matches = round.match_ids.map(id => event.tournament.matches.find(match => Number(match.id) === Number(id))).filter(Boolean);
+  if (!force && matches.some(match => !wutDraftResolvedMatch(match) && !['voided', 'cancelled'].includes(match.status))) return false;
+  round.status = 'completed'; round.completed_at = now.toISOString(); recalculateWutDraftStandings(event);
+  if (wutDraftActiveEntrantIds(event).length <= 1) { finishWutDraftTournament(event, now); return true; }
+  const format = event.config.tournament.format; let plan = null;
+  if (format === 'round_robin') plan = event.tournament.round_robin_plan[round.number] || null;
+  else if (format === 'swiss' && round.number < event.config.tournament.swiss.rounds) plan = wutDraftSwissPairings(event, wutDraftActiveEntrantIds(event));
+  else if (format === 'swiss_top_cut' && round.stage === 'swiss' && round.number < event.config.tournament.topCut.swissRounds) plan = wutDraftSwissPairings(event, wutDraftActiveEntrantIds(event));
+  else if (format === 'swiss_top_cut' && round.stage === 'swiss') {
+    const advancing = event.tournament.standings.slice(0, event.config.tournament.topCut.advancing).map(row => Number(row.user_id));
+    plan = wutDraftEliminationPairings(wutDraftSeededPlayers(event, advancing, event.config.tournament.topCut.seeding));
+  } else if (['single_elimination', 'swiss_top_cut'].includes(format) && round.stage === 'elimination') {
+    if (round.final_round) plan = null;
+    else {
+      const advancingMatches = matches.filter(match => !['third_place', 'consolation'].includes(match.bracket_role));
+      const winners = [...round.bye_user_ids, ...advancingMatches.filter(wutDraftResolvedMatch).map(match => Number(match.winner_user_id ?? match.player_ids[0]))];
+      if (winners.length > 1) {
+        plan = wutDraftEliminationPairings(wutDraftSeededPlayers(event, winners, 'standings'));
+        if (plan.finalRound) {
+          const semifinalLosers = advancingMatches.map(match => match.player_ids.map(Number).find(id => id !== Number(match.winner_user_id))).filter(Number.isFinite);
+          if (event.config.tournament.elimination.thirdPlaceMatch && semifinalLosers.length === 2) {
+            plan.pairs.push(semifinalLosers); plan.roles.push('third_place');
+          }
+          if (event.config.tournament.elimination.consolationMatch) {
+            const reserved = new Set([...winners, ...(event.config.tournament.elimination.thirdPlaceMatch ? semifinalLosers : [])]);
+            const eliminated = [...new Set(event.tournament.matches.filter(match => match.stage === 'elimination' && wutDraftResolvedMatch(match)).map(match => match.player_ids.map(Number).find(id => id !== Number(match.winner_user_id))).filter(Number.isFinite))];
+            const consolation = recalculateWutDraftStandings(event).filter(row => eliminated.includes(Number(row.user_id)) && !reserved.has(Number(row.user_id))).slice().reverse().slice(0, 2).map(row => Number(row.user_id));
+            if (consolation.length === 2) { plan.pairs.push(consolation); plan.roles.push('consolation'); }
+          }
+        }
+      }
+    }
+  }
+  if (!plan) { finishWutDraftTournament(event, now); return true; }
+  const delay = Number(event.config.tournament.betweenRoundSeconds || 0);
+  if (!force && (!event.config.tournament.automaticNextRound || delay > 0)) {
+    event.tournament.pending_round_plan = plan;
+    event.tournament.next_round_at = event.config.tournament.automaticNextRound ? new Date(now.getTime() + delay * 1000).toISOString() : null;
+    return true;
+  }
+  startWutDraftTournamentRound(event, plan, now); return true;
+}
+
+function wutDraftCurrentPlayerId(match) {
+  const first = Number(match.first_player_id);
+  const second = Number(match.player_ids.find(id => Number(id) !== first));
+  return Number(match.turn_index) % 2 === 0 ? first : second;
+}
+
+function publicWutDraftTournamentMatch(event, match, userId) {
+  const players = match.player_ids.map(id => {
+    const user = state.users.find(item => Number(item.id) === Number(id));
+    return { id: Number(id), displayName: user?.display_name || user?.username || `Player ${id}`, elo: arenaRating(id) };
+  });
+  return {
+    ...JSON.parse(JSON.stringify(match)), players,
+    opponent: players.find(player => Number(player.id) !== Number(userId)) || null,
+    current_player_id: match.status === 'active' ? wutDraftCurrentPlayerId(match) : null,
+    cards_required_this_turn: match.status === 'active' ? ARENA_TURN_SEQUENCE[Number(match.turn_index)] : 0,
+    is_your_turn: match.status === 'active' && wutDraftCurrentPlayerId(match) === Number(userId),
+    timer_paused: Boolean(event.paused_at) || Boolean(event.config.match.overnightPause && arenaTimerPaused(new Date())),
+    boost_load_cap: Number(match.boost_load_cap || event.config.match.boostLoadCap),
+    boost_load_used: (match.placements || []).filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.boost_load || 0), 0)
+  };
+}
+
+export function getWutDraftEventMatch({ eventId, matchId, userId }) {
+  ensureCardsState(); const event = storedWutDraftEvent(eventId);
+  const match = event.tournament.matches.find(item => String(item.id) === String(matchId));
+  if (!match || !match.player_ids.map(Number).includes(Number(userId))) throw new Error('Draft Event match not found.');
+  return { event: wutDraftEventView(event, userId), match: publicWutDraftTournamentMatch(event, match, userId) };
+}
+
+function wutDraftEventBoostLoadCap(event, match, userId, additionalSnapshots = []) {
+  const snapshots = [...match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.card_snapshot), ...additionalSnapshots].filter(Boolean);
+  const bonus = Math.max(0, ...snapshots.filter(snapshot => snapshot.trinket?.family === 'booster_cable').map(snapshot => Number(snapshot.trinket.effect?.loadBonus || 0)));
+  return Number(event.config.match.boostLoadCap || 0) + bonus;
+}
+
+export function commitWutDraftEventTurn({ eventId, matchId, userId, placements, now = new Date(), automatic = false }) {
+  ensureCardsState(); const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('This Draft Event is paused.');
+  const match = event.tournament.matches.find(item => String(item.id) === String(matchId));
+  if (!match || !match.player_ids.map(Number).includes(Number(userId))) throw new Error('Draft Event match not found.');
+  if (match.status !== 'active') throw new Error('This Draft Event match is already resolved.');
+  if (wutDraftCurrentPlayerId(match) !== Number(userId)) throw new Error('It is not your turn.');
+  const required = ARENA_TURN_SEQUENCE[Number(match.turn_index)];
+  if (!Array.isArray(placements) || placements.length !== required) throw new Error(`This turn requires exactly ${required} card${required === 1 ? '' : 's'}.`);
+  const inventory = wutDraftInventoryFor(event, userId);
+  const deckCards = new Map([...(match.deck_snapshots?.[String(userId)]?.active || []), ...(match.deck_snapshots?.[String(userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
+  const existingSlots = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
+  const existingCards = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
+  const turnSlots = new Set(); const turnCards = new Set(); const turnBoosts = new Set(); const stagedSnapshots = [];
+  let captainPatchChosen = match.placements.some(row => Number(row.user_id) === Number(userId) && row.card_snapshot?.trinket?.family === 'team_crest');
+  const cleaned = placements.map(input => {
+    const slot = String(input.slot || '').toUpperCase();
+    if (!CARD_LINEUP_SLOTS.includes(slot) || existingSlots.has(slot) || turnSlots.has(slot)) throw new Error('Choose each open lineup slot only once.');
+    turnSlots.add(slot);
+    const cardId = Number(input.cardId); const card = inventory.cards.find(item => Number(item.id) === cardId); const snapshot = deckCards.get(cardId);
+    if (!card || !snapshot) throw new Error('That card is not in this Event Deck snapshot.');
+    if (existingCards.has(cardId) || turnCards.has(cardId)) throw new Error('That card is already committed to this match.');
+    turnCards.add(cardId);
+    const requiredPosition = slot === 'G' ? 'G' : slot[0];
+    if (snapshot.position !== requiredPosition) throw new Error(`That card is not eligible for ${slot}.`);
+    if (snapshot.trinket?.family === 'team_crest') { if (captainPatchChosen) throw new Error("Only one Captain's Patch can be active in a lineup."); captainPatchChosen = true; }
+    const opposing = match.placements.find(row => Number(row.user_id) !== Number(userId) && row.slot === slot);
+    const allowance = Number(match.rules_snapshot?.slotPowerAllowance ?? state.cards.config.wut.slotPowerAllowance ?? 1);
+    if (opposing && Number(snapshot.power) > Number(opposing.power || 0) + allowance) throw new Error(`${slot} exceeds the opposing card's Power +${allowance}.`);
+    let boost = null; let load = 0;
+    if (input.boostId) {
+      boost = inventory.boosts.find(item => Number(item.id) === Number(input.boostId));
+      const unavailable = !boost || turnBoosts.has(Number(boost.id)) || match.placements.some(row => Number(row.boost_id) === Number(boost?.id)) || (event.config.match.boostsMode === 'tournament_consumable' && boost.consumed);
+      if (unavailable) throw new Error('That temporary boost is unavailable.');
+      const goalieBoost = ['save', 'shutout'].includes(boost.boost_type);
+      if ((snapshot.position === 'G') !== goalieBoost) throw new Error('That boost does not fit this position.');
+      load = wutDraftFrozenRarityPower(event, boost.rarity); turnBoosts.add(Number(boost.id));
+      const used = match.placements.filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.boost_load || 0), 0);
+      const staged = [...turnBoosts].filter(id => id !== Number(boost.id)).reduce((sum, id) => sum + wutDraftFrozenRarityPower(event, inventory.boosts.find(item => Number(item.id) === id)?.rarity), 0);
+      const cap = wutDraftEventBoostLoadCap(event, match, userId, [...stagedSnapshots, snapshot]);
+      if (used + staged + load > cap) throw new Error(`That boost exceeds your ${cap} Boost Load for this match.`);
+    }
+    stagedSnapshots.push(snapshot);
+    return { user_id: Number(userId), owner_user_id: Number(userId), slot, card_id: cardId, boost_id: boost?.id || null, boost_load: load,
+      power: Number(snapshot.power), card_snapshot: JSON.parse(JSON.stringify(snapshot)), journeyman_key: String(input.journeymanKey || ''), automatic: Boolean(automatic), committed_at: now.toISOString() };
+  });
+  lockJourneymanChoices(match.placements, cleaned); match.placements.push(...cleaned);
+  if (event.config.match.boostsMode === 'tournament_consumable') for (const row of cleaned.filter(item => item.boost_id)) {
+    const boost = inventory.boosts.find(item => Number(item.id) === Number(row.boost_id));
+    if (boost) { boost.consumed = true; boost.used_match_id = match.arena_match_key; boost.used_slot = row.slot; boost.consumed_at = now.toISOString(); }
+  }
+  match.turn_index += 1;
+  if (match.turn_index >= ARENA_TURN_SEQUENCE.length) { match.status = 'scoring'; match.turn_deadline = null; }
+  else match.turn_deadline = wutDraftTurnDeadline(event, now);
+  appendWutDraftEventLog(event, 'tournament_turn_committed', { match_id: match.id, user_id: Number(userId), count: cleaned.length, automatic: Boolean(automatic) }, { actorUserId: automatic ? null : userId, now });
+  saveState(); return publicWutDraftTournamentMatch(event, match, userId);
+}
+
+function autoplayWutDraftEventTurn(event, match, userId, now) {
+  const required = ARENA_TURN_SEQUENCE[Number(match.turn_index)];
+  const occupied = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
+  const used = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
+  const deckCards = [...(match.deck_snapshots?.[String(userId)]?.active || []), ...(match.deck_snapshots?.[String(userId)]?.bench || [])];
+  const choices = [];
+  for (const slot of CARD_LINEUP_SLOTS.filter(slot => !occupied.has(slot))) {
+    const position = slot === 'G' ? 'G' : slot[0];
+    const card = deckCards.find(item => item.position === position && !used.has(Number(item.card_id)) && !choices.some(choice => Number(choice.cardId) === Number(item.card_id)));
+    if (card) choices.push({ slot, cardId: card.card_id, boostId: null, journeymanKey: '' });
+    if (choices.length >= required) break;
+  }
+  if (choices.length !== required) throw new Error('The Event Deck and Safety Bench cannot produce a legal automatic turn.');
+  return commitWutDraftEventTurn({ eventId: event.id, matchId: match.id, userId, placements: choices, now, automatic: true });
+}
+
+function resolveExpiredWutDraftMatch(event, match, now) {
+  const userId = wutDraftCurrentPlayerId(match); const hasCommitted = match.placements.some(row => Number(row.user_id) === Number(userId));
+  const policy = hasCommitted ? event.config.match.laterTimeout : event.config.match.openingTimeout;
+  if (policy === 'autoplay') return autoplayWutDraftEventTurn(event, match, userId, now);
+  if (policy === 'cancel') { match.status = 'cancelled'; match.cancelled_at = now.toISOString(); match.cancel_reason = 'opening_timeout'; }
+  else {
+    const winner = match.player_ids.map(Number).find(id => id !== userId); match.status = 'completed'; match.forfeit_user_id = userId; match.winner_user_id = winner;
+    match.scores = { [String(winner)]: 1, [String(userId)]: 0 }; match.resolved_at = now.toISOString(); match.completed_at = now.toISOString();
+  }
+  appendWutDraftEventLog(event, policy === 'cancel' ? 'match_cancelled_timeout' : 'match_forfeit_timeout', { match_id: match.id, user_id: userId }, { now });
+  activateNextWutDraftRoundMatch(event, now);
+  advanceWutDraftTournament(event, now); return match;
+}
+
+export function completeWutDraftEventReveal({ eventId, matchId, userId, now = new Date() }) {
+  ensureCardsState(); const event = storedWutDraftEvent(eventId); const match = event.tournament.matches.find(item => String(item.id) === String(matchId));
+  if (!match || !match.player_ids.map(Number).includes(Number(userId)) || !['ready', 'completed'].includes(match.status)) throw new Error('Draft Event result is not ready.');
+  match.revealed_by ||= []; if (!match.revealed_by.map(Number).includes(Number(userId))) match.revealed_by.push(Number(userId));
+  if (match.revealed_by.length >= match.player_ids.length) { match.status = 'completed'; match.completed_at ||= now.toISOString(); }
+  saveState(); return publicWutDraftTournamentMatch(event, match, userId);
+}
+
+export function advanceWutDraftEventRound({ eventId, adminUserId, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId); const event = storedWutDraftEvent(eventId);
+  if (event.tournament.pending_round_plan) { const plan = event.tournament.pending_round_plan; delete event.tournament.pending_round_plan; startWutDraftTournamentRound(event, plan, now); }
+  else if (!advanceWutDraftTournament(event, now)) throw new Error('Resolve every match in the current round before advancing.');
+  saveState(); return wutDraftEventView(event, adminUserId);
+}
+
+function randomWutDraftPrizeRarity(random = Math.random) {
+  const odds = state.cards.config.playerTierOdds?.standard || { common: 55, uncommon: 25, rare: 13, epic: 6, legendary: 1 };
+  const entries = WUT_TRINKET_RARITIES.map(rarity => [rarity, Math.max(0, Number(odds[rarity] || 0))]);
+  const total = entries.reduce((sum, [, weight]) => sum + weight, 0) || 1;
+  let roll = Math.max(0, Math.min(.999999999, Number(random()))) * total;
+  for (const [rarity, weight] of entries) { roll -= weight; if (roll < 0) return rarity; }
+  return 'common';
+}
+
+export function awardWutDraftEventPrizes({ eventId, adminUserId = null, generatePack, random = Math.random, now = new Date() }) {
+  ensureCardsState();
+  if (adminUserId != null) requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.prizes?.awarded_at) return { event: wutDraftEventView(event, adminUserId), alreadyAwarded: true, awards: JSON.parse(JSON.stringify(event.prizes.awards || [])) };
+  if (event.phase !== 'complete' || !event.tournament.completed_at) throw new Error('Draft Event prizes can only be awarded after the tournament is complete.');
+  const activeRecipients = new Set(wutDraftActiveEntrantIds(event));
+  const standings = recalculateWutDraftStandings(event).filter(row => activeRecipients.has(Number(row.user_id)));
+  const actions = [];
+  for (const row of standings) for (const tier of event.config.prizes.tiers || []) {
+    if (!tier.participant && !(tier.places || []).map(Number).includes(Number(row.rank))) continue;
+    for (const reward of tier.rewards || []) for (let copy = 0; copy < Number(reward.quantity || 1); copy += 1) {
+      if (reward.type === 'player_pack') {
+        if (typeof generatePack !== 'function') throw new Error('A player-pack generator is required to award Draft Event packs.');
+        const items = generatePack(reward.packType, { userId: row.user_id, rank: row.rank, tierKey: tier.key, copy });
+        if (!Array.isArray(items) || items.length !== 5 || items.filter(item => item.itemType === 'player').length !== 3 || items.filter(item => item.itemType === 'boost').length !== 2) throw new Error('Generated Draft Event prize packs must contain three players and two boosts.');
+        actions.push({ type: 'player_pack', userId: row.user_id, rank: row.rank, tier, reward, items: JSON.parse(JSON.stringify(items)) });
+      } else if (reward.type === 'wut_coins') actions.push({ type: 'wut_coins', userId: row.user_id, rank: row.rank, tier, reward, amount: Number(reward.amount || 0) });
+      else {
+        const rarity = reward.rarity === 'any' ? randomWutDraftPrizeRarity(random) : reward.rarity;
+        const family = reward.type === 'specific_trinket' ? reward.family : WUT_TRINKET_FAMILIES[Math.floor(Math.max(0, Math.min(.999999999, Number(random()))) * WUT_TRINKET_FAMILIES.length)];
+        actions.push({ type: 'trinket', userId: row.user_id, rank: row.rank, tier, reward, family, rarity });
+      }
+    }
+  }
+  const awards = [];
+  for (const action of actions) {
+    const base = { id: (event.prizes.awards?.length || 0) + awards.length + 1, user_id: Number(action.userId), rank: Number(action.rank), tier_key: action.tier.key, tier_label: action.tier.label, awarded_at: now.toISOString() };
+    if (action.type === 'wut_coins') {
+      const membership = wutMembership(action.userId); changeWutCoins(membership, action.amount, 'draft_event_prize', { draft_event_id: Number(event.id), placement: Number(action.rank) });
+      awards.push({ ...base, type: 'wut_coins', amount: action.amount });
+    } else if (action.type === 'player_pack') {
+      const purchase = {
+        id: state.nextPackPurchaseId++, user_id: Number(action.userId), week: Number(state.settings.currentWeek || 1),
+        pack_kind: 'player', pack_type: action.reward.packType, price: 0, list_price: 0, free_purchase: true,
+        source: 'draft_event_prize', draft_event_id: Number(event.id), placement: Number(action.rank),
+        items: action.items, status: state.cards.packPurchases.some(item => Number(item.user_id) === Number(action.userId) && item.status === 'pending') ? 'queued' : 'pending',
+        created_at: now.toISOString(), claimed_at: null
+      };
+      state.cards.packPurchases.push(purchase); awards.push({ ...base, type: 'player_pack', pack_type: action.reward.packType, pack_purchase_id: purchase.id, status: purchase.status });
+    } else {
+      const trinket = { id: state.nextOwnedTrinketId++, user_id: Number(action.userId), family: action.family, rarity: action.rarity, effect: configuredTrinketEffect(action.family, action.rarity), attached_card_id: null, source: 'draft_event_prize', draft_event_id: Number(event.id), created_at: now.toISOString() };
+      state.cards.trinkets.push(trinket); awards.push({ ...base, type: 'trinket', family: action.family, rarity: action.rarity, trinket_id: trinket.id });
+    }
+  }
+  event.prizes.awards = awards; event.prizes.awarded_at = now.toISOString();
+  event.archived_inventories = event.inventories; event.archived_decks = event.decks; event.inventories = {}; event.decks = {};
+  event.cleanup.temporary_items_removed_at = now.toISOString();
+  transitionWutDraftEventRecord(event, 'prizes_awarded', { actorUserId: adminUserId, reason: 'Prizes awarded and temporary Event Collections retired', now });
+  appendWutDraftEventLog(event, 'prizes_awarded', { award_count: awards.length, recipients: [...new Set(awards.map(item => item.user_id))] }, { actorUserId: adminUserId, now });
+  appendWutDraftEventLog(event, 'temporary_inventory_cleaned', { user_count: Object.keys(event.archived_inventories).length }, { actorUserId: adminUserId, now });
+  saveState();
+  return { event: wutDraftEventView(event, adminUserId), alreadyAwarded: false, awards: JSON.parse(JSON.stringify(awards)) };
+}
+
+export function saveWutDraftEventDeck({ eventId, userId, activeCardIds, now = new Date() }) {
+  ensureCardsState();
+  const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('This Draft Event is paused.');
+  const initialBuild = event.phase === 'deckbuilding';
+  const sideboarding = event.phase === 'tournament' && event.config.deckbuilding.sideboardingBetweenRounds && !event.config.deckbuilding.lockDeckForTournament && Boolean(event.tournament.pending_round_plan);
+  if (!initialBuild && !sideboarding) throw new Error('Event deckbuilding is not open.');
+  if (!wutDraftActiveEntrantIds(event).includes(Number(userId))) throw new Error('Only active Draft Event entrants can submit a deck.');
+  const deck = validateAndStoreWutDraftDeck(event, userId, activeCardIds, { now });
+  if (initialBuild) finishWutDraftDeckbuildingRecord(event, { now });
+  else appendWutDraftEventLog(event, 'event_deck_sideboarded', { user_id: Number(userId), active_card_ids: deck.active_card_ids, round: Number(event.tournament.round) }, { actorUserId: userId, now });
+  saveState();
+  return { event: wutDraftEventView(event, userId), deck: JSON.parse(JSON.stringify(deck)) };
+}
+
+function canEditWutDraftTrinkets(event) {
+  return event.phase === 'deckbuilding' || (event.phase === 'tournament' && Boolean(event.tournament.pending_round_plan) && !event.config.deckbuilding.lockTrinketAttachments && event.config.deckbuilding.allowTrinketReassignment && event.config.deckbuilding.sideboardingBetweenRounds);
+}
+
+function refreshWutDraftDeckAfterTrinketChange(event, userId, inventory) {
+  const key = String(Number(userId));
+  const deck = event.decks[key];
+  if (!deck) return;
+  if (event.phase === 'deckbuilding') {
+    delete event.decks[key];
+    return;
+  }
+  const cardsById = new Map(inventory.cards.map(card => [Number(card.id), card]));
+  deck.active_snapshots = deck.active_card_ids.map(id => cardsById.get(Number(id))).filter(Boolean).map(card => wutDraftDeckCardSnapshot(event, inventory, card));
+  deck.updated_at = nowIso();
+}
+
+export function attachWutDraftEventTrinket({ eventId, userId, cardId, trinketId, now = new Date() }) {
+  ensureCardsState();
+  const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('This Draft Event is paused.');
+  if (!canEditWutDraftTrinkets(event)) throw new Error('Event trinket attachments are locked.');
+  const inventory = wutDraftInventoryFor(event, userId);
+  const card = inventory.cards.find(item => Number(item.id) === Number(cardId));
+  const trinket = inventory.trinkets.find(item => Number(item.id) === Number(trinketId));
+  if (!card || !trinket) throw new Error('That temporary card or trinket is not in your Event Collection.');
+  if ((inventory.safety_bench_card_ids || []).map(Number).includes(Number(card.id))) throw new Error('Shared Safety Bench cards cannot receive trinkets.');
+  if (card.trinket_id != null) throw new Error('That Event card already has a trinket.');
+  if (trinket.attached_card_id != null) throw new Error('That Event trinket is already attached.');
+  if (!trinketFitsWutPosition(trinket.family, card.player_snapshot.position)) throw new Error('That trinket is not legal for this card position.');
+  card.trinket_id = Number(trinket.id);
+  trinket.attached_card_id = Number(card.id);
+  trinket.attached_at = now.toISOString();
+  card.power = wutDraftFrozenRarityPower(event, card.rarity || card.player_snapshot.tier) + wutDraftFrozenTrinketPower(event, trinket.rarity);
+  refreshWutDraftDeckAfterTrinketChange(event, userId, inventory);
+  appendWutDraftEventLog(event, 'event_trinket_attached', { user_id: Number(userId), card_id: Number(card.id), trinket_id: Number(trinket.id) }, { actorUserId: userId, now });
+  saveState();
+  return wutDraftEventView(event, userId);
+}
+
+export function detachWutDraftEventTrinket({ eventId, userId, cardId, now = new Date() }) {
+  ensureCardsState();
+  const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('This Draft Event is paused.');
+  if (!canEditWutDraftTrinkets(event)) throw new Error('Event trinket attachments are locked.');
+  const inventory = wutDraftInventoryFor(event, userId);
+  const card = inventory.cards.find(item => Number(item.id) === Number(cardId));
+  const trinket = card?.trinket_id == null ? null : inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id));
+  if (!card || !trinket) throw new Error('That Event card does not have an attached trinket.');
+  card.trinket_id = null;
+  card.power = wutDraftFrozenRarityPower(event, card.rarity || card.player_snapshot.tier);
+  trinket.attached_card_id = null;
+  trinket.detached_at = now.toISOString();
+  refreshWutDraftDeckAfterTrinketChange(event, userId, inventory);
+  appendWutDraftEventLog(event, 'event_trinket_detached', { user_id: Number(userId), card_id: Number(card.id), trinket_id: Number(trinket.id) }, { actorUserId: userId, now });
+  saveState();
+  return wutDraftEventView(event, userId);
+}
+
+export function finishWutDraftDeckbuilding({ eventId, adminUserId, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  finishWutDraftDeckbuildingRecord(event, { now, adminUserId, autosubmitMissing: true });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+export function extendWutDraftDeckbuilding({ eventId, adminUserId, seconds, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.phase !== 'deckbuilding' || !event.deckbuilding.deadline_at) throw new Error('Event deckbuilding is not active.');
+  const amount = Math.max(1, Math.min(604800, Math.round(Number(seconds) || 0)));
+  event.deckbuilding.deadline_at = new Date(new Date(event.deckbuilding.deadline_at).getTime() + amount * 1000).toISOString();
+  event.deadlines.deckbuilding = event.deckbuilding.deadline_at;
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'deckbuilding_timer_extended', { seconds: amount, deadline_at: event.deckbuilding.deadline_at }, { actorUserId: adminUserId, now });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+function wutDraftTemporaryBenchCard(event, winner) {
+  const card = winner.card;
+  return {
+    id: Number(event.nextTemporaryItemId++), item_type: 'player', source: 'shared_safety_bench',
+    card_identity: card.cardIdentity, player_snapshot: JSON.parse(JSON.stringify(card)),
+    power: Number(event.environment_snapshot.rules?.rarityCosts?.[card.tier] || state.cards.config.wut.rarityCosts?.[card.tier] || ({ common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 })[card.tier] || 1),
+    created_at: nowIso()
+  };
+}
+
+function finalizeWutDraftBench(event, { adminUserId = null, now = new Date(), random = Math.random, winners = null, reason = '' } = {}) {
+  if (event.bench.completed_at) return event;
+  if (event.phase !== 'bench_vote') throw new Error('The shared Safety Bench is not active.');
+  const preparedDraft = preparedWutDraftOpening(event, random);
+  const resolved = winners || resolveWutDraftBenchWinners(event.config, event.bench.candidates, event.bench.votes, random);
+  event.bench.winners = JSON.parse(JSON.stringify(resolved));
+  event.bench.completed_at = now.toISOString();
+  event.bench.deadline_at = null;
+  delete event.deadlines.bench_vote;
+  ensureWutDraftInventories(event);
+  for (const entrant of (event.entrants || []).filter(item => item.status === 'active')) {
+    const inventory = event.inventories[String(entrant.user_id)];
+    const copies = resolved.map(winner => wutDraftTemporaryBenchCard(event, winner));
+    inventory.cards.push(...copies);
+    inventory.safety_bench_card_ids = copies.map(card => card.id);
+  }
+  appendWutDraftEventLog(event, 'bench_selected', {
+    winners: resolved.map(winner => ({ card_identity: winner.card.cardIdentity, position: winner.position, votes: winner.votes || 0 })),
+    voter_count: event.bench.votes.length, reason
+  }, { actorUserId: adminUserId, now });
+  transitionWutDraftEventRecord(event, 'draft', { actorUserId: adminUserId, reason: 'Shared Safety Bench completed', now });
+  initializeWutDraft(event, { now, random, actorUserId: adminUserId, prepared: preparedDraft });
+  return event;
+}
+
+export function beginWutDraftSafetyBench({ eventId, adminUserId, system = false, now = new Date(), random = Math.random }) {
+  if (!system) requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('Resume the event before beginning the Safety Bench.');
+  if (event.phase !== 'starting') throw new Error('The Safety Bench can only begin while the event is starting.');
+  if (!event.environment_snapshot?.cards) throw new Error('Freeze the event environment before creating the Safety Bench.');
+  ensureWutDraftInventories(event);
+  const mode = event.config.safetyBench.mode;
+  if (mode === 'disabled') {
+    const preparedDraft = preparedWutDraftOpening(event, random);
+    transitionWutDraftEventRecord(event, 'draft', { actorUserId: adminUserId, reason: 'Safety Bench disabled', now });
+    initializeWutDraft(event, { now, random, actorUserId: adminUserId, prepared: preparedDraft });
+    saveState();
+    return wutDraftEventView(event, adminUserId);
+  }
+  let candidates;
+  if (mode === 'preset_shared') {
+    const identities = new Set(event.config.safetyBench.presetCards.map(String));
+    candidates = event.environment_snapshot.cards.filter(card => identities.has(String(card.cardIdentity))).map(card => ({ position: card.position, card: JSON.parse(JSON.stringify(card)) }));
+    for (const position of ['F', 'D', 'G']) {
+      const needed = event.config.safetyBench.positions[position].winners;
+      if (candidates.filter(candidate => candidate.position === position).length < needed) throw new Error(`Preset Safety Bench needs ${needed} eligible ${position} card${needed === 1 ? '' : 's'}.`);
+    }
+  } else candidates = selectWutDraftBenchPool(event.config, event.environment_snapshot.cards, random);
+  event.bench = { candidates, votes: [], winners: [], deadline_at: null, completed_at: null, started_at: now.toISOString() };
+  transitionWutDraftEventRecord(event, 'bench_vote', { actorUserId: adminUserId, reason: `${mode} Safety Bench`, now });
+  appendWutDraftEventLog(event, 'bench_candidates_generated', { mode, candidates: candidates.map(candidate => candidate.card.cardIdentity) }, { actorUserId: adminUserId, now });
+  if (mode === 'shared_vote') {
+    event.bench.deadline_at = new Date(now.getTime() + Number(event.config.safetyBench.votingSeconds) * 1000).toISOString();
+    event.deadlines.bench_vote = event.bench.deadline_at;
+  } else {
+    const winners = mode === 'preset_shared'
+      ? ['F', 'D', 'G'].flatMap(position => candidates.filter(candidate => candidate.position === position).slice(0, event.config.safetyBench.positions[position].winners).map(candidate => ({ ...candidate, votes: 0 })))
+      : null;
+    finalizeWutDraftBench(event, { adminUserId, now, random, winners, reason: mode });
+  }
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+export function voteWutDraftSafetyBench({ eventId, userId, selections, now = new Date() }) {
+  ensureCardsState();
+  const event = storedWutDraftEvent(eventId);
+  if (event.paused_at) throw new Error('This Draft Event is paused.');
+  if (event.phase !== 'bench_vote' || event.config.safetyBench.mode !== 'shared_vote' || event.bench.completed_at) throw new Error('Safety Bench voting is not open.');
+  if (event.bench.deadline_at && now.getTime() >= new Date(event.bench.deadline_at).getTime()) throw new Error('Safety Bench voting has closed.');
+  if (!(event.entrants || []).some(item => Number(item.user_id) === Number(userId) && item.status === 'active')) throw new Error('Only active entrants can vote.');
+  const cleanSelections = {};
+  for (const position of ['F', 'D', 'G']) {
+    const allowed = new Set(event.bench.candidates.filter(candidate => candidate.position === position).map(candidate => candidate.card.cardIdentity));
+    const requested = [...new Set((selections?.[position] || []).map(String))];
+    const needed = event.config.safetyBench.positions[position].winners;
+    if (requested.length !== needed || requested.some(identity => !allowed.has(identity))) throw new Error(`Choose exactly ${needed} eligible ${position} card${needed === 1 ? '' : 's'}.`);
+    cleanSelections[position] = requested;
+  }
+  let vote = event.bench.votes.find(item => Number(item.user_id) === Number(userId));
+  if (!vote) {
+    vote = { user_id: Number(userId), selections: cleanSelections, created_at: now.toISOString(), updated_at: now.toISOString() };
+    event.bench.votes.push(vote);
+  } else {
+    vote.selections = cleanSelections;
+    vote.updated_at = now.toISOString();
+  }
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'bench_vote_cast', { user_id: Number(userId) }, { actorUserId: userId, now });
+  saveState();
+  return wutDraftEventView(event, userId);
+}
+
+export function finishWutDraftSafetyBench({ eventId, adminUserId, reason = 'Finished by administrator', now = new Date(), random = Math.random }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  finalizeWutDraftBench(event, { adminUserId, now, random, reason });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+export function extendWutDraftSafetyBench({ eventId, adminUserId, seconds, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.phase !== 'bench_vote' || !event.bench.deadline_at) throw new Error('Safety Bench voting is not active.');
+  const amount = Math.max(1, Math.min(86400, Math.round(Number(seconds) || 0)));
+  event.bench.deadline_at = new Date(new Date(event.bench.deadline_at).getTime() + amount * 1000).toISOString();
+  event.deadlines.bench_vote = event.bench.deadline_at;
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'bench_timer_extended', { seconds: amount, deadline_at: event.bench.deadline_at }, { actorUserId: adminUserId, now });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
+export function processWutDraftEvents(now = new Date()) {
+  ensureCardsState();
+  const finished = [];
+  for (const event of state.cards.draftEvents.events) {
+    if (event.paused_at) continue;
+    const signupOpensAt = event.config?.scheduling?.signupOpensAt ? new Date(event.config.scheduling.signupOpensAt).getTime() : null;
+    const signupClosesAt = event.config?.scheduling?.signupClosesAt ? new Date(event.config.scheduling.signupClosesAt).getTime() : null;
+    const startsAt = event.config?.scheduling?.startsAt ? new Date(event.config.scheduling.startsAt).getTime() : null;
+    if (event.phase === 'scheduled' && signupOpensAt != null && now.getTime() >= signupOpensAt) {
+      transitionWutDraftEventRecord(event, 'signup_open', { reason: 'Scheduled signup opening', now });
+      finished.push(Number(event.id));
+    }
+    if (event.phase === 'signup_open' && ((event.config.signup.automaticClose && signupClosesAt != null && now.getTime() >= signupClosesAt) || (event.config.basic.automaticStart && startsAt != null && now.getTime() >= startsAt))) {
+      transitionWutDraftEventRecord(event, 'signup_closed', { reason: 'Scheduled signup closing', now });
+      finished.push(Number(event.id));
+    }
+    if (event.phase === 'bench_vote' && event.bench?.deadline_at && !event.bench.completed_at && now.getTime() >= new Date(event.bench.deadline_at).getTime()) {
+      finalizeWutDraftBench(event, { now, reason: 'Voting timer expired' });
+      finished.push(Number(event.id));
+      continue;
+    }
+    if (event.phase === 'draft' && event.draft?.deadline_at && event.config.draft.autopick.enabled && now.getTime() >= new Date(event.draft.deadline_at).getTime()) {
+      const targets = [...event.draft.pending_user_ids];
+      for (const userId of targets) {
+        if (!event.draft.pending_user_ids.map(Number).includes(Number(userId))) continue;
+        const pack = event.draft.boosters.find(item => Number(item.booster_number) === Number(event.draft.current_booster) && Number(item.current_owner_user_id) === Number(userId) && !item.awaiting_pass);
+        const item = chooseWutDraftAutopick(pack?.items || [], event.config.draft.autopick.priority);
+        if (item) commitWutDraftPick(event, { userId, itemId: item.id, autopick: true, now });
+      }
+      finished.push(Number(event.id));
+      continue;
+    }
+    if (event.phase === 'deckbuilding' && event.deckbuilding?.deadline_at && !event.deckbuilding.completed_at && now.getTime() >= new Date(event.deckbuilding.deadline_at).getTime()) {
+      finishWutDraftDeckbuildingRecord(event, { now, autosubmitMissing: true });
+      finished.push(Number(event.id));
+      continue;
+    }
+    if (event.phase === 'tournament') {
+      let changed = false;
+      if (event.tournament?.next_round_at && event.tournament.pending_round_plan && now.getTime() >= new Date(event.tournament.next_round_at).getTime()) {
+        const plan = event.tournament.pending_round_plan; delete event.tournament.pending_round_plan;
+        startWutDraftTournamentRound(event, plan, now); changed = true;
+      }
+      for (const match of (event.tournament?.matches || []).filter(item => item.status === 'active' && item.turn_deadline && now.getTime() >= new Date(item.turn_deadline).getTime())) {
+        resolveExpiredWutDraftMatch(event, match, now); changed = true;
+      }
+      if (changed) finished.push(Number(event.id));
+    }
+  }
+  if (finished.length) saveState();
+  return finished;
+}
+
+export function transitionWutDraftEvent({ eventId, nextPhase, adminUserId, reason = '', now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (nextPhase === 'starting') throw new Error('Draft Events must start through the frozen environment snapshot flow.');
+  if (event.phase === 'tournament' && nextPhase === 'complete') throw new Error('Resolve the tournament through its round controls before completing the event.');
+  if (nextPhase === 'cancelled' && event.paused_at) {
+    event.paused_at = null;
+    appendWutDraftEventLog(event, 'pause_overridden_for_cancellation', {}, { actorUserId: adminUserId, now });
+  }
+  transitionWutDraftEventRecord(event, nextPhase, { actorUserId: adminUserId, reason, now });
+  if (nextPhase === 'cancelled') {
+    let refunded = 0;
+    for (const entrant of (event.entrants || []).filter(item => item.status === 'active')) {
+      entrant.status = 'cancelled';
+      entrant.cancelled_at = now.toISOString();
+      refunded += refundWutDraftEntrant(event, entrant, reason || 'Draft Event cancelled', now);
+    }
+    for (const match of event.tournament?.matches || []) {
+      if (!['completed', 'voided', 'cancelled'].includes(match.status)) {
+        match.status = 'cancelled'; match.cancelled_at = now.toISOString(); match.cancel_reason = 'event_cancelled';
+      }
+    }
+    appendWutDraftEventLog(event, 'event_cancelled_refunds', { refunded }, { actorUserId: adminUserId, now });
+  }
+  saveState();
+  return JSON.parse(JSON.stringify(event));
+}
+
+export function resolveWutDraftEventMatch({ eventId, matchId, action, forfeitingUserId = null, adminUserId, reason = '', now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  const match = (event.tournament?.matches || []).find(item => String(item.id) === String(matchId));
+  if (!match) throw new Error('Draft Event match not found.');
+  const resolution = resolveWutDraftEventMatchRecord(match, { action, forfeitingUserId, adminUserId, reason, now });
+  appendWutDraftEventLog(event, resolution.type, resolution.details, { actorUserId: adminUserId, now });
+  recalculateWutDraftStandings(event);
+  activateNextWutDraftRoundMatch(event, now);
+  advanceWutDraftTournament(event, now);
+  event.updated_at = now.toISOString();
+  saveState();
+  return JSON.parse(JSON.stringify(match));
+}
+
+export function pauseWutDraftEvent({ eventId, adminUserId, reason = '', now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  pauseWutDraftEventRecord(event, { actorUserId: adminUserId, reason, now });
+  saveState();
+  return JSON.parse(JSON.stringify(event));
+}
+
+export function resumeWutDraftEvent({ eventId, adminUserId, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  resumeWutDraftEventRecord(event, { actorUserId: adminUserId, now });
+  saveState();
+  return JSON.parse(JSON.stringify(event));
+}
+
+export function rescheduleWutDraftEvent({ eventId, adminUserId, signupOpensAt = null, signupClosesAt = null, startsAt = null, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId); const event = storedWutDraftEvent(eventId);
+  if (!['scheduled', 'signup_open', 'signup_closed'].includes(event.phase)) throw new Error('Only an upcoming Draft Event can be rescheduled.');
+  const parse = (value, label) => {
+    if (value == null || String(value).trim() === '') return null;
+    const date = new Date(value); if (!Number.isFinite(date.getTime())) throw new Error(`${label} is not a valid date.`);
+    return date.toISOString();
+  };
+  const next = { signupOpensAt: parse(signupOpensAt, 'Signup opening'), signupClosesAt: parse(signupClosesAt, 'Signup closing'), startsAt: parse(startsAt, 'Event start') };
+  const ordered = [next.signupOpensAt, next.signupClosesAt, next.startsAt].filter(Boolean).map(value => new Date(value).getTime());
+  if (ordered.some((value, index) => index > 0 && value < ordered[index - 1])) throw new Error('Signup opening, signup closing, and event start must be in chronological order.');
+  event.config.scheduling = { ...event.config.scheduling, ...next }; event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'event_rescheduled', next, { actorUserId: adminUserId, now }); saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
 const configuredWutJoinFee = Number(process.env.WUT_JOIN_FEE || 0);
 const WUT_JOIN_FEE = Number.isFinite(configuredWutJoinFee)
   ? Math.max(0, Math.ceil(configuredWutJoinFee))
@@ -2245,6 +3677,7 @@ export function saveCardsConfig(config) {
     rewards: cleanWutMap('rewards', ['winner', 'loser', 'forfeitLoser']),
     deckSlotCosts: cleanWutMap('deckSlotCosts', ['4', '5', '6', '7', '8']),
     trinketPrices: cleanWutMap('trinketPrices', trinketRarities),
+    trinketPowerValues: cleanWutMap('trinketPowerValues', trinketRarities),
     trinketRemovalWut: cleanWutMap('trinketRemovalWut', trinketRarities),
     trinketRemovalMushy: cleanWutMap('trinketRemovalMushy', trinketRarities),
     shopReroll: cleanWutMap('shopReroll', ['wut', 'mushy']),
@@ -2285,6 +3718,7 @@ export function saveCardsConfig(config) {
     for (const offer of shop.offers || []) if (!offer.sold_at) {
       offer.effect = configuredTrinketEffect(offer.family, offer.rarity);
       offer.price = Number(wut.trinketPrices[offer.rarity]);
+      offer.power_cost = Number(wut.trinketPowerValues[offer.rarity] ?? WUT_TRINKET_POWER[offer.rarity] ?? 0);
     }
   }
   saveState();
@@ -2654,7 +4088,11 @@ export function enterArenaQueue(userId, deckId, catalogByIdentity, now = new Dat
   return { ...entry };
 }
 
-export function pairArenaQueueEntriesByElo(entries, ratingForEntry = entry => Number(entry.elo || ARENA_DEFAULT_ELO)) {
+export function pairArenaQueueEntriesByElo(
+  entries,
+  ratingForEntry = entry => Number(entry.elo || ARENA_DEFAULT_ELO),
+  havePlayed = () => false
+) {
   const waiting = [...entries];
   let unmatched = null;
   if (waiting.length % 2 === 1) {
@@ -2668,8 +4106,52 @@ export function pairArenaQueueEntriesByElo(entries, ratingForEntry = entry => Nu
     new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
     Number(a.id) - Number(b.id)
   );
-  const pairs = [];
-  for (let index = 0; index < waiting.length; index += 2) pairs.push([waiting[index], waiting[index + 1]]);
+  const pairKey = (first, second) => [Number(first.id), Number(second.id)].sort((a, b) => a - b).join('-');
+  const isBetter = (candidate, best) => !best || candidate.rematches < best.rematches ||
+    (candidate.rematches === best.rematches && candidate.eloDifference < best.eloDifference) ||
+    (candidate.rematches === best.rematches && candidate.eloDifference === best.eloDifference && candidate.key < best.key);
+  let pairs;
+  if (waiting.length <= 16) {
+    const memo = new Map();
+    const solve = mask => {
+      if (!mask) return { pairs: [], rematches: 0, eloDifference: 0, key: '' };
+      if (memo.has(mask)) return memo.get(mask);
+      let firstIndex = 0;
+      while ((mask & (1 << firstIndex)) === 0) firstIndex += 1;
+      const first = waiting[firstIndex];
+      let best = null;
+      for (let secondIndex = firstIndex + 1; secondIndex < waiting.length; secondIndex += 1) {
+        if ((mask & (1 << secondIndex)) === 0) continue;
+        const second = waiting[secondIndex];
+        const rest = solve(mask & ~(1 << firstIndex) & ~(1 << secondIndex));
+        const candidate = {
+          pairs: [[first, second], ...rest.pairs],
+          rematches: Number(Boolean(havePlayed(first, second))) + rest.rematches,
+          eloDifference: Math.abs(Number(ratingForEntry(first)) - Number(ratingForEntry(second))) + rest.eloDifference,
+          key: `${pairKey(first, second)}|${rest.key}`
+        };
+        if (isBetter(candidate, best)) best = candidate;
+      }
+      memo.set(mask, best);
+      return best;
+    };
+    pairs = solve((1 << waiting.length) - 1)?.pairs || [];
+  } else {
+    const remaining = [...waiting];
+    pairs = [];
+    while (remaining.length) {
+      const first = remaining.shift();
+      const fresh = remaining.filter(candidate => !havePlayed(first, candidate));
+      const candidates = fresh.length ? fresh : remaining;
+      candidates.sort((a, b) =>
+        Math.abs(Number(ratingForEntry(first)) - Number(ratingForEntry(a))) - Math.abs(Number(ratingForEntry(first)) - Number(ratingForEntry(b))) ||
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime() || Number(a.id) - Number(b.id)
+      );
+      const second = candidates[0];
+      remaining.splice(remaining.indexOf(second), 1);
+      pairs.push([first, second]);
+    }
+  }
   return { pairs, unmatched };
 }
 
@@ -2678,7 +4160,14 @@ export function assignArenaMatchups(now = new Date()) {
   const arena = state.cards.arena;
   const eligible = arena.entries.filter(entry => entry.status === 'queued' && entry.deck_snapshot &&
     activeArenaMatchesForUser(entry.user_id).length < Number(arena.config.maxActiveMatches || 3));
-  const { pairs, unmatched } = pairArenaQueueEntriesByElo(eligible, entry => arenaRating(entry.user_id));
+  const priorOpponents = new Set(arena.matches
+    .filter(match => !['cancelled', 'voided'].includes(match.status))
+    .map(match => match.player_ids.map(Number).sort((a, b) => a - b).join(':')));
+  const { pairs, unmatched } = pairArenaQueueEntriesByElo(
+    eligible,
+    entry => arenaRating(entry.user_id),
+    (first, second) => priorOpponents.has([Number(first.user_id), Number(second.user_id)].sort((a, b) => a - b).join(':'))
+  );
   const created = [];
   for (const [firstEntry, secondEntry] of pairs) {
     firstEntry.status = 'matched'; secondEntry.status = 'matched';
@@ -3089,19 +4578,37 @@ function awardArenaCoins(match, { forfeit = false, now = new Date() } = {}) {
 
 export function getArenaMatchesNeedingScoring() {
   ensureCardsState();
-  return [...state.cards.arena.matches, ...state.cards.arena.debugMatches].filter(match => match.status === 'scoring').map(match => JSON.parse(JSON.stringify(match)));
+  const eventMatches = state.cards.draftEvents.events.flatMap(event => (event.tournament?.matches || []).map(match => ({ ...match, draft_event_id: Number(event.id) })));
+  return [...state.cards.arena.matches, ...state.cards.arena.debugMatches, ...eventMatches].filter(match => match.status === 'scoring').map(match => JSON.parse(JSON.stringify(match)));
 }
 
 export function completeArenaMatch(matchId, scoredPlacements, now = new Date()) {
   ensureCardsState();
   const isDebug = String(matchId).startsWith('debug-');
-  const match = (isDebug ? state.cards.arena.debugMatches : state.cards.arena.matches).find(item => String(item.id) === String(matchId));
+  const eventKey = String(matchId).match(/^draft-(\d+)-(\d+)$/);
+  const draftEvent = eventKey ? state.cards.draftEvents.events.find(item => Number(item.id) === Number(eventKey[1])) : null;
+  const match = draftEvent
+    ? (draftEvent.tournament?.matches || []).find(item => Number(item.id) === Number(eventKey[2]))
+    : (isDebug ? state.cards.arena.debugMatches : state.cards.arena.matches).find(item => String(item.id) === String(matchId));
   if (!match || match.status !== 'scoring') return match ? JSON.parse(JSON.stringify(match)) : null;
   match.placements = scoredPlacements.map(row => JSON.parse(JSON.stringify(row)));
   const totals = Object.fromEntries(match.player_ids.map(userId => [String(userId), match.placements.filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.fp || 0), 0)]));
   match.scores = totals;
   const [a, b] = match.player_ids;
   match.winner_user_id = totals[String(a)] === totals[String(b)] ? null : (totals[String(a)] > totals[String(b)] ? Number(a) : Number(b));
+  if (draftEvent) {
+    if (match.stage === 'elimination' && match.winner_user_id == null) {
+      const standings = recalculateWutDraftStandings(draftEvent);
+      match.winner_user_id = [a, b].map(Number).sort((first, second) => (standings.find(row => row.user_id === first)?.rank || 999) - (standings.find(row => row.user_id === second)?.rank || 999))[0];
+      match.elimination_tiebreak = 'higher_seed';
+    }
+    match.status = 'ready'; match.resolved_at = now.toISOString();
+    appendWutDraftEventLog(draftEvent, 'tournament_match_completed', { match_id: match.id, round: match.round, scores: match.scores, winner_user_id: match.winner_user_id }, { now });
+    recalculateWutDraftStandings(draftEvent);
+    appendWutDraftEventLog(draftEvent, 'standings_updated', { round: match.round, standings: draftEvent.tournament.standings.map(row => ({ user_id: row.user_id, rank: row.rank, wins: row.wins, losses: row.losses, draws: row.draws })) }, { now });
+    activateNextWutDraftRoundMatch(draftEvent, now); advanceWutDraftTournament(draftEvent, now); saveState();
+    return JSON.parse(JSON.stringify(match));
+  }
   if (isDebug) {
     match.winner_side = match.winner_user_id == null ? null : Number(match.winner_user_id) === -1 ? 'A' : 'B';
     match.status = 'completed'; match.completed_at = now.toISOString(); match.resolved_at = now.toISOString();
@@ -3396,9 +4903,9 @@ export function createCardsPackPurchase({
   if (!user) throw new Error('User not found.');
   const membership = wutMembership(userId);
   const pending = state.cards.packPurchases.find(item =>
-    Number(item.user_id) === Number(userId) && item.status === 'pending'
+    Number(item.user_id) === Number(userId) && ['pending', 'queued'].includes(item.status)
   );
-  if (pending) throw new Error('Add your current pack to the collection before buying another.');
+  if (pending) throw new Error('Reveal your current or queued prize pack before buying another.');
   const cleanPrice = Math.ceil(Number(price || 0));
   if (cleanPrice <= 0) throw new Error('Invalid pack price.');
   if (String(packKind) !== 'player') throw new Error('Separate boost packs were removed in WUT 2.0.');
@@ -3431,9 +4938,20 @@ export function createCardsPackPurchase({
 
 export function getPendingCardsPack(userId) {
   ensureCardsState();
-  const purchase = state.cards.packPurchases.find(item =>
+  let purchase = state.cards.packPurchases.find(item =>
     Number(item.user_id) === Number(userId) && item.status === 'pending'
   );
+  if (!purchase) {
+    purchase = state.cards.packPurchases.filter(item => Number(item.user_id) === Number(userId) && item.status === 'queued').sort((a, b) => Number(a.id) - Number(b.id))[0] || null;
+    if (purchase) {
+      purchase.status = 'pending'; purchase.promoted_at = nowIso();
+      for (const event of state.cards.draftEvents.events) {
+        const award = (event.prizes?.awards || []).find(item => Number(item.pack_purchase_id) === Number(purchase.id));
+        if (award) award.status = 'pending';
+      }
+      saveState();
+    }
+  }
   return purchase ? JSON.parse(JSON.stringify(purchase)) : null;
 }
 
@@ -3499,6 +5017,10 @@ export function claimCardsPack(userId, purchaseId) {
   }
   purchase.status = 'claimed';
   purchase.claimed_at = nowIso();
+  for (const event of state.cards.draftEvents.events) {
+    const award = (event.prizes?.awards || []).find(item => Number(item.pack_purchase_id) === Number(purchase.id));
+    if (award) award.status = 'claimed';
+  }
   saveState();
   return created;
 }
@@ -3601,8 +5123,9 @@ export function adjustWutCoinBalance({ userId, amount, note, adminUserId = null 
 
 export function calculateWutPower(cardRarity, trinketRarity = '', config = null) {
   const costs = config?.rarityCosts || state.cards?.config?.wut?.rarityCosts || WUT_RARITY_COST;
+  const trinketPower = config?.trinketPowerValues || state.cards?.config?.wut?.trinketPowerValues || WUT_TRINKET_POWER;
   return Number(costs[String(cardRarity || 'common').toLowerCase()] || 1) +
-    Number(trinketRarity ? costs[String(trinketRarity).toLowerCase()] || 0 : 0);
+    Number(trinketRarity ? trinketPower[String(trinketRarity).toLowerCase()] ?? 0 : 0);
 }
 
 function wutBoostLoadCap(placements = [], userId = null, additionalSnapshots = []) {
@@ -4069,7 +5592,7 @@ function rollTrinketRarity(slot) {
 function buildTrinketOffer(slot) {
   const rarity = rollTrinketRarity(slot);
   const family = WUT_TRINKET_FAMILIES[Math.floor(Math.random() * WUT_TRINKET_FAMILIES.length)];
-  return { slot, family, rarity, power_cost: WUT_RARITY_COST[rarity], price: Number(state.cards.config.wut.trinketPrices[rarity]), effect: configuredTrinketEffect(family, rarity), sold_at: null };
+  return { slot, family, rarity, power_cost: Number(state.cards.config.wut.trinketPowerValues[rarity] ?? WUT_TRINKET_POWER[rarity]), price: Number(state.cards.config.wut.trinketPrices[rarity]), effect: configuredTrinketEffect(family, rarity), sold_at: null };
 }
 
 function ensureTrinketShop(userId, now = new Date(), force = false) {

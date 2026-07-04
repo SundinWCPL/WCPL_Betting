@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= event.config.basic.name %> · WUT Draft Event</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/card-name-fit.js" defer></script>
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const phases = ['scheduled','signup_open','signup_closed','starting','bench_vote','draft','deckbuilding','tournament','complete','prizes_awarded'];
+    const phaseIndex = phases.indexOf(event.phase);
+    const positionNames = { F: 'Forwards', D: 'Defense', G: 'Goalies' };
+    const trinketIcons = WUT_TRINKET_ICONS;
+    const currentEventDeck = typeof eventDeck === 'undefined' ? null : eventDeck;
+  %>
+  <main class="container cards-page draft-event-page">
+    <section class="card page-title cards-title">
+      <div><p class="eyebrow">WUT Draft Event #<%= event.id %></p><h1><%= event.config.basic.name %></h1><p><%= event.config.basic.description %></p></div>
+      <div class="cards-title-actions"><span class="pill <%= event.paused_at ? 'negative' : '' %>"><%= event.paused_at ? 'Paused' : event.phase.replaceAll('_', ' ') %></span><% if (isEntrant) { %><span class="pill positive">Entered</span><% } %><a class="button-link ghost" href="/cards/drafts">← All Events</a></div>
+    </section>
+
+    <section class="card draft-event-progress"><% phases.forEach((phase, index) => { %><span class="<%= index < phaseIndex ? 'is-complete' : index === phaseIndex ? 'is-current' : '' %>"><i></i><small><%= phase.replaceAll('_', ' ') %></small></span><% }) %></section>
+
+    <% if (!isEntrant) { %><section class="card draft-event-observer"><strong>You’re viewing this event as a spectator.</strong><span>Public candidates, the winning bench, and event progress remain visible, but only active entrants can vote or draft.</span></section><% } %>
+
+    <% if (event.phase === 'bench_vote') { %>
+      <section class="card draft-bench-ceremony">
+        <div class="cards-section-head"><div><p class="eyebrow">Opening ceremony · shared by every entrant</p><h2>Choose the Safety Bench</h2><p class="muted">Click the actual cards you want. The winning 2F / 2D / 1G become temporary event cards for everyone.</p></div><div class="draft-bench-clock"><strong data-bench-deadline="<%= event.bench.deadline_at %>">--:--</strong><small><%= event.bench.votes.length %>/<%= event.active_entrant_count %> voted</small></div></div>
+        <form method="post" action="/cards/drafts/<%= event.id %>/bench-vote" id="draftBenchVoteForm">
+          <% ['F','D','G'].forEach(position => { const selected = new Set(userVote?.selections?.[position] || []); const needed = event.config.safetyBench.positions[position].winners; %>
+            <section class="draft-bench-position" data-vote-group="<%= position %>" data-required="<%= needed %>">
+              <div class="draft-bench-position-head"><h3><%= positionNames[position] %></h3><span class="pill">Choose <%= needed %></span></div>
+              <div class="collection-grid draft-candidate-grid">
+                <% benchCandidates.filter(candidate => candidate.position === position).forEach(candidate => { const identity = candidate.card.cardIdentity; %>
+                  <label class="draft-vote-card tier-<%= candidate.card.tier %> <%= selected.has(identity) ? 'is-selected' : '' %>">
+                    <input type="checkbox" name="<%= position %>" value="<%= identity %>" <%= selected.has(identity) ? 'checked' : '' %> <%= isEntrant && !event.paused_at ? '' : 'disabled' %>>
+                    <span class="collection-player arena-wut-card arena-collection-card tier-<%= candidate.card.tier %>"><%- include('partials_wut_card', { card: candidate.cardView, statusText: `Safety Bench candidate · Choose ${needed}` }) %></span>
+                    <span class="draft-vote-check">✓</span>
+                  </label>
+                <% }) %>
+              </div>
+            </section>
+          <% }) %>
+          <% if (isEntrant) { %><div class="draft-vote-submit"><p id="draftVoteHelp"><%= userVote ? 'Your current vote is loaded. You may update it until time expires.' : 'Select the required number at every position.' %></p><button <%= event.paused_at ? 'disabled' : '' %>><%= userVote ? 'Update Vote' : 'Lock In Vote' %></button></div><% } %>
+        </form>
+      </section>
+    <% } %>
+
+    <% if (event.phase === 'draft') { %>
+      <section class="card draft-live-board">
+        <div class="cards-section-head"><div><p class="eyebrow">Live Booster Draft</p><h2>Booster <%= event.draft.current_booster %>/<%= event.draft.round_templates.length %> · Pick <%= event.draft.current_pick %></h2><p class="muted">Packs pass <strong><%= currentPack?.pass_direction || event.draft.round_templates[event.draft.current_booster - 1]?.passDirection || 'left' %></strong> after every outstanding player picks.</p></div><div class="draft-bench-clock"><strong data-draft-deadline="<%= event.draft.deadline_at %>">--:--</strong><small><%= event.draft.pending_user_ids.length %> pick<%= event.draft.pending_user_ids.length === 1 ? '' : 's' %> pending</small></div></div>
+        <% if (!isEntrant) { %><div class="arena-empty"><h3>Draft in progress</h3><p class="muted">Pack contents remain private to their current player. Public progress updates as picks complete.</p></div>
+        <% } else if (currentPack) { %>
+          <div class="draft-current-pack-head"><span class="pill">Pack #<%= currentPack.id %></span><strong><%= currentPack.items.length %> item<%= currentPack.items.length === 1 ? '' : 's' %> remaining</strong><span class="draft-pass-arrow"><%= currentPack.pass_direction === 'right' ? '← Passing right' : 'Passing left →' %></span></div>
+          <div class="draft-pack-grid">
+            <% currentPack.itemViews.forEach(item => { const pickName = item.item_type === 'player' ? item.player_snapshot.displayName : item.item_type === 'boost' ? `${wutTitleCase(item.rarity)} ${wutTitleCase(item.boost_type)} Boost` : `${wutTitleCase(item.rarity)} ${wutTrinketName(item.family)}`; %>
+              <button type="button" class="draft-pack-item tier-<%= item.rarity %>" data-draft-pick data-item-id="<%= item.id %>" data-item-name="<%= pickName %>" data-item-type="<%= item.item_type %>">
+                <% if (item.item_type === 'player') { %><span class="collection-player arena-wut-card arena-collection-card tier-<%= item.rarity %>"><%- include('partials_wut_card', { card: item.cardView, statusText: 'Click to draft this player' }) %></span>
+                <% } else if (item.item_type === 'boost') { %><span class="collection-boost tier-<%= item.rarity %>"><%- include('partials_boost_content', { boost: item }) %></span>
+                <% } else { %><span class="draft-pack-trinket"><span class="wut-trinket-icon"><%= trinketIcons[item.family] || '◆' %></span><strong><%= wutTitleCase(item.rarity) %> <%= wutTrinketName(item.family) %></strong><small><%= wutTrinketDescription(item) %></small></span><% } %>
+              </button>
+            <% }) %>
+          </div>
+        <% } else if (waitingForDraftPass) { %><div class="draft-waiting-pass"><span class="draft-pass-puck">●</span><div><h3>Pick locked in</h3><p class="muted">Waiting for <%= event.draft.pending_user_ids.length %> remaining player<%= event.draft.pending_user_ids.length === 1 ? '' : 's' %>. Your next pack will arrive automatically.</p></div></div>
+        <% } else { %><div class="arena-empty"><h3>Preparing your next pack</h3><p class="muted">The event engine is advancing the draft.</p></div><% } %>
+      </section>
+      <dialog id="draftPickDialog" class="wut-trinket-dialog draft-pick-dialog"><form method="post" action="/cards/drafts/<%= event.id %>/pick"><input type="hidden" name="item_id" id="draftPickItemId"><p class="eyebrow">This choice cannot be undone</p><h2>Draft this item?</h2><p id="draftPickMessage"></p><div class="admin-action-row"><button type="submit">Confirm Draft Pick</button><button type="button" class="ghost" id="cancelDraftPick">Keep Looking</button></div></form></dialog>
+    <% } %>
+
+    <% const canEventSideboard = event.phase === 'tournament' && event.config.deckbuilding.sideboardingBetweenRounds && !event.config.deckbuilding.lockDeckForTournament && Boolean(event.tournament.pending_round_plan); %>
+    <% if ((event.phase === 'deckbuilding' || canEventSideboard) && isEntrant) { const activeIds = (currentEventDeck?.active_card_ids || []).map(Number); const draftedCards = inventory.cardViews.filter(card => !inventory.safety_bench_card_ids.map(Number).includes(Number(card.id))); const freeTrinkets = inventory.trinketViews.filter(item => item.attached_card_id == null); %>
+      <form method="post" action="/cards/drafts/<%= event.id %>/deck" class="card wut-visual-deck-builder event-deck-builder" id="eventDeckForm">
+        <div class="cards-section-head"><div><p class="eyebrow"><%= canEventSideboard ? `Round ${event.tournament.round} intermission` : 'Temporary cards · tournament lineup' %></p><h2><%= canEventSideboard ? 'Sideboard for the Next Round' : 'Build Your Event Deck' %></h2><p class="muted">Choose <%= event.config.deckbuilding.activeMinimum %>–<%= event.config.deckbuilding.activeMaximum %> drafted cards. Your shared 2F / 2D / 1G Safety Bench is already locked separately.</p></div><div class="draft-bench-clock"><strong data-deck-deadline="<%= canEventSideboard ? event.tournament.next_round_at || '' : event.deckbuilding?.deadline_at || event.deadlines?.deckbuilding || '' %>">--:--</strong><small><%= canEventSideboard ? 'Next round' : `${Object.keys(event.decks || {}).length}/${event.draft.seat_user_ids.length} submitted` %></small></div></div>
+        <% if (currentEventDeck) { %><p class="draft-deck-saved"><span class="pill positive">Deck saved</span> <%= canEventSideboard ? 'Changes apply only to matches created for the next round.' : 'You may revise it until every entrant submits or the timer expires.' %></p><% } %>
+        <div class="wut-active-deck-slots" id="eventActiveSlots"></div>
+        <div id="eventDeckHiddenInputs"></div>
+        <p class="muted" id="eventDeckHelp">Click a drafted card below to add it. Click a filled slot to remove it.</p>
+        <div class="draft-deck-submit"><span class="pill" id="eventActiveCount">0/<%= event.config.deckbuilding.activeMaximum %> cards</span><button type="submit"><%= canEventSideboard ? 'Save Next-Round Deck' : currentEventDeck ? 'Update Event Deck' : 'Submit Event Deck' %></button></div>
+
+        <section class="cards-collection wut-deck-collection event-deck-pool">
+          <div class="cards-section-head"><div><p class="eyebrow">Your drafted player pool</p><h3>Available Players</h3><p class="muted">Select a free trinket first if you want to attach it, then click an eligible card.</p></div></div>
+          <% if (freeTrinkets.length) { %><div class="wut-trinket-inventory event-attach-trinkets"><% freeTrinkets.forEach(item => { %><button type="button" class="wut-trinket-inventory-item tier-<%= item.rarity %>" data-event-trinket="<%= item.id %>" data-trinket-family="<%= item.family %>" title="<%= wutTrinketDescription(item) %>"><span class="wut-trinket-icon"><%= trinketIcons[item.family] || '◆' %></span><small><%= wutTrinketName(item.family) %></small><em><%= wutTitleCase(item.rarity) %></em></button><% }) %></div><% } %>
+          <label class="collection-search">Search player pool<input type="search" placeholder="Player, team, position, or rarity" id="eventDeckSearch"></label>
+          <div class="collection-grid" id="eventDeckCollection">
+            <% draftedCards.forEach(card => { %><button type="button" class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" data-event-deck-card data-deck-hover-flip data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-has-trinket="<%= card.trinket ? '1' : '0' %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''} ${card.player.position} ${card.player.tier}`.toLowerCase() %>"><%- include('partials_wut_card', { card, statusText: card.trinket ? 'Temporary card · attached trinket' : 'Temporary drafted card · click to add' }) %></button><% }) %>
+          </div>
+        </section>
+      </form>
+      <form method="post" action="/cards/drafts/<%= event.id %>/trinkets/attach" id="eventAttachTrinketForm"><input type="hidden" name="trinket_id"><input type="hidden" name="card_id"></form>
+      <form method="post" action="/cards/drafts/<%= event.id %>/trinkets/detach" id="eventDetachTrinketForm"><input type="hidden" name="card_id"></form>
+    <% } %>
+
+    <% if (['tournament','complete','prizes_awarded'].includes(event.phase)) { const entrantName = id => event.entrants.find(row => Number(row.user_id) === Number(id))?.display_name || `Player ${id}`; const activeRound = event.tournament.rounds?.at(-1); %>
+      <section class="card draft-tournament-board" id="tournament">
+        <div class="cards-section-head"><div><p class="eyebrow"><%= event.config.tournament.format.replaceAll('_',' ') %></p><h2><%= event.phase === 'tournament' ? `Round ${event.tournament.round}` : 'Final Standings' %></h2><p class="muted"><%= event.tournament.next_round_at ? `Next round begins ${new Date(event.tournament.next_round_at).toLocaleString()}.` : event.phase === 'tournament' ? 'Matches use the standard WUT lineup and scoring experience.' : 'Tournament play is complete.' %></p></div><span class="pill <%= event.phase === 'complete' ? 'positive' : '' %>"><%= event.phase === 'complete' ? 'Complete' : activeRound?.stage?.replaceAll('_',' ') || 'Tournament' %></span></div>
+        <div class="draft-tournament-layout">
+          <div class="draft-round-matches"><h3><%= activeRound ? `Round ${activeRound.number} Matches` : 'Matches' %></h3>
+            <% (activeRound?.match_ids || []).forEach(matchId => { const match = event.tournament.matches.find(item => Number(item.id) === Number(matchId)); const participant = match?.player_ids.map(Number).includes(Number(currentUser.id)); %>
+              <article class="draft-tournament-match"><div><span class="pill"><%= match.bracket_role === 'championship' ? 'Final' : match.bracket_role === 'third_place' ? '3rd Place' : match.bracket_role === 'consolation' ? 'Consolation' : match.status %></span><strong><%= entrantName(match.player_ids[0]) %> <em>vs</em> <%= entrantName(match.player_ids[1]) %></strong><small><%= match.scores ? `${match.scores[String(match.player_ids[0])]}–${match.scores[String(match.player_ids[1])]}` : `Match #${match.id} · ${match.status}` %></small></div><% if (participant) { %><a class="button-link" href="/cards/drafts/<%= event.id %>/matches/<%= match.id %>"><%= match.status === 'active' ? 'Play Match' : match.status === 'scoring' ? 'Scoring…' : 'View Match' %></a><% } %></article>
+            <% }) %>
+            <% (activeRound?.bye_user_ids || []).forEach(userId => { %><article class="draft-tournament-match is-bye"><div><span class="pill positive">Bye</span><strong><%= entrantName(userId) %></strong><small>Advances without a match</small></div></article><% }) %>
+          </div>
+          <div class="draft-standings"><h3>Standings</h3><table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>D</th><th>FP</th><th>Diff</th></tr></thead><tbody><% (event.tournament.standings || []).forEach(row => { %><tr class="<%= Number(row.user_id) === Number(currentUser.id) ? 'is-you' : '' %>"><td><%= row.rank %></td><td><%= entrantName(row.user_id) %></td><td><%= row.wins %></td><td><%= row.losses %></td><td><%= row.draws %></td><td><%= row.fp_for %></td><td><%= row.fp_differential >= 0 ? '+' : '' %><%= row.fp_differential %></td></tr><% }) %></tbody></table></div>
+        </div>
+      </section>
+    <% } %>
+
+    <% if (event.phase === 'prizes_awarded') { const ownAwards = (event.prizes.awards || []).filter(item => Number(item.user_id) === Number(currentUser.id)); %>
+      <section class="card draft-prize-receipt"><div class="cards-section-head"><div><p class="eyebrow">Permanent rewards delivered</p><h2>Your Event Prizes</h2><p class="muted">Temporary cards, boosts, and trinkets have now retired from active use. Match replays remain available.</p></div><span class="pill positive"><%= ownAwards.length %> reward<%= ownAwards.length === 1 ? '' : 's' %></span></div>
+        <% if (!ownAwards.length) { %><p class="muted">This event did not award a prize for your final placement.</p><% } %>
+        <div class="draft-prize-awards"><% ownAwards.forEach(award => { %><article class="draft-prize-award"><strong><%= award.tier_label %></strong><% if (award.type === 'wut_coins') { %><span>🪙 <%= award.amount %> WUT Coins</span><% } else if (award.type === 'player_pack') { %><span>🎁 <%= wutTitleCase(award.pack_type) %> Pack</span><small><%= award.status === 'claimed' ? 'Added to your permanent collection' : award.status === 'queued' ? 'Queued behind your current unopened pack' : 'Ready to reveal in the Shop' %></small><% } else { %><span><%= trinketIcons[award.family] || '◆' %> <%= wutTitleCase(award.rarity) %> <%= wutTrinketName(award.family) %></span><small>Added to your permanent trinket inventory</small><% } %></article><% }) %></div>
+      </section>
+    <% } %>
+
+    <% if (benchWinners.length) { %>
+      <section class="card draft-bench-winners"><div class="cards-section-head"><div><p class="eyebrow">Public event information</p><h2>Shared Safety Bench</h2><p class="muted">Every active entrant owns a temporary copy of these cards for this event only.</p></div><span class="pill positive">2F · 2D · 1G</span></div><div class="collection-grid"><% benchWinners.forEach(winner => { %><article class="collection-player arena-wut-card arena-collection-card tier-<%= winner.card.tier %>"><%- include('partials_wut_card', { card: winner.cardView, statusText: `Shared Safety Bench · ${winner.votes || 0} vote${winner.votes === 1 ? '' : 's'}` }) %></article><% }) %></div></section>
+    <% } %>
+
+    <% if (isEntrant && event.phase !== 'prizes_awarded') { %>
+      <section class="card cards-collection event-inventory">
+        <div class="cards-section-head"><div><p class="eyebrow">Scoped to this event · removed afterward</p><h2>Event Collection</h2><p class="muted">This uses the same visual language as your regular collection. Nothing shown here enters your permanent WUT inventory.</p></div><span class="pill"><%= inventory.cardViews.length %> cards · <%= inventory.boostViews.length %> boosts · <%= inventory.trinketViews.length %> trinkets</span></div>
+        <div class="collection-tabs"><button type="button" class="collection-tab is-active" data-event-tab="players">Player Cards</button><button type="button" class="collection-tab" data-event-tab="boosts">Boosts</button><button type="button" class="collection-tab" data-event-tab="trinkets">Trinkets</button></div>
+        <div class="collection-grid" data-event-panel="players"><% inventory.cardViews.forEach(card => { %><article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0"><%- include('partials_wut_card', { card, statusText: inventory.safety_bench_card_ids.includes(card.id) ? 'Temporary shared Safety Bench card' : 'Temporary drafted card' }) %></article><% }) %><% if (!inventory.cardViews.length) { %><p class="muted">Your temporary player-card pool is empty. Drafted cards will appear here.</p><% } %></div>
+        <div class="collection-grid arena-boost-collection" data-event-panel="boosts" hidden><% inventory.boostViews.forEach(boost => { %><article class="collection-boost tier-<%= boost.rarity %>"><%- include('partials_boost_content', { boost }) %></article><% }) %><% if (!inventory.boostViews.length) { %><p class="muted">Drafted boosts will appear here and remain consumable across the tournament.</p><% } %></div>
+        <div class="wut-trinket-inventory" data-event-panel="trinkets" hidden><% inventory.trinketViews.forEach(item => { %><article class="wut-trinket-inventory-item tier-<%= item.rarity %>" title="<%= wutTrinketDescription(item) %>"><span class="wut-trinket-icon"><%= trinketIcons[item.family] || '◆' %></span><small><%= wutTrinketName(item.family) %></small><em>Temporary · <%= wutTitleCase(item.rarity) %></em></article><% }) %><% if (!inventory.trinketViews.length) { %><p class="muted">Drafted trinkets will appear here for event deckbuilding.</p><% } %></div>
+      </section>
+    <% } %>
+  </main>
+  <script>
+    document.querySelectorAll('.event-inventory .arena-collection-card, .draft-bench-winners .arena-collection-card').forEach(card => {
+      card.addEventListener('click', () => card.classList.toggle('is-flipped'));
+      card.addEventListener('keydown', event => { if (event.key === 'Enter') card.classList.toggle('is-flipped'); });
+    });
+    document.querySelectorAll('[data-event-tab]').forEach(tab => tab.addEventListener('click', () => {
+      document.querySelectorAll('[data-event-tab]').forEach(item => item.classList.toggle('is-active', item === tab));
+      document.querySelectorAll('[data-event-panel]').forEach(panel => panel.hidden = panel.dataset.eventPanel !== tab.dataset.eventTab);
+    }));
+    const voteForm = document.getElementById('draftBenchVoteForm');
+    if (voteForm) {
+      voteForm.querySelectorAll('.draft-vote-card input').forEach(input => input.addEventListener('change', () => {
+        const group = input.closest('[data-vote-group]');
+        const required = Number(group.dataset.required);
+        const checked = [...group.querySelectorAll('input:checked')];
+        if (checked.length > required) { input.checked = false; window.alert(`Choose exactly ${required} ${group.dataset.voteGroup} card${required === 1 ? '' : 's'}.`); }
+        input.closest('.draft-vote-card').classList.toggle('is-selected', input.checked);
+      }));
+      voteForm.addEventListener('submit', event => {
+        const invalid = [...voteForm.querySelectorAll('[data-vote-group]')].find(group => group.querySelectorAll('input:checked').length !== Number(group.dataset.required));
+        if (invalid) { event.preventDefault(); return document.getElementById('draftVoteHelp').textContent = `Choose exactly ${invalid.dataset.required} ${invalid.dataset.voteGroup} card${Number(invalid.dataset.required) === 1 ? '' : 's'}.`; }
+        if (!window.confirm('Lock in these shared Safety Bench votes? You may update them until the timer ends.')) event.preventDefault();
+      });
+    }
+    const deadline = document.querySelector('[data-bench-deadline]');
+    if (deadline?.dataset.benchDeadline) {
+      const updateClock = () => { const seconds = Math.max(0, Math.ceil((new Date(deadline.dataset.benchDeadline).getTime() - Date.now()) / 1000)); deadline.textContent = `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`; if (!seconds) setTimeout(() => window.location.reload(), 1000); };
+      updateClock(); setInterval(updateClock, 1000);
+    }
+    const draftDeadline = document.querySelector('[data-draft-deadline]');
+    if (draftDeadline?.dataset.draftDeadline) {
+      const updateDraftClock = () => { const seconds = Math.max(0, Math.ceil((new Date(draftDeadline.dataset.draftDeadline).getTime() - Date.now()) / 1000)); draftDeadline.textContent = `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`; if (!seconds) setTimeout(() => window.location.reload(), 1000); };
+      updateDraftClock(); setInterval(updateDraftClock, 1000);
+    }
+    const pickDialog = document.getElementById('draftPickDialog');
+    document.querySelectorAll('[data-draft-pick]').forEach(item => item.addEventListener('click', () => {
+      document.getElementById('draftPickItemId').value = item.dataset.itemId;
+      document.getElementById('draftPickMessage').textContent = `${item.dataset.itemName} will move into your temporary Event Collection. The remaining pack will pass once every player has picked.`;
+      pickDialog.showModal();
+    }));
+    document.getElementById('cancelDraftPick')?.addEventListener('click', () => pickDialog.close());
+    const deckForm = document.getElementById('eventDeckForm');
+    if (deckForm) {
+      const minimum = <%= Number(event.config.deckbuilding.activeMinimum) %>;
+      const maximum = <%= Number(event.config.deckbuilding.activeMaximum) %>;
+      let active = <%- JSON.stringify((currentEventDeck?.active_card_ids || []).map(Number)) %>;
+      let selectedTrinket = null;
+      const slots = document.getElementById('eventActiveSlots');
+      const hidden = document.getElementById('eventDeckHiddenInputs');
+      const help = document.getElementById('eventDeckHelp');
+      const collectionCards = [...document.querySelectorAll('[data-event-deck-card]')];
+      const cardsById = new Map(collectionCards.map(card => [Number(card.dataset.cardId), card]));
+      const message = (text, error = false) => { help.textContent = text; help.classList.toggle('error', error); };
+      const cardMarkup = id => {
+        const source = cardsById.get(Number(id));
+        if (!source) return '<span>Missing card</span>';
+        const tier = [...source.classList].find(name => name.startsWith('tier-')) || 'tier-common';
+        return `<span class="arena-wut-card ${tier}" data-deck-hover-flip>${source.querySelector('.arena-wut-card-inner').outerHTML}</span>`;
+      };
+      const refresh = () => {
+        const query = document.getElementById('eventDeckSearch').value.trim().toLowerCase();
+        slots.innerHTML = Array.from({ length: maximum }, (_, index) => active[index] ? `<button type="button" class="wut-deck-slot has-card" data-remove-event-card="${index}" title="Remove this card">${cardMarkup(active[index])}</button>` : `<div class="wut-deck-slot"><strong>${index + 1}</strong><small>Open slot</small></div>`).join('');
+        hidden.innerHTML = active.map(id => `<input type="hidden" name="active_card_ids" value="${id}">`).join('');
+        document.getElementById('eventActiveCount').textContent = `${active.length}/${maximum} cards`;
+        collectionCards.forEach(card => card.hidden = active.includes(Number(card.dataset.cardId)) || (query && !card.dataset.search.includes(query)));
+        window.fitWutCardNames?.();
+      };
+      collectionCards.forEach(card => card.addEventListener('click', event => {
+        const id = Number(card.dataset.cardId);
+        if (selectedTrinket) {
+          if (card.dataset.hasTrinket === '1') return message('That card already has a trinket attached.', true);
+          if (!window.confirm('Attach this temporary trinket to this card for the Draft Event?')) return;
+          const attachForm = document.getElementById('eventAttachTrinketForm');
+          attachForm.elements.trinket_id.value = selectedTrinket;
+          attachForm.elements.card_id.value = id;
+          return attachForm.submit();
+        }
+        if (event.target.closest('.wut-trinket-badge')) {
+          event.preventDefault(); event.stopPropagation();
+          if (window.confirm('Detach this temporary trinket from the card?')) { const detachForm = document.getElementById('eventDetachTrinketForm'); detachForm.elements.card_id.value = id; detachForm.submit(); }
+          return;
+        }
+        if (active.length >= maximum) return message(`Your Event Deck already has ${maximum} cards.`, true);
+        active.push(id); message('Card added to your Event Deck.'); refresh();
+      }));
+      document.querySelectorAll('[data-event-trinket]').forEach(button => button.addEventListener('click', () => {
+        selectedTrinket = selectedTrinket === button.dataset.eventTrinket ? null : button.dataset.eventTrinket;
+        document.querySelectorAll('[data-event-trinket]').forEach(item => item.classList.toggle('is-selected', item.dataset.eventTrinket === selectedTrinket));
+        collectionCards.forEach(card => card.classList.toggle('is-attach-target', Boolean(selectedTrinket) && card.dataset.hasTrinket !== '1'));
+        message(selectedTrinket ? 'Trinket selected. Click an eligible player card to attach it.' : 'Trinket selection cleared. Click cards to build your deck.');
+      }));
+      slots.addEventListener('click', event => { const button = event.target.closest('[data-remove-event-card]'); if (!button) return; active.splice(Number(button.dataset.removeEventCard), 1); refresh(); });
+      document.getElementById('eventDeckSearch').addEventListener('input', refresh);
+      deckForm.addEventListener('pointermove', event => { const card = event.target.closest('[data-deck-hover-flip]'); if (!card) return; const bounds = card.getBoundingClientRect(); card.classList.toggle('is-flipped', event.clientX - bounds.left <= bounds.width * .3 && event.clientY - bounds.top <= bounds.height * .25); });
+      deckForm.addEventListener('pointerout', event => { const card = event.target.closest('[data-deck-hover-flip]'); if (card && !card.contains(event.relatedTarget)) card.classList.remove('is-flipped'); });
+      deckForm.addEventListener('submit', event => { if (active.length < minimum || active.length > maximum) { event.preventDefault(); message(`Choose between ${minimum} and ${maximum} player cards before submitting.`, true); } });
+      refresh();
+    }
+    const deckDeadline = document.querySelector('[data-deck-deadline]');
+    if (deckDeadline?.dataset.deckDeadline) {
+      const updateDeckClock = () => { const seconds = Math.max(0, Math.ceil((new Date(deckDeadline.dataset.deckDeadline).getTime() - Date.now()) / 1000)); deckDeadline.textContent = `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`; if (!seconds) setTimeout(() => window.location.reload(), 1000); };
+      updateDeckClock(); setInterval(updateDeckClock, 1000);
+    }
+    <% if (waitingForDraftPass) { %>setTimeout(() => window.location.reload(), 3000);<% } %>
+  </script>
+</body>
+</html>

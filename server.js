@@ -127,7 +127,39 @@ import {
   getWutDebugMatch,
   queueWutDebugRescore,
   resetWutDebugMatch,
-  commitWutDebugPlacement
+  commitWutDebugPlacement,
+  getWutDraftEventPresets,
+  getWutDraftEventLobby,
+  createWutDraftEvent,
+  saveWutDraftEventPreset,
+  transitionWutDraftEvent,
+  pauseWutDraftEvent,
+  resumeWutDraftEvent,
+  joinWutDraftEvent,
+  withdrawWutDraftEvent,
+  dropWutDraftEventEntrant,
+  startWutDraftEvent,
+  resolveWutDraftEventMatch,
+  beginWutDraftSafetyBench,
+  voteWutDraftSafetyBench,
+  finishWutDraftSafetyBench,
+  extendWutDraftSafetyBench,
+  processWutDraftEvents,
+  beginWutDraftEvent,
+  pickWutDraftItem,
+  forceWutDraftAutopick,
+  extendWutDraftPickDeadline,
+  saveWutDraftEventDeck,
+  attachWutDraftEventTrinket,
+  detachWutDraftEventTrinket,
+  finishWutDraftDeckbuilding,
+  extendWutDraftDeckbuilding,
+  getWutDraftEventMatch,
+  commitWutDraftEventTurn,
+  completeWutDraftEventReveal,
+  advanceWutDraftEventRound,
+  awardWutDraftEventPrizes,
+  rescheduleWutDraftEvent
 } from './db.js';
 import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries, getPlayers } from './services/wcplData.js';
 import { buildShotDoctorRunShots } from './services/shotDoctor.js';
@@ -172,6 +204,7 @@ import {
   wutTrinketDescription,
   wutTrinketName
 } from './services/wutTrinketText.js';
+import { WUT_DRAFT_TRANSITIONS } from './services/wutDraftEvents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -181,6 +214,7 @@ app.locals.WUT_TRINKET_ICONS = WUT_TRINKET_ICONS;
 app.locals.wutTitleCase = wutTitleCase;
 app.locals.wutTrinketDescription = wutTrinketDescription;
 app.locals.wutTrinketName = wutTrinketName;
+app.locals.wutTrinketPower = rarity => Number(getCardsConfig().wut.trinketPowerValues?.[String(rarity || '').toLowerCase()] || 0);
 initDb();
 
 // Keep time-based race transitions moving even when nobody has the page open.
@@ -1444,15 +1478,24 @@ function arenaCatalogByIdentity(catalog) {
 async function scorePendingArenaMatches(catalog = null) {
   const activeCatalog = catalog || await getCardsCatalog();
   const catalogByKey = cardsCatalogMap(activeCatalog);
-  const config = getCardsConfig();
+  const globalConfig = getCardsConfig();
   let resolved = 0;
   for (const match of getArenaMatchesNeedingScoring()) {
+    const draftEvent = match.draft_event_id ? getWutDraftEventLobby({ eventId: match.draft_event_id, includePrivate: true })[0] : null;
+    const frozenRules = draftEvent?.environment_snapshot?.rules || match.rules_snapshot || {};
+    const config = draftEvent ? {
+      ...globalConfig,
+      scoring: frozenRules.scoring || globalConfig.scoring,
+      boostEffects: frozenRules.boostEffects || globalConfig.boostEffects,
+      wut: { ...globalConfig.wut, trinketEffects: frozenRules.trinketEffects || globalConfig.wut.trinketEffects }
+    } : globalConfig;
     let rawScores = [];
     for (const placement of match.placements) {
-      const owned = getCardsOwnedState(placement.owner_user_id || placement.user_id);
-      const rawCard = owned.cards.find(card => Number(card.id) === Number(placement.card_id));
-      const card = rawCard ? decorateOwnedCard(rawCard, catalogByKey) : null;
-      const rawBoost = owned.boosts.find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
+      const eventInventory = draftEvent?.inventories?.[String(placement.owner_user_id || placement.user_id)] || null;
+      const owned = eventInventory ? null : getCardsOwnedState(placement.owner_user_id || placement.user_id);
+      const rawCard = (eventInventory?.cards || owned?.cards || []).find(card => Number(card.id) === Number(placement.card_id));
+      const card = rawCard ? (eventInventory ? draftEventCardView(rawCard, eventInventory) : decorateOwnedCard(rawCard, catalogByKey)) : null;
+      const rawBoost = (eventInventory?.boosts || owned?.boosts || []).find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
       const boost = rawBoost ? {
         ...rawBoost,
         effect: config.boostEffects?.[rawBoost.boost_type]?.[rawBoost.rarity] || rawBoost.effect || DEFAULT_BOOST_EFFECTS[rawBoost.boost_type]?.[rawBoost.rarity]
@@ -1623,10 +1666,41 @@ async function scorePendingArenaMatches(catalog = null) {
         effect_log: entry.logs
       };
     });
-    completeArenaMatch(match.id, scored);
+    completeArenaMatch(match.arena_match_key || match.id, scored);
     resolved += 1;
   }
+  await awardCompletedWutDraftEvents(activeCatalog);
   return resolved;
+}
+
+async function processAutomaticWutDraftStarts(catalog = null, now = new Date()) {
+  processWutDraftEvents(now);
+  const due = getWutDraftEventLobby({ includePrivate: true }).filter(event =>
+    event.phase === 'signup_closed' && event.config.basic.automaticStart && event.config.scheduling.startsAt &&
+    now.getTime() >= new Date(event.config.scheduling.startsAt).getTime() &&
+    event.active_entrant_count >= Number(event.config.basic.minimumEntrants)
+  );
+  if (!due.length) return [];
+  const activeCatalog = catalog || await getCardsCatalog();
+  const started = [];
+  for (const event of due) {
+    startWutDraftEvent({ eventId: event.id, environment: draftEnvironmentFromCatalog(event, activeCatalog), adminUserId: null, system: true, now });
+    beginWutDraftSafetyBench({ eventId: event.id, adminUserId: null, system: true, now });
+    started.push(Number(event.id));
+  }
+  return started;
+}
+
+async function awardCompletedWutDraftEvents(catalog = null, eventId = null, adminUserId = null) {
+  const activeCatalog = catalog || await getCardsCatalog();
+  const config = getCardsConfig();
+  const completed = getWutDraftEventLobby({ includePrivate: true }).filter(event => event.phase === 'complete' && !event.prizes?.awarded_at && (eventId == null || Number(event.id) === Number(eventId)));
+  const results = [];
+  for (const event of completed) results.push(awardWutDraftEventPrizes({
+    eventId: event.id, adminUserId,
+    generatePack: packType => generateWutPlayerPack({ packType, catalog: activeCatalog, config })
+  }));
+  return results;
 }
 
 async function processArena(now = new Date()) {
@@ -1642,6 +1716,7 @@ async function processArena(now = new Date()) {
     const identityMap = arenaCatalogByIdentity(catalog);
     autoAssignExpiredArenaTurns(identityMap, now);
     await scorePendingArenaMatches(catalog);
+    await processAutomaticWutDraftStarts(catalog, now);
     return catalog;
   } finally {
     arenaClockBusy = false;
@@ -1778,7 +1853,226 @@ app.get('/cards', requireLogin, async (req, res, next) => {
 });
 
 app.get('/cards/guide', requireLogin, (req, res) => {
-  res.render('cards_guide');
+  res.render('cards_guide', { wutConfig: getCardsConfig().wut });
+});
+
+app.get('/cards/drafts', requireLogin, requireWutReady, (req, res, next) => {
+  try {
+    processWutDraftEvents(new Date());
+    const membership = getWutMembershipState(req.session.userId);
+    const user = getUserById(req.session.userId);
+    res.render('cards_draft_events', {
+      draftEvents: getWutDraftEventLobby({ userId: req.session.userId }),
+      wutCoins: Number(membership.wutCoins || 0),
+      mushybux: Number(user?.balance || 0)
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function draftEventCardView(item, inventory = null) {
+  const snapshot = item.player_snapshot || item.card || item;
+  const trinket = item.trinket || (item.trinket_id == null ? null : inventory?.trinkets?.find(row => Number(row.id) === Number(item.trinket_id))) || null;
+  return {
+    id: Number(item.id || 0), eventItemId: item.id || null,
+    card_identity: snapshot.cardIdentity,
+    power: Number(item.power || CARD_STARS[snapshot.tier] || 1),
+    player: {
+      ...snapshot,
+      name: snapshot.displayName || snapshot.name || '',
+      cardArt: snapshot.cardArt || snapshot.card_art || snapshot.edition || 'S3',
+      card_type: snapshot.cardType || snapshot.card_type || 'player',
+      stars: snapshot.stars || CARD_STARS[snapshot.tier] || 1
+    },
+    trinket,
+    fantasyAppearances: { appearances: 0, gamesPlayed: 0, fp: 0, stats: {} },
+    wutMatchStats: { matchesPlayed: 0, fp: 0, fpPerMatch: 0 }
+  };
+}
+
+app.get('/cards/drafts/:eventId', requireLogin, requireWutReady, (req, res, next) => {
+  try {
+    processWutDraftEvents(new Date());
+    const event = getWutDraftEventLobby({ eventId: req.params.eventId, userId: req.session.userId })[0];
+    if (!event) return res.status(404).send('Draft Event not found.');
+    const inventorySource = Object.keys(event.inventories || {}).length ? event.inventories : event.archived_inventories || {};
+    const inventory = inventorySource[String(req.session.userId)] || { cards: [], boosts: [], trinkets: [], safety_bench_card_ids: [] };
+    const vote = event.bench?.votes?.find(item => Number(item.user_id) === Number(req.session.userId)) || null;
+    const currentPack = event.phase === 'draft' ? event.draft.boosters.find(pack =>
+      Number(pack.booster_number) === Number(event.draft.current_booster) &&
+      Number(pack.current_owner_user_id) === Number(req.session.userId) && !pack.awaiting_pass && pack.items.length
+    ) : null;
+    res.render('cards_draft_event', {
+      event,
+      inventory: {
+        ...inventory,
+        cardViews: (inventory.cards || []).map(item => draftEventCardView(item, inventory)),
+        boostViews: inventory.boosts || [],
+        trinketViews: inventory.trinkets || []
+      },
+      benchCandidates: (event.bench?.candidates || []).map(candidate => ({ ...candidate, cardView: draftEventCardView(candidate) })),
+      benchWinners: (event.bench?.winners || []).map(winner => ({ ...winner, cardView: draftEventCardView(winner) })),
+      userVote: vote,
+      eventDeck: event.decks?.[String(req.session.userId)] || null,
+      isEntrant: event.joined_by_user,
+      currentPack: currentPack ? {
+        ...currentPack,
+        itemViews: currentPack.items.map(item => item.item_type === 'player' ? { ...item, cardView: draftEventCardView(item) } : item)
+      } : null,
+      waitingForDraftPass: event.phase === 'draft' && !event.draft.pending_user_ids.map(Number).includes(Number(req.session.userId))
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/cards/drafts/:eventId/bench-vote', requireLogin, requireWutReady, (req, res) => {
+  try {
+    const values = key => req.body[key] == null ? [] : Array.isArray(req.body[key]) ? req.body[key] : [req.body[key]];
+    voteWutDraftSafetyBench({
+      eventId: req.params.eventId, userId: req.session.userId,
+      selections: { F: values('F'), D: values('D'), G: values('G') }
+    });
+    req.session.flash = { type: 'success', message: 'Your shared Safety Bench vote was saved.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/drafts/${req.params.eventId}`);
+});
+
+app.post('/cards/drafts/:eventId/pick', requireLogin, requireWutReady, (req, res) => {
+  try {
+    const result = pickWutDraftItem({ eventId: req.params.eventId, userId: req.session.userId, itemId: req.body.item_id });
+    const item = result.pick.item;
+    const label = item.item_type === 'player' ? item.player_snapshot?.displayName : item.item_type === 'boost' ? `${item.rarity} ${item.boost_type} boost` : `${item.rarity} ${wutTrinketName(item.family)}`;
+    req.session.flash = { type: 'success', message: `${label || 'Item'} drafted.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/drafts/${req.params.eventId}`);
+});
+
+app.post('/cards/drafts/:eventId/deck', requireLogin, requireWutReady, (req, res) => {
+  try {
+    const values = req.body.active_card_ids == null ? [] : Array.isArray(req.body.active_card_ids) ? req.body.active_card_ids : [req.body.active_card_ids];
+    const result = saveWutDraftEventDeck({ eventId: req.params.eventId, userId: req.session.userId, activeCardIds: values });
+    req.session.flash = { type: 'success', message: result.event.phase === 'tournament' ? 'Event Deck saved for the next tournament round.' : result.event.phase === 'complete' ? 'Event Deck locked. The tournament is complete.' : 'Event Deck saved. You can revise it until deckbuilding closes.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/drafts/${req.params.eventId}`);
+});
+
+app.post('/cards/drafts/:eventId/trinkets/attach', requireLogin, requireWutReady, (req, res) => {
+  try {
+    attachWutDraftEventTrinket({ eventId: req.params.eventId, userId: req.session.userId, cardId: req.body.card_id, trinketId: req.body.trinket_id });
+    req.session.flash = { type: 'success', message: 'Temporary trinket attached for this event.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/drafts/${req.params.eventId}`);
+});
+
+app.post('/cards/drafts/:eventId/trinkets/detach', requireLogin, requireWutReady, (req, res) => {
+  try {
+    detachWutDraftEventTrinket({ eventId: req.params.eventId, userId: req.session.userId, cardId: req.body.card_id });
+    req.session.flash = { type: 'success', message: 'Temporary trinket detached.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/drafts/${req.params.eventId}`);
+});
+
+app.get('/cards/drafts/:eventId/matches/:matchId', requireLogin, requireWutReady, async (req, res, next) => {
+  try {
+    processWutDraftEvents(new Date());
+    const payload = getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    const { event } = payload; let { match } = payload;
+    const allCards = []; const allBoosts = [];
+    const inventorySource = Object.keys(event.inventories || {}).length ? event.inventories : event.archived_inventories || {};
+    for (const inventory of Object.values(inventorySource)) {
+      allCards.push(...(inventory.cards || []).map(item => draftEventCardView(item, inventory)));
+      allBoosts.push(...(inventory.boosts || []).map(boost => ({ ...boost, effect: event.environment_snapshot?.rules?.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect })));
+    }
+    match = decorateArenaMatch(match, allCards, allBoosts);
+    const inventory = inventorySource[String(req.session.userId)] || { cards: [], boosts: [], trinkets: [] };
+    const snapshotIds = new Set([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => Number(card.card_id)));
+    const snapshots = new Map([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
+    let cards = (inventory.cards || []).filter(card => snapshotIds.has(Number(card.id))).map(card => ({ ...draftEventCardView(card, inventory), power: snapshots.get(Number(card.id))?.power, trinket: snapshots.get(Number(card.id))?.trinket || null }));
+    cards = availableWutMatchCards(cards, match.placements, req.session.userId);
+    const usedThisMatch = new Set(match.placements.map(row => Number(row.boost_id)).filter(Boolean));
+    const boosts = (inventory.boosts || []).filter(boost => event.config.match.boostsMode === 'refresh_each_match' ? !usedThisMatch.has(Number(boost.id)) : !boost.consumed).map(boost => ({
+      ...boost, arenaLocked: false, effect: event.environment_snapshot?.rules?.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect
+    }));
+    res.render('cards_match', {
+      match, cards, boosts, arena: { rating: getArenaStateForUser(req.session.userId).rating },
+      wut: { config: { ...getCardsConfig().wut, ...(event.environment_snapshot?.rules || {}), boostLoadCap: event.config.match.boostLoadCap } },
+      eventContext: { id: event.id, name: event.config.basic.name }
+    });
+  } catch (err) { next(err); }
+});
+
+app.get('/cards/drafts/:eventId/matches/:matchId/results', requireLogin, requireWutReady, (req, res, next) => {
+  try {
+    const payload = getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    const { event } = payload; let { match } = payload;
+    if (!['ready', 'completed'].includes(match.status) || !(match.revealed_by || []).map(Number).includes(Number(req.session.userId))) return res.redirect(`/cards/drafts/${event.id}/matches/${match.id}`);
+    const allCards = []; const allBoosts = [];
+    const inventorySource = Object.keys(event.inventories || {}).length ? event.inventories : event.archived_inventories || {};
+    for (const inventory of Object.values(inventorySource)) {
+      allCards.push(...(inventory.cards || []).map(item => draftEventCardView(item, inventory)));
+      allBoosts.push(...(inventory.boosts || []).map(boost => ({ ...boost, effect: event.environment_snapshot?.rules?.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect })));
+    }
+    match = decorateArenaMatch(match, allCards, allBoosts);
+    res.render('cards_history', {
+      arena: { history: [match] }, replayMatchId: match.id,
+      eventContext: { id: event.id, name: event.config.basic.name }
+    });
+  } catch (err) { next(err); }
+});
+
+app.post('/cards/drafts/:eventId/matches/:matchId/turn', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const count = Math.max(0, Math.min(2, Number(req.body.count || 0)));
+    const placements = Array.from({ length: count }, (_, index) => ({
+      slot: req.body[`slot_${index}`], cardId: req.body[`card_id_${index}`], boostId: req.body[`boost_id_${index}`] || null, journeymanKey: req.body[`journeyman_key_${index}`] || ''
+    }));
+    commitWutDraftEventTurn({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId, placements });
+    await scorePendingArenaMatches();
+    req.session.flash = { type: 'success', message: 'Draft Event turn locked in.' };
+  } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect(`/cards/drafts/${req.params.eventId}/matches/${req.params.matchId}`);
+});
+
+app.post('/cards/drafts/:eventId/matches/:matchId/reveal', requireLogin, requireWutReady, (req, res) => {
+  try {
+    completeWutDraftEventReveal({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    return res.redirect(`/cards/drafts/${req.params.eventId}/matches/${req.params.matchId}/results#arena-results`);
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+    return res.redirect(`/cards/drafts/${req.params.eventId}/matches/${req.params.matchId}`);
+  }
+});
+
+app.post('/cards/drafts/:eventId/join', requireLogin, requireWutReady, (req, res) => {
+  try {
+    const event = joinWutDraftEvent({ eventId: req.params.eventId, userId: req.session.userId });
+    req.session.flash = { type: 'success', message: `You joined ${event.config.basic.name}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/drafts');
+});
+
+app.post('/cards/drafts/:eventId/withdraw', requireLogin, requireWutReady, (req, res) => {
+  try {
+    const event = withdrawWutDraftEvent({ eventId: req.params.eventId, userId: req.session.userId });
+    req.session.flash = { type: 'success', message: `You withdrew from ${event.config.basic.name}. Your entry fee was refunded.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/drafts');
 });
 
 app.post('/cards/wut/join', requireLogin, (req, res) => {
@@ -2623,6 +2917,248 @@ app.post('/admin/cards/matches/:matchId/void', requireAdmin, (req, res) => {
   }
   const userId = Number(req.body.return_user_id) || '';
   res.redirect(`/admin/cards/matches${userId ? `?user_id=${userId}` : ''}`);
+});
+
+app.get('/admin/cards/drafts', requireAdmin, (req, res, next) => {
+  try {
+    res.render('admin_draft_events', {
+      draftPresets: getWutDraftEventPresets(),
+      draftEvents: getWutDraftEventLobby({ userId: req.session.userId, includePrivate: true }),
+      draftTransitions: WUT_DRAFT_TRANSITIONS
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function parsedDraftConfig(body) {
+  try {
+    return JSON.parse(String(body.config_json || ''));
+  } catch {
+    throw new Error('The Draft Event configuration could not be read. Reload the builder and try again.');
+  }
+}
+
+app.post('/admin/cards/drafts/events', requireAdmin, (req, res) => {
+  try {
+    const event = createWutDraftEvent({
+      config: parsedDraftConfig(req.body),
+      presetId: req.body.preset_id || null,
+      adminUserId: req.session.userId
+    });
+    req.session.flash = { type: 'success', message: `Draft Event #${event.id}, ${event.config.basic.name}, was published.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/presets', requireAdmin, (req, res) => {
+  try {
+    const preset = saveWutDraftEventPreset({
+      presetId: req.body.update_selected === '1' ? req.body.preset_id : null,
+      name: req.body.preset_name,
+      description: req.body.preset_description,
+      config: parsedDraftConfig(req.body),
+      adminUserId: req.session.userId
+    });
+    req.session.flash = { type: 'success', message: `Draft preset “${preset.name}” was saved.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+function draftEnvironmentFromCatalog(event, catalog) {
+  const pool = event.config.boosters.pool;
+  const playerRange = event.config.boosters.rarityLimits.players;
+  const rarityOrder = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+  const minimum = rarityOrder.indexOf(playerRange.minimum);
+  const maximum = rarityOrder.indexOf(playerRange.maximum);
+  const cards = catalog.filter(card =>
+    card.rarityEligible !== false &&
+    pool.seasons.includes(card.edition === 'MYTHIC' ? 'MYTHIC' : card.edition) &&
+    pool.positions.includes(card.position) &&
+    pool.rarities.includes(card.tier) &&
+    rarityOrder.indexOf(card.tier) >= minimum && rarityOrder.indexOf(card.tier) <= maximum &&
+    (!pool.divisions.length || pool.divisions.includes(String(card.divisionId)))
+  ).map(card => ({
+    cardIdentity: card.cardIdentity, catalogKey: card.catalogKey, cardType: card.cardType,
+    edition: card.edition, sourceSeason: card.sourceSeason, sourceStage: card.sourceStage,
+    divisionId: card.divisionId, playerKey: card.playerKey, displayName: card.displayName,
+    teamId: card.teamId, teamName: card.teamName, teamLogo: card.teamLogo,
+    teamBgColor: card.teamBgColor, teamTextColor: card.teamTextColor,
+    position: card.position, tier: card.tier, stars: card.stars,
+    weightedFpPerGame: card.weightedFpPerGame, expectedWutFpPerMatch: card.expectedWutFpPerMatch,
+    editionStats: card.editionStats, scoringPool: card.scoringPool || null,
+    unavailableStats: card.unavailableStats || []
+  }));
+  const global = getCardsConfig();
+  return {
+    season_id: getAdminSettings().seasonId,
+    cards,
+    rules: {
+      scoring: global.scoring,
+      boostEffects: global.boostEffects,
+      rarityCosts: global.wut.rarityCosts,
+      trinketPowerValues: global.wut.trinketPowerValues,
+      slotPowerAllowance: global.wut.slotPowerAllowance,
+      trinketEffects: global.wut.trinketEffects
+    }
+  };
+}
+
+app.post('/admin/cards/drafts/:eventId/phase', requireAdmin, async (req, res) => {
+  try {
+    const nextPhase = req.body.next_phase;
+    let event;
+    if (nextPhase === 'starting') {
+      const current = getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true })[0];
+      const environment = draftEnvironmentFromCatalog(current, await getCardsCatalog());
+      event = startWutDraftEvent({ eventId: req.params.eventId, environment, adminUserId: req.session.userId });
+    } else if (nextPhase === 'bench_vote') {
+      event = beginWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    } else if (nextPhase === 'draft') {
+      event = beginWutDraftEvent({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    } else event = transitionWutDraftEvent({
+      eventId: req.params.eventId, nextPhase, adminUserId: req.session.userId, reason: req.body.reason
+    });
+    req.session.flash = { type: 'success', message: `Draft Event #${event.id} moved to ${event.phase.replaceAll('_', ' ')}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/bench/finish', requireAdmin, (req, res) => {
+  try {
+    finishWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} Safety Bench was finalized.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/bench/extend', requireAdmin, (req, res) => {
+  try {
+    extendWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} Safety Bench timer was extended.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/draft/autopick', requireAdmin, (req, res) => {
+  try {
+    const result = forceWutDraftAutopick({ eventId: req.params.eventId, userId: req.body.user_id || null, adminUserId: req.session.userId });
+    req.session.flash = { type: 'success', message: `${result.picks.length} forced autopick${result.picks.length === 1 ? '' : 's'} completed.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/draft/extend', requireAdmin, (req, res) => {
+  try {
+    extendWutDraftPickDeadline({ eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} pick timer was extended.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/deckbuilding/finish', requireAdmin, (req, res) => {
+  try {
+    finishWutDraftDeckbuilding({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} decks were locked; missing decks were autosubmitted.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/deckbuilding/extend', requireAdmin, (req, res) => {
+  try {
+    extendWutDraftDeckbuilding({ eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} deckbuilding timer was extended.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/tournament/advance', requireAdmin, (req, res) => {
+  try {
+    const event = advanceWutDraftEventRound({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    req.session.flash = { type: 'success', message: `Draft Event #${event.id} advanced to ${event.phase === 'tournament' ? `round ${event.tournament.round}` : event.phase}.` };
+  } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/prizes/award', requireAdmin, async (req, res) => {
+  try {
+    const results = await awardCompletedWutDraftEvents(null, req.params.eventId, req.session.userId);
+    const result = results[0];
+    req.session.flash = { type: 'success', message: result ? `Awarded ${result.awards.length} Draft Event prize item${result.awards.length === 1 ? '' : 's'} and retired temporary inventories.` : 'Draft Event prizes were already awarded.' };
+  } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/reschedule', requireAdmin, (req, res) => {
+  try {
+    rescheduleWutDraftEvent({
+      eventId: req.params.eventId, adminUserId: req.session.userId,
+      signupOpensAt: req.body.signup_opens_at, signupClosesAt: req.body.signup_closes_at, startsAt: req.body.starts_at
+    });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} schedule updated.` };
+  } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/entrants/:userId/drop', requireAdmin, (req, res) => {
+  try {
+    dropWutDraftEventEntrant({ eventId: req.params.eventId, userId: req.params.userId, adminUserId: req.session.userId, reason: req.body.reason });
+    req.session.flash = { type: 'success', message: `Player ${req.params.userId} was dropped from Draft Event #${req.params.eventId}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/matches/:matchId/resolve', requireAdmin, (req, res) => {
+  try {
+    resolveWutDraftEventMatch({
+      eventId: req.params.eventId, matchId: req.params.matchId, action: req.body.action,
+      forfeitingUserId: req.body.forfeiting_user_id, adminUserId: req.session.userId, reason: req.body.reason
+    });
+    req.session.flash = { type: 'success', message: `Draft Event match ${req.params.matchId} was ${req.body.action === 'void' ? 'voided' : 'resolved by forfeit'}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/pause', requireAdmin, (req, res) => {
+  try {
+    pauseWutDraftEvent({ eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} paused.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/resume', requireAdmin, (req, res) => {
+  try {
+    resumeWutDraftEvent({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} resumed.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
 });
 
 
