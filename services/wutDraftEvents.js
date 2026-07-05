@@ -1,3 +1,5 @@
+import { isPlayerPackEligible } from './cards.js';
+
 const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const POSITIONS = ['F', 'D', 'G'];
 const FORMATS = ['round_robin', 'swiss', 'single_elimination', 'swiss_top_cut'];
@@ -9,6 +11,10 @@ export const WUT_DRAFT_PHASES = Object.freeze([
   'scheduled', 'signup_open', 'signup_closed', 'starting', 'bench_vote',
   'draft', 'deckbuilding', 'tournament', 'complete', 'prizes_awarded', 'cancelled'
 ]);
+
+export function isWutDraftEventLobbyVisible(event) {
+  return !['complete', 'prizes_awarded', 'cancelled'].includes(String(event?.phase || ''));
+}
 
 export const WUT_DRAFT_TRANSITIONS = Object.freeze({
   scheduled: ['signup_open', 'signup_closed', 'cancelled'],
@@ -91,6 +97,41 @@ export const NIGHTLY_WUT_DRAFT_PRESET = Object.freeze({
 });
 
 const clone = value => JSON.parse(JSON.stringify(value));
+
+export function snapshotWutDraftCard(card) {
+  return clone({
+    cardIdentity: card.cardIdentity, catalogKey: card.catalogKey, cardType: card.cardType,
+    edition: card.edition, sourceSeason: card.sourceSeason, sourceStage: card.sourceStage,
+    divisionId: card.divisionId, sourceDivisionId: card.sourceDivisionId,
+    playerKey: card.playerKey, sourcePlayerKey: card.sourcePlayerKey,
+    steamId: card.steamId, sourceSteamId: card.sourceSteamId,
+    baseName: card.baseName, displayName: card.displayName,
+    sourceType: card.sourceType, manualRates: card.manualRates,
+    sourceTeamId: card.sourceTeamId, teamId: card.teamId, teamName: card.teamName,
+    teamLogo: card.teamLogo, teamBgColor: card.teamBgColor, teamTextColor: card.teamTextColor,
+    position: card.position, tier: card.tier, stars: card.stars,
+    weightedFpPerGame: card.weightedFpPerGame, expectedWutFpPerMatch: card.expectedWutFpPerMatch,
+    editionStats: card.editionStats, scoringPool: card.scoringPool || null,
+    unavailableStats: card.unavailableStats || []
+  });
+}
+
+export function hydrateWutDraftCardPlayer(snapshot, catalogPlayer = null) {
+  const frozen = snapshot || {};
+  const canonical = catalogPlayer || {};
+  const playerKeyName = String(frozen.sourcePlayerKey || frozen.playerKey || canonical.sourcePlayerKey || canonical.playerKey || '')
+    .replace(/^name:/i, '').trim();
+  return {
+    ...canonical,
+    ...frozen,
+    sourceSteamId: frozen.sourceSteamId || frozen.steamId || canonical.sourceSteamId || canonical.steamId || '',
+    steamId: frozen.steamId || frozen.sourceSteamId || canonical.steamId || canonical.sourceSteamId || '',
+    sourcePlayerKey: frozen.sourcePlayerKey || frozen.playerKey || canonical.sourcePlayerKey || canonical.playerKey || '',
+    sourceDivisionId: frozen.sourceDivisionId || frozen.divisionId || canonical.sourceDivisionId || canonical.divisionId || '',
+    baseName: frozen.baseName || canonical.baseName || playerKeyName || frozen.displayName || canonical.displayName || '',
+    name: frozen.displayName || frozen.name || canonical.displayName || canonical.name || ''
+  };
+}
 const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const boolean = (value, fallback) => value == null ? fallback : value === true || value === 'true' || value === 1 || value === '1';
 const text = (value, fallback = '', max = 500) => String(value ?? fallback).trim().slice(0, max);
@@ -521,6 +562,7 @@ export function splitWutDraftCardPools(config, catalog) {
   const normalized = normalizeWutDraftEventConfig(config);
   const pool = normalized.boosters.pool;
   const shared = (catalog || []).filter(card =>
+    isPlayerPackEligible(card) &&
     card?.rarityEligible !== false &&
     pool.seasons.includes(card.edition === 'MYTHIC' ? 'MYTHIC' : card.edition) &&
     pool.positions.includes(card.position) &&

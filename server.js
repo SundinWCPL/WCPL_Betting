@@ -205,7 +205,14 @@ import {
   wutTrinketDescription,
   wutTrinketName
 } from './services/wutTrinketText.js';
-import { WUT_DRAFT_TRANSITIONS, WUT_EVENT_TIME_ZONE, splitWutDraftCardPools } from './services/wutDraftEvents.js';
+import {
+  WUT_DRAFT_TRANSITIONS,
+  WUT_EVENT_TIME_ZONE,
+  hydrateWutDraftCardPlayer,
+  isWutDraftEventLobbyVisible,
+  snapshotWutDraftCard,
+  splitWutDraftCardPools
+} from './services/wutDraftEvents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1515,7 +1522,7 @@ async function scorePendingArenaMatches(catalog = null) {
       const eventInventory = draftEvent?.inventories?.[String(placement.owner_user_id || placement.user_id)] || null;
       const owned = eventInventory ? null : getCardsOwnedState(placement.owner_user_id || placement.user_id);
       const rawCard = (eventInventory?.cards || owned?.cards || []).find(card => Number(card.id) === Number(placement.card_id));
-      const card = rawCard ? (eventInventory ? draftEventCardView(rawCard, eventInventory) : decorateOwnedCard(rawCard, catalogByKey)) : null;
+      const card = rawCard ? (eventInventory ? draftEventCardView(rawCard, eventInventory, catalogByKey) : decorateOwnedCard(rawCard, catalogByKey)) : null;
       const rawBoost = (eventInventory?.boosts || owned?.boosts || []).find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
       const boost = rawBoost ? {
         ...rawBoost,
@@ -1883,7 +1890,7 @@ app.get('/cards/drafts', requireLogin, requireWutReady, (req, res, next) => {
     const membership = getWutMembershipState(req.session.userId);
     const user = getUserById(req.session.userId);
     res.render('cards_draft_events', {
-      draftEvents: getWutDraftEventLobby({ userId: req.session.userId }),
+      draftEvents: getWutDraftEventLobby({ userId: req.session.userId }).filter(isWutDraftEventLobbyVisible),
       wutCoins: Number(membership.wutCoins || 0),
       mushybux: Number(user?.balance || 0)
     });
@@ -1892,19 +1899,17 @@ app.get('/cards/drafts', requireLogin, requireWutReady, (req, res, next) => {
   }
 });
 
-function draftEventCardView(item, inventory = null) {
+function draftEventCardView(item, inventory = null, catalogByKey = null) {
   const snapshot = item.player_snapshot || item.card || item;
-  const playerKeyName = String(snapshot.playerKey || snapshot.player_key || '').replace(/^name:/i, '').trim();
-  const baseName = snapshot.baseName || snapshot.base_name || snapshot.name || playerKeyName || snapshot.displayName || '';
+  const catalogPlayer = catalogByKey?.get(snapshot.cardIdentity || snapshot.catalogKey) || null;
+  const player = hydrateWutDraftCardPlayer(snapshot, catalogPlayer);
   const trinket = item.trinket || (item.trinket_id == null ? null : inventory?.trinkets?.find(row => Number(row.id) === Number(item.trinket_id))) || null;
   return {
     id: Number(item.id || 0), eventItemId: item.id || null,
     card_identity: snapshot.cardIdentity,
     power: Number(item.power || CARD_STARS[snapshot.tier] || 1),
     player: {
-      ...snapshot,
-      baseName,
-      name: snapshot.displayName || snapshot.name || '',
+      ...player,
       cardArt: snapshot.cardArt || snapshot.card_art || snapshot.edition || 'S3',
       card_type: snapshot.cardType || snapshot.card_type || 'player',
       stars: snapshot.stars || CARD_STARS[snapshot.tier] || 1
@@ -2994,24 +2999,13 @@ app.post('/admin/cards/drafts/presets', requireAdmin, (req, res) => {
 });
 
 function draftEnvironmentFromCatalog(event, catalog) {
-  const snapshotCard = card => ({
-    cardIdentity: card.cardIdentity, catalogKey: card.catalogKey, cardType: card.cardType,
-    edition: card.edition, sourceSeason: card.sourceSeason, sourceStage: card.sourceStage,
-    divisionId: card.divisionId, playerKey: card.playerKey, displayName: card.displayName,
-    teamId: card.teamId, teamName: card.teamName, teamLogo: card.teamLogo,
-    teamBgColor: card.teamBgColor, teamTextColor: card.teamTextColor,
-    position: card.position, tier: card.tier, stars: card.stars,
-    weightedFpPerGame: card.weightedFpPerGame, expectedWutFpPerMatch: card.expectedWutFpPerMatch,
-    editionStats: card.editionStats, scoringPool: card.scoringPool || null,
-    unavailableStats: card.unavailableStats || []
-  });
   const { boosterCards, benchCards } = splitWutDraftCardPools(event.config, catalog);
-  const cards = boosterCards.map(snapshotCard);
+  const cards = boosterCards.map(snapshotWutDraftCard);
   const global = getCardsConfig();
   return {
     season_id: getAdminSettings().seasonId,
     cards,
-    bench_cards: benchCards.map(snapshotCard),
+    bench_cards: benchCards.map(snapshotWutDraftCard),
     rules: {
       scoring: global.scoring,
       boostEffects: global.boostEffects,

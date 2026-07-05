@@ -35,6 +35,15 @@ test('Draft Event wall times are always interpreted in Pacific Time', () => {
   assert.throws(() => draftEvents.wutPacificDateTimeToIso('2026-03-08T02:30'), /does not exist in Pacific Time/);
 });
 
+test('the public Draft lobby shows only upcoming and ongoing events', () => {
+  for (const phase of ['scheduled', 'signup_open', 'signup_closed', 'starting', 'bench_vote', 'draft', 'deckbuilding', 'tournament']) {
+    assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase }), true, `${phase} should remain visible`);
+  }
+  for (const phase of ['complete', 'prizes_awarded', 'cancelled']) {
+    assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase }), false, `${phase} should be hidden`);
+  }
+});
+
 test('Railway startup refuses missing or suspiciously reset production databases', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wcpl-railway-guard-'));
   const database = path.join(directory, 'betting.json');
@@ -121,6 +130,30 @@ test('S1 scoring reads the committed permanent synthetic game source', async () 
   const draftSnapshotResult = await cards.scoreHistoricalCardSample({ player: draftSnapshotPlayer, position: 'F' });
   assert.equal(draftSnapshotResult.gamesPlayed, 3, 'Draft display labels must not replace the permanent S1 player key');
   assert.ok(draftSnapshotResult.sampleMatchIds.every(id => id.startsWith('S1-WUT-name:player 43-')));
+});
+
+test('Draft card snapshots preserve and recover canonical Steam scoring identity', async () => {
+  const catalog = await cards.buildCardPlayerCatalog();
+  for (const name of ['Anvil', 'Nakesy']) {
+    const player = catalog.find(item => item.edition === 'S2' && item.baseName === name);
+    assert.ok(player?.sourceSteamId, `S2 ${name} must have a canonical Steam ID`);
+    const snapshot = draftEvents.snapshotWutDraftCard(player);
+    assert.equal(snapshot.displayName, `S2 ${name}`, 'the registered WCPL display name stays on the card');
+    assert.equal(snapshot.sourceSteamId, player.sourceSteamId);
+    assert.equal(snapshot.sourcePlayerKey, player.sourcePlayerKey);
+
+    const legacySnapshot = {
+      cardIdentity: player.cardIdentity, catalogKey: player.catalogKey,
+      edition: player.edition, sourceSeason: player.sourceSeason, sourceStage: player.sourceStage,
+      divisionId: player.divisionId, playerKey: player.playerKey,
+      displayName: player.displayName, position: player.position, tier: player.tier
+    };
+    const hydrated = draftEvents.hydrateWutDraftCardPlayer(legacySnapshot, player);
+    assert.equal(hydrated.sourceSteamId, player.sourceSteamId, 'an older Draft snapshot rehydrates through the normal catalog identity');
+    const result = await cards.scoreHistoricalCardSample({ player: hydrated, position: hydrated.position });
+    assert.equal(result.gamesPlayed, 3);
+    assert.ok(result.rolledGames.every(game => game.steam_id === player.sourceSteamId));
+  }
 });
 
 test('S1 catalog uses the canonical historical positions before rarity calculation', async () => {
@@ -323,6 +356,62 @@ test('new WUT users receive the complete starter bundle', () => {
   assert.equal(db.getWutMembershipState(1).wutCoins, 1000, 'debug games never award currency');
 });
 
+test('the same season player cannot be played from both Active Deck and Safety Bench', () => {
+  const target = db.addUser({ username: 'cross-deck-duplicate-a', password: 'test-password', displayName: 'Cross Deck A' });
+  const opponent = db.addUser({ username: 'cross-deck-duplicate-b', password: 'test-password', displayName: 'Cross Deck B' });
+  const positions = ['F', 'F', 'D', 'D', 'G'];
+  const catalogByIdentity = {};
+  for (const user of [target, opponent]) {
+    db.joinWut(user.id);
+    const items = positions.map((position, index) => ({
+      itemType: 'player', rolledTier: 'common', position,
+      cardIdentity: `S3|DUP-${user.id}|player-${index}`, catalogKey: `S3|DUP-${user.id}|player-${index}`,
+      edition: 'S3', divisionId: `DUP-${user.id}`, playerKey: `player-${index}`
+    }));
+    db.openWutStarterPack({ userId: user.id, items });
+    items.forEach(item => { catalogByIdentity[item.cardIdentity] = { position: item.position, tier: 'common', teamId: item.divisionId }; });
+  }
+  const targetDeck = db.getWutSystemsState(target.id).decks[0];
+  const targetCards = db.getCardsOwnedState(target.id).cards;
+  const originalForward = targetCards.find(card => Number(card.id) === Number(targetDeck.active_card_ids[0]));
+  const duplicateForward = db.grantCardsTestItem({
+    userId: target.id,
+    item: {
+      itemType: 'player', rolledTier: 'common', position: 'F',
+      cardIdentity: originalForward.card_identity, catalogKey: originalForward.card_identity,
+      edition: 'S3', divisionId: `DUP-${target.id}`, playerKey: 'player-0'
+    }
+  });
+  const crossDeck = db.saveWutDeck({
+    userId: target.id, deckId: targetDeck.id, name: targetDeck.name,
+    activeCardIds: targetDeck.active_card_ids,
+    benchCardIds: [duplicateForward.id, ...targetDeck.bench_card_ids.slice(1)],
+    catalogByIdentity
+  });
+  const oldRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    db.enterArenaQueue(target.id, crossDeck.id, catalogByIdentity);
+    db.enterArenaQueue(opponent.id, db.getWutSystemsState(opponent.id).decks[0].id, catalogByIdentity);
+    db.assignArenaMatchups();
+  } finally {
+    Math.random = oldRandom;
+  }
+  const match = db.getArenaStateForUser(target.id).activeMatches[0];
+  assert.equal(match.current_player_id, target.id);
+  db.commitArenaTurn({ userId: target.id, matchId: match.id, placements: [{ slot: 'F1', cardId: originalForward.id }], catalogByIdentity });
+  const opponentView = db.getArenaStateForUser(opponent.id).activeMatches.find(item => item.id === match.id);
+  const opponentForwards = opponentView.deck_snapshots[String(opponent.id)].active.filter(card => card.position === 'F');
+  db.commitArenaTurn({ userId: opponent.id, matchId: match.id, placements: [{ slot: 'F1', cardId: opponentForwards[0].card_id }, { slot: 'F2', cardId: opponentForwards[1].card_id }], catalogByIdentity });
+  const targetDefense = match.deck_snapshots[String(target.id)].active.find(card => card.position === 'D');
+  assert.throws(() => db.commitArenaTurn({
+    userId: target.id, matchId: match.id,
+    placements: [{ slot: 'F2', cardId: duplicateForward.id }, { slot: 'D1', cardId: targetDefense.card_id }],
+    catalogByIdentity
+  }), /already in this lineup/);
+  assert.equal(db.getArenaStateForUser(target.id).activeMatches.find(item => item.id === match.id).placements.filter(row => Number(row.user_id) === Number(target.id)).length, 1);
+});
+
 function createDraftTournamentFixture({ name, entrantCount, tournament, match = {}, deckbuilding = {} }) {
   const userIds = [1];
   for (let index = 1; index < entrantCount; index += 1) {
@@ -484,7 +573,10 @@ test('Draft Event Safety Bench always uses Common cards from eligible seasons in
     { cardIdentity: 'S1|A|common', edition: 'S1', position: 'F', tier: 'common' },
     { cardIdentity: 'S2|A|common', edition: 'S2', position: 'D', tier: 'common' },
     { cardIdentity: 'S1|A|rare', edition: 'S1', position: 'G', tier: 'rare' },
-    { cardIdentity: 'S3|A|common', edition: 'S3', position: 'G', tier: 'common' }
+    { cardIdentity: 'S3|A|common', edition: 'S3', position: 'G', tier: 'common' },
+    { cardIdentity: 'S1|A|jurkey', edition: 'S1', baseName: 'jurkey', position: 'F', tier: 'common' },
+    { cardIdentity: 'S2|A|bleh', edition: 'S2', baseName: 'bleh', position: 'D', tier: 'common' },
+    { cardIdentity: 'S1|A|renamed-jurkey', edition: 'S1', baseName: 'Different Name', sourceSteamId: '76561199027789459', position: 'G', tier: 'rare' }
   ];
   const pools = draftEvents.splitWutDraftCardPools(config, catalog);
   assert.deepEqual(pools.boosterCards.map(card => card.cardIdentity), ['S1|A|rare']);

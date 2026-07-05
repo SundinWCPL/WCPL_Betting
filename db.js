@@ -4548,6 +4548,7 @@ export function commitWutDebugPlacement({ adminUserId, side, slot, cardId, boost
   const requiredPosition = cleanSlot === 'G' ? 'G' : cleanSlot[0];
   if (!player || player.position !== requiredPosition) throw new Error(`That card is not eligible for ${cleanSlot}.`);
   const snapshot = wutCardSnapshot(card, catalogByIdentity);
+  if (match.placements.some(row => Number(row.user_id) === sideId && row.card_snapshot?.card_identity === snapshot.card_identity)) throw new Error('That player card is already in this debug lineup.');
   if (!trinketFitsWutPosition(snapshot.trinket?.family, snapshot.position)) throw new Error('That trinket is not legal for this card position.');
   if (snapshot.trinket?.family === 'team_crest' && match.placements.some(row => Number(row.user_id) === sideId && row.card_snapshot?.trinket?.family === 'team_crest')) {
     throw new Error("Only one Captain's Patch can be active on each debug side.");
