@@ -20,6 +20,7 @@ import {
   resolveWutDraftEventMatchRecord,
   selectWutDraftBenchPool,
   resolveWutDraftBenchWinners,
+  selectWutDraftEliminationBye,
   buildWutDraftBoosterRoundTemplates,
   materializeWutDraftBoosterRound,
   chooseWutDraftAutopick
@@ -2279,6 +2280,31 @@ export function getWutDraftEventLobby({ eventId = null, userId = null, includePr
     .sort((a, b) => new Date(a.config?.scheduling?.startsAt || a.created_at).getTime() - new Date(b.config?.scheduling?.startsAt || b.created_at).getTime());
 }
 
+export function getPendingWutDraftActionEventIds(userId) {
+  ensureCardsState();
+  const targetUserId = Number(userId);
+  if (!Number.isFinite(targetUserId)) return [];
+  return state.cards.draftEvents.events.filter(event => {
+    if (event.paused_at) return false;
+    const entrant = (event.entrants || []).some(row => Number(row.user_id) === targetUserId && row.status === 'active');
+    if (!entrant) return false;
+    if (event.phase === 'bench_vote') {
+      return event.config.safetyBench.mode === 'shared_vote' && !(event.bench?.votes || []).some(row => Number(row.user_id) === targetUserId);
+    }
+    if (event.phase === 'draft') return (event.draft?.pending_user_ids || []).map(Number).includes(targetUserId);
+    if (event.phase === 'deckbuilding') return !event.decks?.[String(targetUserId)];
+    if (event.phase !== 'tournament') return false;
+    return (event.tournament?.matches || []).some(match => {
+      if (!match.player_ids?.map(Number).includes(targetUserId)) return false;
+      return match.status === 'active' && wutDraftCurrentPlayerId(match) === targetUserId;
+    });
+  }).map(event => Number(event.id));
+}
+
+export function hasPendingWutDraftAction(userId) {
+  return getPendingWutDraftActionEventIds(userId).length > 0;
+}
+
 function chargeWutDraftEntry(event, userId, now) {
   const { currency, amount } = event.config.basic.entryFee;
   const paidAmount = Number(amount || 0);
@@ -2882,14 +2908,14 @@ function wutDraftSeededPlayers(event, userIds, mode) {
   return [...userIds].sort((a, b) => wutDraftStableTie(event.id, a) - wutDraftStableTie(event.id, b));
 }
 
-function wutDraftEliminationPairings(seeded) {
-  const pairs = []; const byes = [];
-  let bracketSize = 1; while (bracketSize < seeded.length) bracketSize *= 2;
-  const slots = [...seeded, ...Array(bracketSize - seeded.length).fill(null)];
-  for (let index = 0; index < bracketSize / 2; index += 1) {
-    const first = slots[index]; const second = slots[bracketSize - 1 - index];
-    if (first == null || second == null) byes.push(Number(first ?? second)); else pairs.push([Number(first), Number(second)]);
+function wutDraftEliminationPairings(event, seeded) {
+  const pairs = []; const byes = []; const waiting = [...seeded].map(Number);
+  if (waiting.length % 2) {
+    const previousByes = (event.tournament.rounds || []).flatMap(round => round.stage === 'elimination' ? round.bye_user_ids || [] : []);
+    const bye = selectWutDraftEliminationBye(waiting, recalculateWutDraftStandings(event), previousByes);
+    if (bye != null) { waiting.splice(waiting.indexOf(bye), 1); byes.push(Number(bye)); }
   }
+  for (let index = 0; index < waiting.length / 2; index += 1) pairs.push([waiting[index], waiting[waiting.length - 1 - index]]);
   return { stage: 'elimination', pairs, byes, finalRound: seeded.length <= 2, roles: pairs.map(() => seeded.length <= 2 ? 'championship' : 'main') };
 }
 
@@ -2960,7 +2986,7 @@ function initializeWutDraftTournament(event, now = new Date()) {
     startWutDraftTournamentRound(event, event.tournament.round_robin_plan[0], now);
   } else if (format === 'single_elimination') {
     event.tournament.elimination_players = wutDraftSeededPlayers(event, ids, event.config.tournament.elimination.seeding);
-    startWutDraftTournamentRound(event, wutDraftEliminationPairings(event.tournament.elimination_players), now);
+    startWutDraftTournamentRound(event, wutDraftEliminationPairings(event, event.tournament.elimination_players), now);
   } else startWutDraftTournamentRound(event, wutDraftSwissPairings(event, ids), now);
   return event;
 }
@@ -2984,14 +3010,14 @@ function advanceWutDraftTournament(event, now = new Date(), { force = false } = 
   else if (format === 'swiss_top_cut' && round.stage === 'swiss' && round.number < event.config.tournament.topCut.swissRounds) plan = wutDraftSwissPairings(event, wutDraftActiveEntrantIds(event));
   else if (format === 'swiss_top_cut' && round.stage === 'swiss') {
     const advancing = event.tournament.standings.slice(0, event.config.tournament.topCut.advancing).map(row => Number(row.user_id));
-    plan = wutDraftEliminationPairings(wutDraftSeededPlayers(event, advancing, event.config.tournament.topCut.seeding));
+    plan = wutDraftEliminationPairings(event, wutDraftSeededPlayers(event, advancing, event.config.tournament.topCut.seeding));
   } else if (['single_elimination', 'swiss_top_cut'].includes(format) && round.stage === 'elimination') {
     if (round.final_round) plan = null;
     else {
       const advancingMatches = matches.filter(match => !['third_place', 'consolation'].includes(match.bracket_role));
       const winners = [...round.bye_user_ids, ...advancingMatches.filter(wutDraftResolvedMatch).map(match => Number(match.winner_user_id ?? match.player_ids[0]))];
       if (winners.length > 1) {
-        plan = wutDraftEliminationPairings(wutDraftSeededPlayers(event, winners, 'standings'));
+        plan = wutDraftEliminationPairings(event, wutDraftSeededPlayers(event, winners, 'standings'));
         if (plan.finalRound) {
           const semifinalLosers = advancingMatches.map(match => match.player_ids.map(Number).find(id => id !== Number(match.winner_user_id))).filter(Number.isFinite);
           if (event.config.tournament.elimination.thirdPlaceMatch && semifinalLosers.length === 2) {
@@ -3249,10 +3275,6 @@ function refreshWutDraftDeckAfterTrinketChange(event, userId, inventory) {
   const key = String(Number(userId));
   const deck = event.decks[key];
   if (!deck) return;
-  if (event.phase === 'deckbuilding') {
-    delete event.decks[key];
-    return;
-  }
   const cardsById = new Map(inventory.cards.map(card => [Number(card.id), card]));
   deck.active_snapshots = deck.active_card_ids.map(id => cardsById.get(Number(id))).filter(Boolean).map(card => wutDraftDeckCardSnapshot(event, inventory, card));
   deck.updated_at = nowIso();
@@ -3271,6 +3293,14 @@ export function attachWutDraftEventTrinket({ eventId, userId, cardId, trinketId,
   if (card.trinket_id != null) throw new Error('That Event card already has a trinket.');
   if (trinket.attached_card_id != null) throw new Error('That Event trinket is already attached.');
   if (!trinketFitsWutPosition(trinket.family, card.player_snapshot.position)) throw new Error('That trinket is not legal for this card position.');
+  const activeIds = new Set((event.decks?.[String(Number(userId))]?.active_card_ids || []).map(Number));
+  if (trinket.family === 'team_crest' && activeIds.has(Number(card.id))) {
+    const otherActivePatch = inventory.cards.some(other =>
+      Number(other.id) !== Number(card.id) && activeIds.has(Number(other.id)) &&
+      inventory.trinkets.find(item => Number(item.id) === Number(other.trinket_id))?.family === 'team_crest'
+    );
+    if (otherActivePatch) throw new Error("Only one Captain's Patch can be active in an Event lineup.");
+  }
   card.trinket_id = Number(trinket.id);
   trinket.attached_card_id = Number(card.id);
   trinket.attached_at = now.toISOString();

@@ -51,10 +51,10 @@
 
     <% if (event.phase === 'draft') { %>
       <section class="card draft-live-board">
-        <div class="cards-section-head"><div><p class="eyebrow">Live Booster Draft</p><h2>Booster <%= event.draft.current_booster %>/<%= event.draft.round_templates.length %> · Pick <%= event.draft.current_pick %></h2><p class="muted">Packs pass <strong><%= currentPack?.pass_direction || event.draft.round_templates[event.draft.current_booster - 1]?.passDirection || 'left' %></strong> after every outstanding player picks.</p></div><div class="draft-bench-clock"><strong data-draft-deadline="<%= event.draft.deadline_at %>">--:--</strong><small><%= event.draft.pending_user_ids.length %> pick<%= event.draft.pending_user_ids.length === 1 ? '' : 's' %> pending</small></div></div>
+        <div class="cards-section-head"><div><p class="eyebrow">Live Booster Draft</p><h2>Booster <%= event.draft.current_booster %>/<%= event.draft.round_templates.length %> · Pick <%= event.draft.current_pick %></h2><p class="muted">Packs pass <strong><%= currentPack?.pass_direction || event.draft.round_templates[event.draft.current_booster - 1]?.passDirection || 'left' %></strong> after every outstanding player picks.</p></div><div class="draft-bench-clock"><strong data-draft-deadline="<%= event.draft.deadline_at %>">--:--</strong><small data-draft-picks-pending><%= event.draft.pending_user_ids.length %> pick<%= event.draft.pending_user_ids.length === 1 ? '' : 's' %> pending</small></div></div>
         <% if (!isEntrant) { %><div class="arena-empty"><h3>Draft in progress</h3><p class="muted">Pack contents remain private to their current player. Public progress updates as picks complete.</p></div>
         <% } else if (currentPack) { %>
-          <div class="draft-current-pack-head"><span class="pill">Pack #<%= currentPack.id %></span><strong><%= currentPack.items.length %> item<%= currentPack.items.length === 1 ? '' : 's' %> remaining</strong><span class="draft-pass-arrow"><%= currentPack.pass_direction === 'right' ? '← Passing right' : 'Passing left →' %></span></div>
+          <div class="draft-current-pack-head"><span class="pill">Pack #<%= currentPack.id %></span><strong><%= currentPack.items.length %> item<%= currentPack.items.length === 1 ? '' : 's' %> remaining</strong><span class="draft-pass-arrow"><%= currentPack.pass_direction === 'right' ? '← Passing right' : 'Passing left →' %></span><button type="button" class="ghost" data-flip-draft-players>Flip Player Cards</button></div>
           <div class="draft-pack-grid">
             <% currentPack.itemViews.forEach(item => { const pickName = item.item_type === 'player' ? item.player_snapshot.displayName : item.item_type === 'boost' ? `${wutTitleCase(item.rarity)} ${wutTitleCase(item.boost_type)} Boost` : `${wutTitleCase(item.rarity)} ${wutTrinketName(item.family)}`; %>
               <button type="button" class="draft-pack-item tier-<%= item.rarity %>" data-draft-pick data-item-id="<%= item.id %>" data-item-name="<%= pickName %>" data-item-type="<%= item.item_type %>">
@@ -64,7 +64,7 @@
               </button>
             <% }) %>
           </div>
-        <% } else if (waitingForDraftPass) { %><div class="draft-waiting-pass"><span class="draft-pass-puck">●</span><div><h3>Pick locked in</h3><p class="muted">Waiting for <%= event.draft.pending_user_ids.length %> remaining player<%= event.draft.pending_user_ids.length === 1 ? '' : 's' %>. Your next pack will arrive automatically.</p></div></div>
+        <% } else if (waitingForDraftPass) { %><div class="draft-waiting-pass"><span class="draft-pass-puck">●</span><div><h3>Pick locked in</h3><p class="muted" data-draft-waiting-copy>Waiting for <%= event.draft.pending_user_ids.length %> remaining player<%= event.draft.pending_user_ids.length === 1 ? '' : 's' %>. Your next pack will arrive automatically.</p></div></div>
         <% } else { %><div class="arena-empty"><h3>Preparing your next pack</h3><p class="muted">The event engine is advancing the draft.</p></div><% } %>
       </section>
       <dialog id="draftPickDialog" class="wut-trinket-dialog draft-pick-dialog"><form method="post" action="/cards/drafts/<%= event.id %>/pick"><input type="hidden" name="item_id" id="draftPickItemId"><p class="eyebrow">This choice cannot be undone</p><h2>Draft this item?</h2><p id="draftPickMessage"></p><div class="admin-action-row"><button type="submit">Confirm Draft Pick</button><button type="button" class="ghost" id="cancelDraftPick">Keep Looking</button></div></form></dialog>
@@ -160,9 +160,43 @@
     }
     const draftDeadline = document.querySelector('[data-draft-deadline]');
     if (draftDeadline?.dataset.draftDeadline) {
-      const updateDraftClock = () => { const seconds = Math.max(0, Math.ceil((new Date(draftDeadline.dataset.draftDeadline).getTime() - Date.now()) / 1000)); draftDeadline.textContent = `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`; if (!seconds) setTimeout(() => window.location.reload(), 1000); };
+      const updateDraftClock = () => { const seconds = Math.max(0, Math.ceil((new Date(draftDeadline.dataset.draftDeadline).getTime() - Date.now()) / 1000)); draftDeadline.textContent = seconds ? `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}` : 'Processing…'; };
       updateDraftClock(); setInterval(updateDraftClock, 1000);
     }
+    const flipDraftPlayers = document.querySelector('[data-flip-draft-players]');
+    flipDraftPlayers?.addEventListener('click', () => {
+      const playerCards = [...document.querySelectorAll('.draft-pack-item[data-item-type="player"] .arena-wut-card')];
+      const flipToBack = playerCards.some(card => !card.classList.contains('is-flipped'));
+      playerCards.forEach(card => card.classList.toggle('is-flipped', flipToBack));
+      flipDraftPlayers.textContent = flipToBack ? 'Show Player Fronts' : 'Flip Player Cards';
+      flipDraftPlayers.setAttribute('aria-pressed', String(flipToBack));
+    });
+    <% if (event.phase === 'draft') { %>
+      const initialDraftPollState = {
+        phase: 'draft', paused: <%= event.paused_at ? 'true' : 'false' %>,
+        booster: <%= Number(event.draft.current_booster || 0) %>, pick: <%= Number(event.draft.current_pick || 0) %>,
+        isPending: <%= event.draft.pending_user_ids.map(Number).includes(Number(currentUser.id)) ? 'true' : 'false' %>,
+        packId: <%= currentPack ? Number(currentPack.id) : 'null' %>, packItemCount: <%= currentPack?.items?.length || 0 %>
+      };
+      const pollDraftProgress = async () => {
+        try {
+          const response = await fetch('/cards/drafts/<%= event.id %>/status', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+          if (!response.ok) return;
+          const state = await response.json(); const draft = state.draft;
+          if (draft) {
+            document.querySelectorAll('[data-draft-picks-pending]').forEach(label => { label.textContent = `${draft.pendingCount} pick${draft.pendingCount === 1 ? '' : 's'} pending`; });
+            document.querySelectorAll('[data-draft-waiting-copy]').forEach(label => { label.textContent = `Waiting for ${draft.pendingCount} remaining player${draft.pendingCount === 1 ? '' : 's'}. Your next pack will arrive automatically.`; });
+            if (draftDeadline && draft.deadlineAt) draftDeadline.dataset.draftDeadline = draft.deadlineAt;
+          }
+          const structuralChange = state.phase !== initialDraftPollState.phase || state.paused !== initialDraftPollState.paused || !draft ||
+            draft.booster !== initialDraftPollState.booster || draft.pick !== initialDraftPollState.pick ||
+            draft.isPending !== initialDraftPollState.isPending || draft.packId !== initialDraftPollState.packId ||
+            draft.packItemCount !== initialDraftPollState.packItemCount;
+          if (structuralChange) window.location.reload();
+        } catch {}
+      };
+      setInterval(pollDraftProgress, 3000);
+    <% } %>
     const pickDialog = document.getElementById('draftPickDialog');
     document.querySelectorAll('[data-draft-pick]').forEach(item => item.addEventListener('click', () => {
       document.getElementById('draftPickItemId').value = item.dataset.itemId;
@@ -183,6 +217,21 @@
       const cardsById = new Map(collectionCards.map(card => [Number(card.dataset.cardId), card]));
       const identityFor = id => cardsById.get(Number(id))?.dataset.cardIdentity || '';
       const message = (text, error = false) => { help.textContent = text; help.classList.toggle('error', error); };
+      const attachSelectedTrinket = id => {
+        const card = cardsById.get(Number(id));
+        if (!selectedTrinket || !card) return false;
+        if (card.dataset.hasTrinket === '1') { message('That card already has a trinket attached.', true); return true; }
+        if (!window.confirm('Attach this temporary trinket to this card for the Draft Event?')) return true;
+        const attachForm = document.getElementById('eventAttachTrinketForm');
+        attachForm.elements.trinket_id.value = selectedTrinket;
+        attachForm.elements.card_id.value = id;
+        attachForm.submit(); return true;
+      };
+      const detachCardTrinket = id => {
+        if (!window.confirm('Detach this temporary trinket from the card?')) return;
+        const detachForm = document.getElementById('eventDetachTrinketForm');
+        detachForm.elements.card_id.value = id; detachForm.submit();
+      };
       const cardMarkup = id => {
         const source = cardsById.get(Number(id));
         if (!source) return '<span>Missing card</span>';
@@ -191,7 +240,11 @@
       };
       const refresh = () => {
         const query = document.getElementById('eventDeckSearch').value.trim().toLowerCase();
-        slots.innerHTML = Array.from({ length: maximum }, (_, index) => active[index] ? `<button type="button" class="wut-deck-slot has-card" data-remove-event-card="${index}" title="Remove this card">${cardMarkup(active[index])}</button>` : `<div class="wut-deck-slot"><strong>${index + 1}</strong><small>Open slot</small></div>`).join('');
+        slots.innerHTML = Array.from({ length: maximum }, (_, index) => {
+          const id = active[index]; const source = cardsById.get(Number(id));
+          const attachTarget = id && selectedTrinket && source?.dataset.hasTrinket !== '1' ? ' is-attach-target' : '';
+          return id ? `<button type="button" class="wut-deck-slot has-card${attachTarget}" data-remove-event-card="${index}" title="${selectedTrinket ? 'Attach selected trinket' : 'Remove this card'}">${cardMarkup(id)}</button>` : `<div class="wut-deck-slot"><strong>${index + 1}</strong><small>Open slot</small></div>`;
+        }).join('');
         hidden.innerHTML = active.map(id => `<input type="hidden" name="active_card_ids" value="${id}">`).join('');
         document.getElementById('eventActiveCount').textContent = `${active.length}/${maximum} cards`;
         const activeIdentities = new Set(active.map(identityFor).filter(Boolean));
@@ -201,12 +254,7 @@
       collectionCards.forEach(card => card.addEventListener('click', event => {
         const id = Number(card.dataset.cardId);
         if (selectedTrinket) {
-          if (card.dataset.hasTrinket === '1') return message('That card already has a trinket attached.', true);
-          if (!window.confirm('Attach this temporary trinket to this card for the Draft Event?')) return;
-          const attachForm = document.getElementById('eventAttachTrinketForm');
-          attachForm.elements.trinket_id.value = selectedTrinket;
-          attachForm.elements.card_id.value = id;
-          return attachForm.submit();
+          return attachSelectedTrinket(id);
         }
         if (event.target.closest('.wut-trinket-badge')) {
           event.preventDefault(); event.stopPropagation();
@@ -222,8 +270,15 @@
         document.querySelectorAll('[data-event-trinket]').forEach(item => item.classList.toggle('is-selected', item.dataset.eventTrinket === selectedTrinket));
         collectionCards.forEach(card => card.classList.toggle('is-attach-target', Boolean(selectedTrinket) && card.dataset.hasTrinket !== '1'));
         message(selectedTrinket ? 'Trinket selected. Click an eligible player card to attach it.' : 'Trinket selection cleared. Click cards to build your deck.');
+        refresh();
       }));
-      slots.addEventListener('click', event => { const button = event.target.closest('[data-remove-event-card]'); if (!button) return; active.splice(Number(button.dataset.removeEventCard), 1); refresh(); });
+      slots.addEventListener('click', event => {
+        const button = event.target.closest('[data-remove-event-card]'); if (!button) return;
+        const index = Number(button.dataset.removeEventCard); const id = active[index]; const source = cardsById.get(Number(id));
+        if (event.target.closest('.wut-trinket-badge') && source?.dataset.hasTrinket === '1') return detachCardTrinket(id);
+        if (selectedTrinket) return attachSelectedTrinket(id);
+        active.splice(index, 1); refresh();
+      });
       document.getElementById('eventDeckSearch').addEventListener('input', refresh);
       deckForm.addEventListener('pointermove', event => { const card = event.target.closest('[data-deck-hover-flip]'); if (!card) return; const bounds = card.getBoundingClientRect(); card.classList.toggle('is-flipped', event.clientX - bounds.left <= bounds.width * .3 && event.clientY - bounds.top <= bounds.height * .25); });
       deckForm.addEventListener('pointerout', event => { const card = event.target.closest('[data-deck-hover-flip]'); if (card && !card.contains(event.relatedTarget)) card.classList.remove('is-flipped'); });
@@ -235,7 +290,6 @@
       const updateDeckClock = () => { const seconds = Math.max(0, Math.ceil((new Date(deckDeadline.dataset.deckDeadline).getTime() - Date.now()) / 1000)); deckDeadline.textContent = `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`; if (!seconds) setTimeout(() => window.location.reload(), 1000); };
       updateDeckClock(); setInterval(updateDeckClock, 1000);
     }
-    <% if (waitingForDraftPass) { %>setTimeout(() => window.location.reload(), 3000);<% } %>
   </script>
 </body>
 </html>

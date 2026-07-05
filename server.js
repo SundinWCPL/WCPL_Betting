@@ -103,6 +103,7 @@ import {
   getArenaAdminState,
   getArenaAdminMatchState,
   hasPendingArenaTurn,
+  getPendingWutDraftActionEventIds,
   recalculateArenaEloFromHistory,
   adminVoidArenaMatch,
   enterArenaQueue,
@@ -292,7 +293,10 @@ app.use((req, res, next) => {
   res.locals.casinoLinkVisible = adminSettings.casinoLinkVisible;
   res.locals.cardsOpen = adminSettings.cardsOpen;
   res.locals.cardsLinkVisible = adminSettings.cardsLinkVisible;
-  res.locals.wutTurnPending = res.locals.currentUser ? hasPendingArenaTurn(res.locals.currentUser.id) : false;
+  res.locals.wutArenaTurnPending = res.locals.currentUser ? hasPendingArenaTurn(res.locals.currentUser.id) : false;
+  res.locals.wutDraftActionEventIds = res.locals.currentUser ? getPendingWutDraftActionEventIds(res.locals.currentUser.id) : [];
+  res.locals.wutDraftTurnPending = res.locals.wutDraftActionEventIds.length > 0;
+  res.locals.wutTurnPending = res.locals.wutArenaTurnPending || res.locals.wutDraftTurnPending;
   res.locals.maxBet = Number(process.env.MAX_BET || 250);
   res.locals.propMaxBet = Number(process.env.PROP_MAX_BET || 100);
   res.locals.goalTotalLine = Number(process.env.GOAL_TOTAL_LINE || 10.5);
@@ -1954,6 +1958,31 @@ app.get('/cards/drafts/:eventId', requireLogin, requireWutReady, (req, res, next
   } catch (err) {
     next(err);
   }
+});
+
+app.get('/cards/drafts/:eventId/status', requireLogin, requireWutReady, (req, res, next) => {
+  try {
+    processWutDraftEvents(new Date());
+    const event = getWutDraftEventLobby({ eventId: req.params.eventId, userId: req.session.userId })[0];
+    if (!event) return res.status(404).json({ error: 'Draft Event not found.' });
+    const currentPack = event.phase === 'draft' ? event.draft.boosters.find(pack =>
+      Number(pack.booster_number) === Number(event.draft.current_booster) &&
+      Number(pack.current_owner_user_id) === Number(req.session.userId) && !pack.awaiting_pass && pack.items.length
+    ) : null;
+    res.json({
+      phase: event.phase,
+      paused: Boolean(event.paused_at),
+      draft: event.phase === 'draft' ? {
+        booster: Number(event.draft.current_booster || 0),
+        pick: Number(event.draft.current_pick || 0),
+        pendingCount: event.draft.pending_user_ids.length,
+        isPending: event.draft.pending_user_ids.map(Number).includes(Number(req.session.userId)),
+        deadlineAt: event.draft.deadline_at || null,
+        packId: currentPack ? Number(currentPack.id) : null,
+        packItemCount: currentPack?.items?.length || 0
+      } : null
+    });
+  } catch (err) { next(err); }
 });
 
 app.post('/cards/drafts/:eventId/bench-vote', requireLogin, requireWutReady, (req, res) => {

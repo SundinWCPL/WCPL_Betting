@@ -16,6 +16,24 @@ export function isWutDraftEventLobbyVisible(event) {
   return !['complete', 'prizes_awarded', 'cancelled'].includes(String(event?.phase || ''));
 }
 
+export function selectWutDraftEliminationBye(seededUserIds, standings = [], previousByeUserIds = []) {
+  const seeded = (seededUserIds || []).map(Number).filter(Number.isFinite);
+  if (!seeded.length || seeded.length % 2 === 0) return null;
+  const previous = new Set((previousByeUserIds || []).map(Number));
+  const withoutPreviousBye = seeded.filter(userId => !previous.has(userId));
+  const candidates = withoutPreviousBye.length ? withoutPreviousBye : seeded;
+  const rows = new Map((standings || []).map(row => [Number(row.user_id), row]));
+  const unequalMatchCounts = new Set(candidates.map(userId => Number(rows.get(userId)?.played || 0))).size > 1;
+  return [...candidates].sort((a, b) => {
+    const first = rows.get(a) || {}; const second = rows.get(b) || {};
+    const firstPlayed = Number(first.played || 0); const secondPlayed = Number(second.played || 0);
+    const firstTotal = Number(first.fp_for || 0); const secondTotal = Number(second.fp_for || 0);
+    const firstPerformance = unequalMatchCounts ? (firstPlayed ? firstTotal / firstPlayed : 0) : firstTotal;
+    const secondPerformance = unequalMatchCounts ? (secondPlayed ? secondTotal / secondPlayed : 0) : secondTotal;
+    return secondPerformance - firstPerformance || secondTotal - firstTotal || seeded.indexOf(a) - seeded.indexOf(b);
+  })[0];
+}
+
 export const WUT_DRAFT_TRANSITIONS = Object.freeze({
   scheduled: ['signup_open', 'signup_closed', 'cancelled'],
   signup_open: ['signup_closed', 'cancelled'],
