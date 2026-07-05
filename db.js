@@ -927,9 +927,13 @@ export function getLeaderboard(currentWeek = null, includeCasino = true) {
       const overallBalance = Number(user.balance || 0) + openWagered;
       const totalBalance = includeCasino
         ? overallBalance
-        : overallBalance - casinoNet - cardsNet;
-      const lastWeekBettingChange = getSettledBetNetForUser(user.id, weekNum - 1);
-      const currentWeekBettingChange = getSettledBetNetForUser(user.id, weekNum);
+        : getSportsbookBetNetForUser(user.id);
+      const lastWeekBettingChange = includeCasino
+        ? getSettledBetNetForUser(user.id, weekNum - 1)
+        : getSportsbookBetNetForUser(user.id, weekNum - 1);
+      const currentWeekBettingChange = includeCasino
+        ? getSettledBetNetForUser(user.id, weekNum)
+        : getSportsbookBetNetForUser(user.id, weekNum);
       return {
         id: user.id,
         display_name: user.display_name,
@@ -939,7 +943,7 @@ export function getLeaderboard(currentWeek = null, includeCasino = true) {
         casino_net: casinoNet,
         cards_net: cardsNet,
         total_balance: totalBalance,
-        balance_display: formatBalanceDisplay(totalBalance, openWagered),
+        balance_display: includeCasino ? formatBalanceDisplay(totalBalance, openWagered) : String(totalBalance),
         last_week_change: lastWeekBettingChange + (
           includeCasino
             ? getCasinoNetForUserWeek(user.id, weekNum - 1) + getCardsNetForUserWeek(user.id, weekNum - 1)
@@ -953,6 +957,18 @@ export function getLeaderboard(currentWeek = null, includeCasino = true) {
       };
     })
     .sort((a, b) => b.total_balance - a.total_balance || a.display_name.localeCompare(b.display_name));
+}
+
+function getSportsbookBetNetForUser(userId, week = null) {
+  const targetWeek = week == null ? null : Number(week);
+  if (targetWeek != null && (!Number.isFinite(targetWeek) || targetWeek < 1)) return 0;
+  return state.bets
+    .filter(bet =>
+      Number(bet.user_id) === Number(userId) &&
+      (targetWeek == null || Number(bet.week) === targetWeek) &&
+      ['open', 'settled'].includes(String(bet.status || 'open'))
+    )
+    .reduce((sum, bet) => sum + Number(bet.payout || 0) - Number(bet.stake || 0), 0);
 }
 
 function getCasinoNetForUser(userId) {

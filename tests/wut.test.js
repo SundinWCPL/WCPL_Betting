@@ -370,6 +370,40 @@ test('new WUT users receive the complete starter bundle', () => {
   assert.equal(db.getWutMembershipState(1).wutCoins, 1000, 'debug games never award currency');
 });
 
+test('betting leaderboard is sportsbook net only and may be negative', () => {
+  const user = db.addUser({ username: 'sportsbook-net-user', password: 'test-password', displayName: 'Sportsbook Net User' });
+  db.adjustUserBalance(user.id, 5000, 'must not affect betting performance');
+  let row = db.getLeaderboard(77, false).find(entry => entry.id === user.id);
+  assert.equal(row.total_balance, 0, 'starting balances and manual adjustments are excluded');
+  assert.equal(row.balance_display, '0');
+
+  db.placeOrUpdateBet({
+    userId: user.id, week: 77, divisionId: 'D1', seriesKey: 'NET-WIN', marketKey: 'NET-WIN|series_win|A',
+    marketType: 'series_win', teamId: 'A', label: 'Net test winner', stake: 100, multiplier: 2
+  });
+  row = db.getLeaderboard(77, false).find(entry => entry.id === user.id);
+  assert.equal(row.total_balance, -100, 'an open wager counts as paid stake');
+  assert.equal(row.current_week_change, -100);
+  assert.equal(row.balance_display, '-100');
+
+  const winningBet = db.getUserBets(user.id, 1)[0];
+  db.settleWeek({ week: 77, results: { evaluations: { [winningBet.id]: { ready: true, won: true } } } });
+  row = db.getLeaderboard(77, false).find(entry => entry.id === user.id);
+  assert.equal(row.total_balance, 100, 'a settled win is payout minus stake');
+  assert.equal(row.current_week_change, 100);
+
+  db.placeOrUpdateBet({
+    userId: user.id, week: 78, divisionId: 'D1', seriesKey: 'NET-LOSS', marketKey: 'NET-LOSS|series_win|B',
+    marketType: 'series_win', teamId: 'B', label: 'Net test loser', stake: 250, multiplier: 2
+  });
+  const losingBet = db.getUserBets(user.id, 1)[0];
+  db.settleWeek({ week: 78, results: { evaluations: { [losingBet.id]: { ready: true, won: false } } } });
+  row = db.getLeaderboard(78, false).find(entry => entry.id === user.id);
+  assert.equal(row.total_balance, -150, 'all-time betting net can remain negative despite a positive real balance');
+  assert.equal(row.current_week_change, -250);
+  assert.equal(row.last_week_change, 100);
+});
+
 test('the same season player cannot be played from both Active Deck and Safety Bench', () => {
   const target = db.addUser({ username: 'cross-deck-duplicate-a', password: 'test-password', displayName: 'Cross Deck A' });
   const opponent = db.addUser({ username: 'cross-deck-duplicate-b', password: 'test-password', displayName: 'Cross Deck B' });

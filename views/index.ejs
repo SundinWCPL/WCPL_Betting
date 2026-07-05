@@ -54,7 +54,7 @@
         <div class="admin-section-head">
           <div>
             <h2>Leaderboard</h2>
-            <p class="muted" data-leaderboard-description>League betting balances only.</p>
+            <p class="muted" data-leaderboard-description>Net sportsbook profit and loss only.</p>
           </div>
           <div class="toggle-row">
             <button class="button-link ghost-active" type="button" data-leaderboard-mode="betting">Betting</button>
@@ -88,7 +88,7 @@
           </tbody>
         </table>
 		</div>
-        <p class="small-note">Betting excludes all casino and WUT/Cards activity. Overall shows each user’s actual combined balance from every Mushybux gain and loss. Open sports wagers remain included in both.</p>
+        <p class="small-note">Betting is sportsbook payouts minus stakes. Open wagers count as negative stake until settled or refunded; allowances, manual adjustments, casino, and WUT/Cards activity are excluded. Overall shows each user’s actual combined Mushybux balance.</p>
       </div>
 
       <div class="card">
@@ -184,7 +184,7 @@ const scheduledTime =
         if (description) {
           description.textContent = mode === 'overall'
             ? 'Sports betting and casino results combined.'
-            : 'League betting balances only.';
+            : 'Net sportsbook profit and loss only.';
         }
       }));
     })();
