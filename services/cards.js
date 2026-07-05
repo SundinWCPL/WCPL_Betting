@@ -1214,10 +1214,15 @@ export function generateWutPlayerPack({ packType, catalog, config }) {
 }
 
 export function availableWutMatchCards(cards, placements, userId) {
-  const committedIds = new Set((placements || [])
-    .filter(row => Number(row.user_id) === Number(userId))
-    .map(row => Number(row.card_id)));
-  return (cards || []).filter(card => !committedIds.has(Number(card.id)));
+  const committed = (placements || []).filter(row => Number(row.user_id) === Number(userId));
+  const committedIds = new Set(committed.map(row => Number(row.card_id)));
+  const committedIdentities = new Set(committed
+    .map(row => String(row.card_snapshot?.card_identity || '').trim())
+    .filter(Boolean));
+  return (cards || []).filter(card => {
+    const identity = String(card.card_identity || card.cardIdentity || card.player?.cardIdentity || '').trim();
+    return !committedIds.has(Number(card.id)) && (!identity || !committedIdentities.has(identity));
+  });
 }
 
 export function generateWutStarterPack(catalog) {

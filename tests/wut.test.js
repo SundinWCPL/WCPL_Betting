@@ -116,6 +116,11 @@ test('S1 scoring reads the committed permanent synthetic game source', async () 
   const foster = await cards.scoreHistoricalCardSample({ player: fosterPlayer, position: fosterPlayer.position });
   assert.equal(foster.gamesPlayed, 3);
   assert.ok(foster.sampleMatchIds.every(id => id.startsWith('S1-WUT-name:Foster-')));
+
+  const draftSnapshotPlayer = { name: 'S1 player 43', baseName: 'player 43', sourceSeason: 'S1' };
+  const draftSnapshotResult = await cards.scoreHistoricalCardSample({ player: draftSnapshotPlayer, position: 'F' });
+  assert.equal(draftSnapshotResult.gamesPlayed, 3, 'Draft display labels must not replace the permanent S1 player key');
+  assert.ok(draftSnapshotResult.sampleMatchIds.every(id => id.startsWith('S1-WUT-name:player 43-')));
 });
 
 test('S1 catalog uses the canonical historical positions before rarity calculation', async () => {
@@ -238,11 +243,19 @@ test('arena matchmaking avoids prior opponents before minimizing ELO gaps', () =
 
 test('committed match cards are removed from that player’s available deck', () => {
   const available = cards.availableWutMatchCards(
-    [{ id: 10 }, { id: 11 }, { id: 12 }],
-    [{ user_id: 1, card_id: 10 }, { user_id: 2, card_id: 11 }],
+    [
+      { id: 10, card_identity: 'S1|ALL|name:one' },
+      { id: 11, card_identity: 'S1|ALL|name:two' },
+      { id: 12, card_identity: 'S1|ALL|name:one' },
+      { id: 13, card_identity: 'S1|ALL|name:three' }
+    ],
+    [
+      { user_id: 1, card_id: 10, card_snapshot: { card_identity: 'S1|ALL|name:one' } },
+      { user_id: 2, card_id: 11, card_snapshot: { card_identity: 'S1|ALL|name:two' } }
+    ],
     1
   );
-  assert.deepEqual(available.map(card => card.id), [11, 12]);
+  assert.deepEqual(available.map(card => card.id), [11, 13], 'other owned copies of a committed identity must also be hidden');
 });
 
 test('new WUT users receive the complete starter bundle', () => {
@@ -769,6 +782,16 @@ test('Draft Event tournament reuses real lineup turns, scores temporary cards, a
   assert.equal(state.phase, 'tournament');
   assert.equal(state.tournament.matches.length, 1);
   const matchId = state.tournament.matches[0].id;
+  const openingView = db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 });
+  const openingUserId = openingView.match.current_player_id;
+  const openingCard = [...openingView.match.deck_snapshots[String(openingUserId)].active, ...openingView.match.deck_snapshots[String(openingUserId)].bench].find(card => card.position === 'F');
+  db.commitWutDraftEventTurn({ eventId: event.id, matchId, userId: openingUserId, placements: [{ slot: 'F1', cardId: openingCard.card_id }] });
+  assert.equal(db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 }).match.placements.length, 1);
+  const replayed = db.resetCurrentWutDraftEventRound({ eventId: event.id, adminUserId: 1, reason: 'Regression recovery' });
+  assert.equal(replayed.tournament.matches[0].placements.length, 0, 'round reset clears committed lineups');
+  assert.equal(replayed.tournament.matches[0].turn_index, 0, 'round reset restores the opening turn');
+  assert.equal(replayed.tournament.matches[0].status, 'active');
+  assert.ok(replayed.logs.some(row => row.type === 'tournament_round_reset'));
   while (true) {
     const view = db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 });
     if (view.match.status !== 'active') break;
@@ -776,10 +799,12 @@ test('Draft Event tournament reuses real lineup turns, scores temporary cards, a
     const snapshots = [...view.match.deck_snapshots[String(userId)].active, ...view.match.deck_snapshots[String(userId)].bench];
     const occupied = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
     const used = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
+    const usedIdentities = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.card_snapshot?.card_identity).filter(Boolean));
     const choices = [];
     for (const slot of ['F1', 'F2', 'D1', 'D2', 'G'].filter(slot => !occupied.has(slot))) {
       const position = slot === 'G' ? 'G' : slot[0];
-      const card = snapshots.find(item => item.position === position && !used.has(Number(item.card_id)) && !choices.some(choice => Number(choice.cardId) === Number(item.card_id)));
+      const chosenIdentities = new Set(choices.map(choice => snapshots.find(item => Number(item.card_id) === Number(choice.cardId))?.card_identity).filter(Boolean));
+      const card = snapshots.find(item => item.position === position && !used.has(Number(item.card_id)) && !usedIdentities.has(item.card_identity) && !choices.some(choice => Number(choice.cardId) === Number(item.card_id)) && !chosenIdentities.has(item.card_identity));
       if (card) choices.push({ slot, cardId: card.card_id });
       if (choices.length === required) break;
     }

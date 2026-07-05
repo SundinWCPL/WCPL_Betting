@@ -39,7 +39,7 @@
         <label class="collection-search">Search collection<input type="search" placeholder="Player, team, position, or rarity" id="deckCardSearch"></label>
         <div class="collection-grid" id="deckCardCollection">
           <% cards.forEach(card => { %>
-            <button type="button" class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" data-deck-card data-deck-hover-flip data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-power="<%= card.power %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''} ${card.player.position} ${card.player.tier}`.toLowerCase() %>">
+            <button type="button" class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" data-deck-card data-deck-hover-flip data-card-id="<%= card.id %>" data-card-identity="<%= card.card_identity %>" data-position="<%= card.player.position %>" data-power="<%= card.power %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''} ${card.player.position} ${card.player.tier}`.toLowerCase() %>">
               <%- include('partials_wut_card', { card, statusText: `Power ${card.power} · Click to add` }) %>
             </button>
           <% }) %>
@@ -60,6 +60,7 @@
     const help = document.getElementById('deckBuilderHelp');
     const collectionCards = [...document.querySelectorAll('[data-deck-card]')];
     const cardsById = new Map(collectionCards.map(card => [Number(card.dataset.cardId), card]));
+    const identityFor = id => cardsById.get(Number(id))?.dataset.cardIdentity || '';
     const benchPositions = ['F', 'F', 'D', 'D', 'G'];
     const benchLabels = ['F1', 'F2', 'D1', 'D2', 'G'];
     let mode = 'active';
@@ -70,7 +71,8 @@
       const query = document.getElementById('deckCardSearch').value.trim().toLowerCase();
       collectionCards.forEach(card => {
         const legalForMode = mode === 'active' || Number(card.dataset.power) <= 2;
-        const assignedToCurrentEditor = (mode === 'active' ? active : bench).includes(Number(card.dataset.cardId));
+        const currentCards = mode === 'active' ? active : bench;
+        const assignedToCurrentEditor = currentCards.includes(Number(card.dataset.cardId)) || currentCards.some(id => identityFor(id) === card.dataset.cardIdentity);
         card.hidden = assignedToCurrentEditor || !legalForMode || (Boolean(query) && !card.dataset.search.includes(query));
       });
     };
@@ -122,12 +124,14 @@
       const id = Number(card.dataset.cardId);
       if (mode === 'active') {
         if (active.includes(id)) return showMessage('That card is already in the Active Deck. Click it in a deck slot to remove it.', true);
+        if (active.some(activeId => identityFor(activeId) === card.dataset.cardIdentity)) return showMessage('Only one copy of a player card can be in the Active Deck.', true);
         if (active.length >= 8) return showMessage('The Active Deck already has eight cards.', true);
         active.push(id);
       } else {
         const position = card.dataset.position;
         if (Number(card.dataset.power) > 2) return showMessage('Safety Bench cards must be Power 2 or lower.', true);
         if (bench.includes(id)) return showMessage('That card is already on the Safety Bench.', true);
+        if (bench.some(benchId => identityFor(benchId) === card.dataset.cardIdentity)) return showMessage('Only one copy of a player card can be on the Safety Bench.', true);
         const limit = position === 'G' ? 1 : 2;
         if (bench.filter(existingId => cardsById.get(existingId)?.dataset.position === position).length >= limit) return showMessage(`The Safety Bench already has its ${limit} ${position} slot${limit === 1 ? '' : 's'}.`, true);
         bench.push(id);

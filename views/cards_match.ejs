@@ -115,7 +115,7 @@
       <p class="muted" data-context-collection-help></p>
       <div class="collection-grid" data-collection-panel="players">
         <% cards.forEach(card => { const unavailable = false; %>
-          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0" data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-card-name="<%= card.player.name %>" data-power="<%= card.power || 1 %>" data-chemistry-key="<%= `${card.player.cardType === 'mythic' ? card.player.sourceSeason : card.player.edition}|${card.player.teamId || ''}` %>" data-team-name="<%= card.player.teamName || card.player.teamId || '' %>" data-team-logo="<%= card.player.teamLogo || '' %>" data-team-bg="<%= card.player.teamBgColor || '' %>" data-trinket-family="<%= card.trinket?.family || '' %>" data-trinket-icon="<%= WUT_TRINKET_ICONS[card.trinket?.family] || '' %>" data-trinket-rarity="<%= card.trinket?.rarity || '' %>" data-trinket-mode="<%= card.trinket?.effect?.mode || '' %>" data-load-bonus="<%= card.trinket?.effect?.loadBonus || 0 %>" data-unavailable="0">
+          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0" data-card-id="<%= card.id %>" data-card-identity="<%= card.card_identity %>" data-position="<%= card.player.position %>" data-card-name="<%= card.player.name %>" data-power="<%= card.power || 1 %>" data-chemistry-key="<%= `${card.player.cardType === 'mythic' ? card.player.sourceSeason : card.player.edition}|${card.player.teamId || ''}` %>" data-team-name="<%= card.player.teamName || card.player.teamId || '' %>" data-team-logo="<%= card.player.teamLogo || '' %>" data-team-bg="<%= card.player.teamBgColor || '' %>" data-trinket-family="<%= card.trinket?.family || '' %>" data-trinket-icon="<%= WUT_TRINKET_ICONS[card.trinket?.family] || '' %>" data-trinket-rarity="<%= card.trinket?.rarity || '' %>" data-trinket-mode="<%= card.trinket?.effect?.mode || '' %>" data-load-bonus="<%= card.trinket?.effect?.loadBonus || 0 %>" data-unavailable="0">
             <%- include('partials_wut_card', { card, statusText: statusForCard(card) }) %>
           </article>
         <% }) %>
@@ -186,7 +186,8 @@
       matchCollection.querySelectorAll('[data-card-id]').forEach(card => {
         const stagedPatch = stagedSlots().some(item => item.dataset.trinketFamily === 'team_crest');
         const patchAvailable = card.dataset.trinketFamily !== 'team_crest' || (!committedCaptainPatch && !stagedPatch);
-        const show = card.dataset.unavailable === '0' && card.dataset.position === slot.dataset.position && cardFitsSlotRarity(slot, card) && !card.classList.contains('is-staged') && patchAvailable;
+        const identityAvailable = !stagedSlots().some(item => item.dataset.cardIdentity === card.dataset.cardIdentity);
+        const show = card.dataset.unavailable === '0' && card.dataset.position === slot.dataset.position && cardFitsSlotRarity(slot, card) && !card.classList.contains('is-staged') && identityAvailable && patchAvailable;
         card.hidden = !show;
         if (show) available += 1;
       });
@@ -265,7 +266,9 @@
       if (card.dataset.trinketFamily === 'team_crest' && (committedCaptainPatch || stagedSlots().some(item => item.dataset.trinketFamily === 'team_crest'))) return showStatus("Only one Captain's Patch can be active in a lineup.", true);
       if (!cardFitsSlotRarity(slot, card)) return showStatus(`${slot.dataset.matchSlot} exceeds the opposing Power allowance.`, true);
       if (stagedSlots().some(item => item.dataset.cardId === card.dataset.cardId)) return showStatus('That card is already staged.', true);
+      if (stagedSlots().some(item => item.dataset.cardIdentity === card.dataset.cardIdentity)) return showStatus('Only one copy of a player card can be used in a lineup.', true);
       slot.dataset.cardId = card.dataset.cardId;
+      slot.dataset.cardIdentity = card.dataset.cardIdentity || '';
       slot.dataset.trinketFamily = card.dataset.trinketFamily || '';
       slot.dataset.trinketIcon = card.dataset.trinketIcon || '';
       if (slot.dataset.trinketFamily) {
@@ -357,7 +360,7 @@
       unstagedCard?.classList.remove('is-staged');
       if (unstagedCard) unstagedCard.hidden = false;
       if (slot.dataset.boostId) document.querySelector(`.arena-boost-collection [data-boost-id="${slot.dataset.boostId}"]`)?.classList.remove('is-staged');
-      delete slot.dataset.cardId; delete slot.dataset.boostId; delete slot.dataset.boostLoad; delete slot.dataset.trinketFamily; delete slot.dataset.trinketIcon; delete slot.dataset.trinketMode; delete slot.dataset.chemistryKey; delete slot.dataset.teamName; delete slot.dataset.teamLogo; delete slot.dataset.teamBg; delete slot.dataset.printedTeamLogo; delete slot.dataset.printedTeamBg; delete slot.dataset.loadBonus; delete slot.dataset.journeymanKey; delete slot.dataset.journeymanNoChoice;
+      delete slot.dataset.cardId; delete slot.dataset.cardIdentity; delete slot.dataset.boostId; delete slot.dataset.boostLoad; delete slot.dataset.trinketFamily; delete slot.dataset.trinketIcon; delete slot.dataset.trinketMode; delete slot.dataset.chemistryKey; delete slot.dataset.teamName; delete slot.dataset.teamLogo; delete slot.dataset.teamBg; delete slot.dataset.printedTeamLogo; delete slot.dataset.printedTeamBg; delete slot.dataset.loadBonus; delete slot.dataset.journeymanKey; delete slot.dataset.journeymanNoChoice;
       slot.querySelector('[data-staged-card]').hidden = true; slot.querySelector('[data-staged-card]').innerHTML = '';
       slot.querySelector('[data-empty-player]').hidden = false; button.hidden = true;
       const boostButton = slot.querySelector('[data-empty-boost]');

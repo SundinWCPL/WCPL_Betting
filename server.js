@@ -140,6 +140,7 @@ import {
   dropWutDraftEventEntrant,
   startWutDraftEvent,
   resolveWutDraftEventMatch,
+  resetCurrentWutDraftEventRound,
   beginWutDraftSafetyBench,
   voteWutDraftSafetyBench,
   finishWutDraftSafetyBench,
@@ -1893,6 +1894,8 @@ app.get('/cards/drafts', requireLogin, requireWutReady, (req, res, next) => {
 
 function draftEventCardView(item, inventory = null) {
   const snapshot = item.player_snapshot || item.card || item;
+  const playerKeyName = String(snapshot.playerKey || snapshot.player_key || '').replace(/^name:/i, '').trim();
+  const baseName = snapshot.baseName || snapshot.base_name || snapshot.name || playerKeyName || snapshot.displayName || '';
   const trinket = item.trinket || (item.trinket_id == null ? null : inventory?.trinkets?.find(row => Number(row.id) === Number(item.trinket_id))) || null;
   return {
     id: Number(item.id || 0), eventItemId: item.id || null,
@@ -1900,6 +1903,7 @@ function draftEventCardView(item, inventory = null) {
     power: Number(item.power || CARD_STARS[snapshot.tier] || 1),
     player: {
       ...snapshot,
+      baseName,
       name: snapshot.displayName || snapshot.name || '',
       cardArt: snapshot.cardArt || snapshot.card_art || snapshot.edition || 'S3',
       card_type: snapshot.cardType || snapshot.card_type || 'player',
@@ -3163,7 +3167,17 @@ app.post('/admin/cards/drafts/:eventId/matches/:matchId/resolve', requireAdmin, 
       eventId: req.params.eventId, matchId: req.params.matchId, action: req.body.action,
       forfeitingUserId: req.body.forfeiting_user_id, adminUserId: req.session.userId, reason: req.body.reason
     });
-    req.session.flash = { type: 'success', message: `Draft Event match ${req.params.matchId} was ${req.body.action === 'void' ? 'voided' : 'resolved by forfeit'}.` };
+    req.session.flash = { type: 'success', message: `Draft Event match ${req.params.matchId} was ${req.body.action === 'void' ? 'voided' : req.body.action === 'reset' ? 'reset to its opening turn' : 'resolved by forfeit'}.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/tournament/reset-round', requireAdmin, (req, res) => {
+  try {
+    const event = resetCurrentWutDraftEventRound({ eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason });
+    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} round ${event.tournament.round} was reset. Every game in the round will restart.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }

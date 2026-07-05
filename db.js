@@ -2671,6 +2671,8 @@ function validateAndStoreWutDraftDeck(event, userId, activeCardIds, { now = new 
   const cardsById = new Map(inventory.cards.map(card => [Number(card.id), card]));
   const activeCards = requested.map(id => cardsById.get(id));
   if (activeCards.some(card => !card)) throw new Error('The Event Active Deck contains a card outside this temporary collection.');
+  const activeIdentities = activeCards.map(card => String(card.card_identity || card.player_snapshot?.cardIdentity || ''));
+  if (new Set(activeIdentities).size !== activeIdentities.length) throw new Error('An Event Active Deck cannot contain two copies of the same player card.');
   const benchIdSet = new Set((inventory.safety_bench_card_ids || []).map(Number));
   if (requested.some(id => benchIdSet.has(id))) throw new Error('Shared Safety Bench cards cannot be placed in the Event Active Deck.');
   const activeSnapshots = activeCards.map(card => wutDraftDeckCardSnapshot(event, inventory, card));
@@ -2701,11 +2703,15 @@ function automaticWutDraftDeck(event, userId, now) {
   );
   const maximum = Number(event.config.deckbuilding.activeMaximum);
   const selected = [];
+  const selectedIdentities = new Set();
   let hasCaptainPatch = false;
   for (const card of ordered) {
+    const identity = String(card.card_identity || card.player_snapshot?.cardIdentity || '');
+    if (selectedIdentities.has(identity)) continue;
     const trinket = card.trinket_id == null ? null : inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id));
     if (trinket?.family === 'team_crest' && hasCaptainPatch) continue;
     selected.push(card.id);
+    selectedIdentities.add(identity);
     if (trinket?.family === 'team_crest') hasCaptainPatch = true;
     if (selected.length >= maximum) break;
   }
@@ -3060,7 +3066,8 @@ export function commitWutDraftEventTurn({ eventId, matchId, userId, placements, 
   const deckCards = new Map([...(match.deck_snapshots?.[String(userId)]?.active || []), ...(match.deck_snapshots?.[String(userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
   const existingSlots = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
   const existingCards = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
-  const turnSlots = new Set(); const turnCards = new Set(); const turnBoosts = new Set(); const stagedSnapshots = [];
+  const existingIdentities = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => String(row.card_snapshot?.card_identity || '')).filter(Boolean));
+  const turnSlots = new Set(); const turnCards = new Set(); const turnIdentities = new Set(); const turnBoosts = new Set(); const stagedSnapshots = [];
   let captainPatchChosen = match.placements.some(row => Number(row.user_id) === Number(userId) && row.card_snapshot?.trinket?.family === 'team_crest');
   const cleaned = placements.map(input => {
     const slot = String(input.slot || '').toUpperCase();
@@ -3070,6 +3077,9 @@ export function commitWutDraftEventTurn({ eventId, matchId, userId, placements, 
     if (!card || !snapshot) throw new Error('That card is not in this Event Deck snapshot.');
     if (existingCards.has(cardId) || turnCards.has(cardId)) throw new Error('That card is already committed to this match.');
     turnCards.add(cardId);
+    const cardIdentity = String(snapshot.card_identity || '');
+    if (cardIdentity && (existingIdentities.has(cardIdentity) || turnIdentities.has(cardIdentity))) throw new Error('That player card is already in this lineup.');
+    if (cardIdentity) turnIdentities.add(cardIdentity);
     const requiredPosition = slot === 'G' ? 'G' : slot[0];
     if (snapshot.position !== requiredPosition) throw new Error(`That card is not eligible for ${slot}.`);
     if (snapshot.trinket?.family === 'team_crest') { if (captainPatchChosen) throw new Error("Only one Captain's Patch can be active in a lineup."); captainPatchChosen = true; }
@@ -3109,11 +3119,13 @@ function autoplayWutDraftEventTurn(event, match, userId, now) {
   const required = ARENA_TURN_SEQUENCE[Number(match.turn_index)];
   const occupied = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
   const used = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
+  const usedIdentities = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => String(row.card_snapshot?.card_identity || '')).filter(Boolean));
   const deckCards = [...(match.deck_snapshots?.[String(userId)]?.active || []), ...(match.deck_snapshots?.[String(userId)]?.bench || [])];
   const choices = [];
   for (const slot of CARD_LINEUP_SLOTS.filter(slot => !occupied.has(slot))) {
     const position = slot === 'G' ? 'G' : slot[0];
-    const card = deckCards.find(item => item.position === position && !used.has(Number(item.card_id)) && !choices.some(choice => Number(choice.cardId) === Number(item.card_id)));
+    const choiceIdentities = new Set(choices.map(choice => String(deckCards.find(item => Number(item.card_id) === Number(choice.cardId))?.card_identity || '')).filter(Boolean));
+    const card = deckCards.find(item => item.position === position && !used.has(Number(item.card_id)) && !choices.some(choice => Number(choice.cardId) === Number(item.card_id)) && !usedIdentities.has(String(item.card_identity || '')) && !choiceIdentities.has(String(item.card_identity || '')));
     if (card) choices.push({ slot, cardId: card.card_id, boostId: null, journeymanKey: '' });
     if (choices.length >= required) break;
   }
@@ -3522,11 +3534,41 @@ export function transitionWutDraftEvent({ eventId, nextPhase, adminUserId, reaso
   return JSON.parse(JSON.stringify(event));
 }
 
+function resetWutDraftMatchForReplay(event, match, { active = true, now = new Date() } = {}) {
+  let releasedBoosts = 0;
+  for (const row of match.placements || []) {
+    if (!row.boost_id) continue;
+    const inventory = event.inventories?.[String(row.owner_user_id || row.user_id)];
+    const boost = inventory?.boosts?.find(item => Number(item.id) === Number(row.boost_id));
+    if (!boost || (boost.used_match_id && String(boost.used_match_id) !== String(match.arena_match_key))) continue;
+    boost.consumed = false;
+    delete boost.used_match_id; delete boost.used_slot; delete boost.consumed_at;
+    releasedBoosts += 1;
+  }
+  const clearedPlacements = (match.placements || []).length;
+  match.placements = [];
+  match.status = active ? 'active' : 'pending';
+  match.turn_index = 0;
+  match.turn_deadline = active ? wutDraftTurnDeadline(event, now) : null;
+  match.scores = null; match.winner_user_id = null; match.forfeit_user_id = null;
+  match.revealed_by = []; match.resolved_at = null; match.completed_at = null;
+  if (active) match.started_at = now.toISOString(); else delete match.started_at;
+  for (const key of ['forfeit_reason', 'elimination_tiebreak', 'cancel_reason', 'cancelled_at', 'void_reason', 'voided_at', 'voided_by']) delete match[key];
+  return { clearedPlacements, releasedBoosts };
+}
+
 export function resolveWutDraftEventMatch({ eventId, matchId, action, forfeitingUserId = null, adminUserId, reason = '', now = new Date() }) {
   requireWutDraftAdmin(adminUserId);
   const event = storedWutDraftEvent(eventId);
   const match = (event.tournament?.matches || []).find(item => String(item.id) === String(matchId));
   if (!match) throw new Error('Draft Event match not found.');
+  if (action === 'reset') {
+    if (event.phase !== 'tournament' || !['pending', 'active', 'scoring'].includes(match.status)) throw new Error('Only an unresolved match in the active tournament can be reset.');
+    const reset = resetWutDraftMatchForReplay(event, match, { active: true, now });
+    appendWutDraftEventLog(event, 'match_reset', { match_id: match.id, reason: String(reason || '').trim().slice(0, 180) || 'Reset by administrator', ...reset }, { actorUserId: adminUserId, now });
+    recalculateWutDraftStandings(event); event.updated_at = now.toISOString(); saveState();
+    return JSON.parse(JSON.stringify(match));
+  }
   const resolution = resolveWutDraftEventMatchRecord(match, { action, forfeitingUserId, adminUserId, reason, now });
   appendWutDraftEventLog(event, resolution.type, resolution.details, { actorUserId: adminUserId, now });
   recalculateWutDraftStandings(event);
@@ -3535,6 +3577,30 @@ export function resolveWutDraftEventMatch({ eventId, matchId, action, forfeiting
   event.updated_at = now.toISOString();
   saveState();
   return JSON.parse(JSON.stringify(match));
+}
+
+export function resetCurrentWutDraftEventRound({ eventId, adminUserId, reason = '', now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.phase !== 'tournament') throw new Error('Only an active tournament round can be reset.');
+  const round = event.tournament?.rounds?.at(-1);
+  if (!round?.match_ids?.length) throw new Error('There is no tournament round to reset.');
+  const matches = round.match_ids.map(id => event.tournament.matches.find(match => Number(match.id) === Number(id))).filter(Boolean);
+  if (!matches.length) throw new Error('There are no matches in the current round.');
+  const simultaneous = Boolean(event.config.match.simultaneousMatches);
+  let clearedPlacements = 0; let releasedBoosts = 0;
+  matches.forEach((match, index) => {
+    const reset = resetWutDraftMatchForReplay(event, match, { active: simultaneous || index === 0, now });
+    clearedPlacements += reset.clearedPlacements; releasedBoosts += reset.releasedBoosts;
+  });
+  round.status = 'active'; round.completed_at = null;
+  event.tournament.next_round_at = null; delete event.tournament.pending_round_plan;
+  event.tournament.completed_at = null; event.completed_at = null;
+  recalculateWutDraftStandings(event);
+  const cleanReason = String(reason || '').trim().slice(0, 180) || 'Current round reset by administrator';
+  appendWutDraftEventLog(event, 'tournament_round_reset', { round: round.number, match_ids: matches.map(match => match.id), cleared_placements: clearedPlacements, released_boosts: releasedBoosts, reason: cleanReason }, { actorUserId: adminUserId, now });
+  event.updated_at = now.toISOString(); saveState();
+  return JSON.parse(JSON.stringify(event));
 }
 
 export function pauseWutDraftEvent({ eventId, adminUserId, reason = '', now = new Date() }) {
@@ -4525,9 +4591,10 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
   }
   const existingSlots = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
   const existingCardIds = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
+  const existingCardIdentities = new Set(match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => String(row.card_snapshot?.card_identity || '')).filter(Boolean));
   const rulesV2 = Number(match.rules_version || 1) >= 2;
   const deckCards = new Map([...(match.deck_snapshots?.[String(userId)]?.active || []), ...(match.deck_snapshots?.[String(userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
-  const turnSlots = new Set(); const turnCards = new Set(); const turnBoosts = new Set();
+  const turnSlots = new Set(); const turnCards = new Set(); const turnCardIdentities = new Set(); const turnBoosts = new Set();
   const stagedSnapshots = [];
   let captainPatchChosen = rulesV2 && match.placements.some(row => Number(row.user_id) === Number(userId) && row.card_snapshot?.trinket?.family === 'team_crest');
   const cleaned = placements.map(input => {
@@ -4545,6 +4612,9 @@ export function commitArenaTurn({ userId, matchId, placements, catalogByIdentity
     if (rulesV2 && !trinketFitsWutPosition(cardSnapshot?.trinket?.family, cardSnapshot?.position)) throw new Error('That trinket is not legal for this card position.');
     if (existingCardIds.has(Number(card.id)) || turnCards.has(Number(card.id))) throw new Error('That card is already committed to this WUT match.');
     turnCards.add(Number(card.id));
+    const cardIdentity = String(cardSnapshot?.card_identity || card.card_identity || '');
+    if (cardIdentity && (existingCardIdentities.has(cardIdentity) || turnCardIdentities.has(cardIdentity))) throw new Error('That player card is already in this lineup.');
+    if (cardIdentity) turnCardIdentities.add(cardIdentity);
     const player = catalogPlayerForOwnedCard(card, catalogByIdentity);
     const requiredPosition = slot === 'G' ? 'G' : slot[0];
     if (!player || player.position !== requiredPosition) throw new Error(`That card is not eligible for ${slot}.`);
@@ -5635,6 +5705,10 @@ export function saveWutDeck({ userId, deckId = null, name, activeCardIds, benchC
   if (active.length < 5 || active.length > 8) throw new Error('Active Deck must contain 5 to 8 unique cards.');
   if (bench.length !== 5 || new Set(bench).size !== 5) throw new Error('Safety Bench must contain exactly 5 unique cards.');
   if ([...active, ...bench].some(id => !owned.has(id))) throw new Error('Every deck card must be in your collection.');
+  const activeIdentities = active.map(id => String(owned.get(id).card_identity || ''));
+  const benchIdentities = bench.map(id => String(owned.get(id).card_identity || ''));
+  if (new Set(activeIdentities).size !== activeIdentities.length) throw new Error('Active Deck cannot contain two copies of the same player card.');
+  if (new Set(benchIdentities).size !== benchIdentities.length) throw new Error('Safety Bench cannot contain two copies of the same player card.');
   const benchSnapshots = bench.map(id => wutCardSnapshot(owned.get(id), catalogByIdentity));
   const positions = benchSnapshots.map(card => card.position).sort().join('');
   if (positions !== 'DDFFG') throw new Error('Safety Bench must be exactly 2F / 2D / 1G.');

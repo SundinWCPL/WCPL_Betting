@@ -85,7 +85,7 @@
           <% if (freeTrinkets.length) { %><div class="wut-trinket-inventory event-attach-trinkets"><% freeTrinkets.forEach(item => { %><button type="button" class="wut-trinket-inventory-item tier-<%= item.rarity %>" data-event-trinket="<%= item.id %>" data-trinket-family="<%= item.family %>" title="<%= wutTrinketDescription(item) %>"><span class="wut-trinket-icon"><%= trinketIcons[item.family] || '◆' %></span><small><%= wutTrinketName(item.family) %></small><em><%= wutTitleCase(item.rarity) %></em></button><% }) %></div><% } %>
           <label class="collection-search">Search player pool<input type="search" placeholder="Player, team, position, or rarity" id="eventDeckSearch"></label>
           <div class="collection-grid" id="eventDeckCollection">
-            <% draftedCards.forEach(card => { %><button type="button" class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" data-event-deck-card data-deck-hover-flip data-card-id="<%= card.id %>" data-position="<%= card.player.position %>" data-has-trinket="<%= card.trinket ? '1' : '0' %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''} ${card.player.position} ${card.player.tier}`.toLowerCase() %>"><%- include('partials_wut_card', { card, statusText: card.trinket ? 'Temporary card · attached trinket' : 'Temporary drafted card · click to add' }) %></button><% }) %>
+            <% draftedCards.forEach(card => { %><button type="button" class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" data-event-deck-card data-deck-hover-flip data-card-id="<%= card.id %>" data-card-identity="<%= card.card_identity %>" data-position="<%= card.player.position %>" data-has-trinket="<%= card.trinket ? '1' : '0' %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''} ${card.player.position} ${card.player.tier}`.toLowerCase() %>"><%- include('partials_wut_card', { card, statusText: card.trinket ? 'Temporary card · attached trinket' : 'Temporary drafted card · click to add' }) %></button><% }) %>
           </div>
         </section>
       </form>
@@ -181,6 +181,7 @@
       const help = document.getElementById('eventDeckHelp');
       const collectionCards = [...document.querySelectorAll('[data-event-deck-card]')];
       const cardsById = new Map(collectionCards.map(card => [Number(card.dataset.cardId), card]));
+      const identityFor = id => cardsById.get(Number(id))?.dataset.cardIdentity || '';
       const message = (text, error = false) => { help.textContent = text; help.classList.toggle('error', error); };
       const cardMarkup = id => {
         const source = cardsById.get(Number(id));
@@ -193,7 +194,8 @@
         slots.innerHTML = Array.from({ length: maximum }, (_, index) => active[index] ? `<button type="button" class="wut-deck-slot has-card" data-remove-event-card="${index}" title="Remove this card">${cardMarkup(active[index])}</button>` : `<div class="wut-deck-slot"><strong>${index + 1}</strong><small>Open slot</small></div>`).join('');
         hidden.innerHTML = active.map(id => `<input type="hidden" name="active_card_ids" value="${id}">`).join('');
         document.getElementById('eventActiveCount').textContent = `${active.length}/${maximum} cards`;
-        collectionCards.forEach(card => card.hidden = active.includes(Number(card.dataset.cardId)) || (query && !card.dataset.search.includes(query)));
+        const activeIdentities = new Set(active.map(identityFor).filter(Boolean));
+        collectionCards.forEach(card => card.hidden = active.includes(Number(card.dataset.cardId)) || activeIdentities.has(card.dataset.cardIdentity) || (query && !card.dataset.search.includes(query)));
         window.fitWutCardNames?.();
       };
       collectionCards.forEach(card => card.addEventListener('click', event => {
@@ -212,6 +214,7 @@
           return;
         }
         if (active.length >= maximum) return message(`Your Event Deck already has ${maximum} cards.`, true);
+        if (active.some(activeId => identityFor(activeId) === card.dataset.cardIdentity)) return message('Only one copy of a player card can be in an Event Deck.', true);
         active.push(id); message('Card added to your Event Deck.'); refresh();
       }));
       document.querySelectorAll('[data-event-trinket]').forEach(button => button.addEventListener('click', () => {
