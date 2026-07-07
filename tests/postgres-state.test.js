@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { decodeJsonState, encodeJsonState, stateManifest } from '../database/stateCodec.js';
 import { getTopWeeklyBetsPostgres } from '../database/repositories/homeRead.js';
+import { getArenaAdminSummaryPostgres, getArenaRatingPostgres } from '../database/repositories/arenaRead.js';
 
 const fixture = {
   settings: { currentWeek: 3, maintenanceMode: true },
@@ -89,4 +90,21 @@ test('top weekly bets keep different player selections in goalie and scorer lead
     { label: 'Division 2 Top Scorer: cb', total: 100, count: 1 },
     { label: 'Division 2 Top Scorer: Chief Keef', total: 75, count: 1 }
   ]);
+});
+
+test('PostgreSQL arena summary and rating reads do not rely on the startup JSON snapshot', async () => {
+  const pool = {
+    query: async sql => {
+      if (sql.includes('FROM arena_ratings')) return { rows: [{ rating: '1234' }] };
+      if (sql.includes("document_key='arena_meta'")) return { rows: [{ data: { config: { queueTrigger: 10 }, lastMatchmakingSlot: '0' } }] };
+      return { rows: [{ queued: 3, active: 4, ready: 2 }] };
+    }
+  };
+
+  assert.equal(await getArenaRatingPostgres(pool, 1), 1234);
+  const summary = await getArenaAdminSummaryPostgres(pool, new Date('2026-07-07T12:00:00.000Z'));
+  assert.equal(summary.queued, 3);
+  assert.equal(summary.active, 4);
+  assert.equal(summary.ready, 2);
+  assert.equal(summary.queueTriggerReached, false);
 });

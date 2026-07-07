@@ -400,7 +400,7 @@ export function publicShot(shot) {
 export const SHOT_DOCTOR_SECONDS_PER_SHOT = Number(process.env.SHOT_DOCTOR_SECONDS_PER_SHOT || 15);
 export const SHOT_DOCTOR_WEEKLY_LIMIT = Number(process.env.SHOT_DOCTOR_WEEKLY_LIMIT || 5);
 export const SHOT_DOCTOR_PAYOUTS = Object.freeze({
-  0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 25, 6: 50, 7: 75, 8: 100, 9: 200, 10: 500
+  0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 25, 6: 50, 7: 100, 8: 200, 9: 350, 10: 750
 });
 
 export function publicShotDoctorShot(shot) {

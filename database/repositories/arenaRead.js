@@ -2,6 +2,37 @@ import { ARENA_DEFAULT_ELO, ARENA_TURN_SEQUENCE } from '../../services/arenaRunt
 
 const asNumber = value => Number(value || 0);
 
+export async function getArenaRatingPostgres(pool, userId) {
+  const row = (await pool.query('SELECT rating FROM arena_ratings WHERE user_id=$1', [Number(userId)])).rows[0];
+  return row ? Number(row.rating) : ARENA_DEFAULT_ELO;
+}
+
+export async function getArenaAdminSummaryPostgres(pool, now = new Date()) {
+  const [meta, counts] = await Promise.all([
+    pool.query("SELECT data FROM app_documents WHERE document_key='arena_meta'"),
+    pool.query(`SELECT
+      (SELECT count(*)::int FROM arena_entries WHERE status='queued') AS queued,
+      (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status='active') AS active,
+      (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status='ready') AS ready`)
+  ]);
+  const data = structuredClone(meta.rows[0]?.data || {});
+  const config = data.config || {};
+  const queued = Number(counts.rows[0]?.queued || 0);
+  const queueTrigger = Number(config.queueTrigger || 10);
+  const interval = 30 * 60 * 1000;
+  const currentSlot = String(Math.floor(now.getTime() / interval));
+  return {
+    lastMatchmakingAt: data.lastMatchmakingAt || null,
+    matchmakingDue: String(data.lastMatchmakingSlot || '') !== currentSlot || queued >= queueTrigger,
+    queueTriggerReached: queued >= queueTrigger,
+    nextMatchmakingAt: new Date((Math.floor(now.getTime() / interval) + 1) * interval).toISOString(),
+    queued,
+    active: Number(counts.rows[0]?.active || 0),
+    ready: Number(counts.rows[0]?.ready || 0),
+    config
+  };
+}
+
 function currentPlayer(match) {
   const first = Number(match.first_player_id);
   const second = Number((match.player_ids || []).find(id => Number(id) !== first));

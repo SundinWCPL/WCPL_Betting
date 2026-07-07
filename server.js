@@ -306,7 +306,7 @@ import {
   getPendingCardsPackPostgres,
   getWutSystemsStatePostgres
 } from './database/repositories/wutRead.js';
-import { getArenaAdminMatchStatePostgres, getArenaMatchesNeedingScoringPostgres, getArenaStateForUserPostgres } from './database/repositories/arenaRead.js';
+import { getArenaAdminMatchStatePostgres, getArenaAdminSummaryPostgres, getArenaMatchesNeedingScoringPostgres, getArenaRatingPostgres, getArenaStateForUserPostgres } from './database/repositories/arenaRead.js';
 import {
   adminVoidArenaMatchPostgres,
   autoAssignExpiredArenaTurnsPostgres,
@@ -2259,7 +2259,7 @@ async function buildArenaCardsHub(userId, query = {}) {
     boosts: boosts.filter(boost => !boost.consumed).map(boost => ({ ...boost, arenaLocked: lockedBoostIds.has(Number(boost.id)) })),
     balance: postgresEnabled ? Number((await getUserByIdPostgres(postgresPool(), userId))?.balance || 0) : getUserById(userId)?.balance || 0,
     wutCoins: Number(wut.wutCoins || 0),
-    adminArena: getArenaAdminState(),
+    adminArena: postgresEnabled ? await getArenaAdminSummaryPostgres(postgresPool()) : getArenaAdminState(),
     replayMatchId: Number(query.replay || query.reveal || 0) || null,
     revealMatchId: Number(query.reveal || 0) || null,
     cooldowns: CARD_COOLDOWNS,
@@ -2507,8 +2507,11 @@ app.get('/cards/drafts/:eventId/matches/:matchId', requireLogin, requireWutReady
     const boosts = (inventory.boosts || []).filter(boost => event.config.match.boostsMode === 'refresh_each_match' ? !usedThisMatch.has(Number(boost.id)) : !boost.consumed).map(boost => ({
       ...boost, arenaLocked: false, effect: event.environment_snapshot?.rules?.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect
     }));
+    const rating = postgresEnabled
+      ? await getArenaRatingPostgres(postgresPool(), req.session.userId)
+      : getArenaStateForUser(req.session.userId).rating;
     res.render('cards_match', {
-      match, cards, boosts, arena: { rating: getArenaStateForUser(req.session.userId).rating },
+      match, cards, boosts, arena: { rating },
       wut: { config: { ...(await getLiveCardsConfig()).wut, ...(event.environment_snapshot?.rules || {}), boostLoadCap: event.config.match.boostLoadCap } },
       eventContext: { id: event.id, name: event.config.basic.name }
     });
