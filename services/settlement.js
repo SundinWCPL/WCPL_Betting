@@ -373,7 +373,11 @@ function evaluatePropBet(bet, propResults, seriesResults = {}) {
     const detail = bet.series_key
       ? (div.shutout.series_counts?.[bet.player_key] || []).find(item => item.series_id === seriesId)
       : null;
-    const count = Number(detail?.count ?? div.shutout.best_series_counts?.[bet.player_key] ?? 0);
+    // A missing row for a series-scoped bet means zero shutouts in that series.
+    // Never fall back to the player's best result from a different series.
+    const count = bet.series_key
+      ? Number(detail?.count ?? 0)
+      : Number(div.shutout.best_series_counts?.[bet.player_key] ?? 0);
     const needed = Number(bet.quantity || 1);
     const won = count >= needed;
     const seriesResult = seriesResults[bet.series_key];
@@ -385,7 +389,9 @@ function evaluatePropBet(bet, propResults, seriesResults = {}) {
       ready: won || teamDone,
       won,
       reason: won ? 'Shutout prop hit.' : teamDone ? 'Shutout prop missed.' : 'Player/team series incomplete.',
-      result_summary: `${bet.player_name || bet.player_key}: best single-series total ${count} shutout(s)${seriesText ? ` (${seriesText})` : ''}`
+      result_summary: bet.series_key
+        ? `${bet.player_name || bet.player_key}: ${count} shutout(s) in series ${seriesId}`
+        : `${bet.player_name || bet.player_key}: best single-series total ${count} shutout(s)${seriesText ? ` (${seriesText})` : ''}`
     };
   }
 
