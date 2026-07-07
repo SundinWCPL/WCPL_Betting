@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { decodeJsonState, encodeJsonState, stateManifest } from '../database/stateCodec.js';
+import { getTopWeeklyBetsPostgres } from '../database/repositories/homeRead.js';
 
 const fixture = {
   settings: { currentWeek: 3, maintenanceMode: true },
@@ -66,4 +67,26 @@ test('runtime sequences cover every generated top-level numeric identifier', () 
     assert.match(sql, new RegExp(`ALTER TABLE ${table} ALTER COLUMN id SET DEFAULT nextval`));
     assert.match(sql, new RegExp(`SELECT max\\(id\\) \\+ 1 FROM ${table}`));
   }
+});
+
+test('top weekly bets keep different player selections in goalie and scorer leader props separate', async () => {
+  const pool = {
+    query: async () => ({
+      rows: [
+        { data: { bet_kind: 'prop', market_key: 'D2|top_goalie', player_key: 'name:Sundin', label: 'Division 2 Top Goalie: Sundin', stake: 100 } },
+        { data: { bet_kind: 'prop', market_key: 'D2|top_goalie', player_key: 'name:Quick', label: 'Division 2 Top Goalie: Quick', stake: 100 } },
+        { data: { bet_kind: 'prop', market_key: 'D2|top_goalie', player_key: 'name:Sundin', label: 'Division 2 Top Goalie: Sundin', stake: 50 } },
+        { data: { bet_kind: 'prop', market_key: 'D2|top_scorer', player_key: 'name:cb', label: 'Division 2 Top Scorer: cb', stake: 100 } },
+        { data: { bet_kind: 'prop', market_key: 'D2|top_scorer', player_key: 'name:Chief Keef', label: 'Division 2 Top Scorer: Chief Keef', stake: 75 } }
+      ]
+    })
+  };
+
+  const bets = await getTopWeeklyBetsPostgres(pool, 4, null);
+  assert.deepEqual(bets.map(bet => ({ label: bet.label, total: bet.total_stake, count: bet.bet_count })), [
+    { label: 'Division 2 Top Goalie: Sundin', total: 150, count: 2 },
+    { label: 'Division 2 Top Goalie: Quick', total: 100, count: 1 },
+    { label: 'Division 2 Top Scorer: cb', total: 100, count: 1 },
+    { label: 'Division 2 Top Scorer: Chief Keef', total: 75, count: 1 }
+  ]);
 });
