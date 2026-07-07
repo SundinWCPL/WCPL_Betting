@@ -44,7 +44,8 @@ export async function getWeeklyBetTotalByTeamPostgres(pool, week) {
 export async function getTopWeeklyBetsPostgres(pool, week, limit = 5) {
   const rows = await pool.query(`SELECT data FROM bets WHERE week=$1 AND status IN ('open','settled')`, [Number(week)]); const totals=new Map();
   for (const row of rows.rows) { const bet=clone(row.data); const key=bet.market_key||bet.label; const current=totals.get(key)||{market_key:key,label:bet.label,team_id:bet.team_id,total_stake:0,bet_count:0}; current.total_stake+=Number(bet.stake||0); current.bet_count++; totals.set(key,current); }
-  return [...totals.values()].sort((a,b)=>b.total_stake-a.total_stake||b.bet_count-a.bet_count).slice(0,limit);
+  const sorted=[...totals.values()].sort((a,b)=>b.total_stake-a.total_stake||b.bet_count-a.bet_count);
+  return Number(limit)>0?sorted.slice(0,Number(limit)):sorted;
 }
 
 export async function getUserSettledBetHistoryPostgres(pool, userId, limit = 200) {

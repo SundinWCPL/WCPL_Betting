@@ -1,6 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { buildSettlementPreview } from '../db.js';
 import { evaluateBetAgainstResults } from '../services/settlement.js';
+
+test('settlement preview can evaluate PostgreSQL-loaded bets instead of JSON state', () => {
+  const bets = [{
+    id: 524,
+    user_id: 1,
+    user_display_name: 'Sundin',
+    week: 4,
+    status: 'open',
+    stake: 100,
+    multiplier: 5,
+    label: 'Division 2 Top Goalie: Sundin'
+  }];
+  const preview = buildSettlementPreview({
+    week: 4,
+    weekResults: {},
+    bets,
+    evaluator: () => ({ ready: false, won: false, reason: 'Week incomplete' })
+  });
+
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].id, 524);
+  assert.equal(preview.rows[0].user_display_name, 'Sundin');
+  assert.equal(preview.skipped, 1);
+  assert.equal(preview.ready, false);
+});
 
 test('series shutout props never borrow shutouts from another series', () => {
   const bet = {

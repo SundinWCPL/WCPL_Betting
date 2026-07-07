@@ -1278,6 +1278,16 @@ select {
 .table-wrap {
   overflow-x: auto;
 }
+.top-bets-scroll {
+  max-height: 462px;
+  overflow: auto;
+}
+.top-bets-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
+}
 @media (max-width: 900px) {
   .admin-grid,
   .admin-inline-form {

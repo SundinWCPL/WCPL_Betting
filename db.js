@@ -1155,9 +1155,9 @@ export function getTopWeeklyBets(week, limit = 5) {
     current.bet_count += 1;
     totals.set(key, current);
   }
-  return [...totals.values()]
-    .sort((a, b) => b.total_stake - a.total_stake || b.bet_count - a.bet_count)
-    .slice(0, limit);
+  const sorted = [...totals.values()]
+    .sort((a, b) => b.total_stake - a.total_stake || b.bet_count - a.bet_count);
+  return Number(limit) > 0 ? sorted.slice(0, Number(limit)) : sorted;
 }
 
 export function getWeeklyStakeForUser(userId, week, excludeBetId = null) {
@@ -1792,10 +1792,10 @@ export function settleCompletedBets({ week, results }) {
   return settleBetsInternal({ week, results, requireReady: false });
 }
 
-export function buildSettlementPreview({ week, weekResults, evaluator }) {
+export function buildSettlementPreview({ week, weekResults, evaluator, bets = state.bets, users = state.users }) {
   const targetWeek = Number(week);
-  const usersById = new Map(state.users.map(u => [u.id, u]));
-  const rows = state.bets
+  const usersById = new Map(users.map(u => [Number(u.id), u]));
+  const rows = bets
     .filter(b => Number(b.week) === targetWeek && b.status === 'open')
     .map(b => {
       const evaluation = evaluator(b, weekResults);
@@ -1803,7 +1803,7 @@ export function buildSettlementPreview({ week, weekResults, evaluator }) {
       const user = usersById.get(Number(b.user_id));
       return {
         ...b,
-        user_display_name: user?.display_name || `User ${b.user_id}`,
+        user_display_name: b.user_display_name || user?.display_name || `User ${b.user_id}`,
         ready: evaluation.ready,
         won: evaluation.won,
         evaluation_reason: evaluation.reason,

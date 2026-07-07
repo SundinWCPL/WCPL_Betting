@@ -861,10 +861,14 @@ async function buildSeriesBetReview({ seasonId, week, series, bets }) {
 
 async function settleCompletedBetsOrThrow({ week, seasonId }) {
   const weekResults = await buildWeekSettlementResults({ seasonId, week });
+  const bets = postgresEnabled
+    ? await getAdminBetsForWeekPostgres(postgresPool(), week)
+    : undefined;
   const preview = buildSettlementPreview({
     week,
     weekResults,
-    evaluator: evaluateBetAgainstResults
+    evaluator: evaluateBetAgainstResults,
+    bets
   });
 
   const evaluations = Object.fromEntries(preview.rows.map(r => [r.id, {
@@ -892,10 +896,14 @@ async function buildSeriesVoidPayload({ seasonId, week, seriesKey }) {
 
 async function settleWeekOrThrow({ week, seasonId }) {
   const weekResults = await buildWeekSettlementResults({ seasonId, week });
+  const bets = postgresEnabled
+    ? await getAdminBetsForWeekPostgres(postgresPool(), week)
+    : undefined;
   const preview = buildSettlementPreview({
     week,
     weekResults,
-    evaluator: evaluateBetAgainstResults
+    evaluator: evaluateBetAgainstResults,
+    bets
   });
 
   if (!preview.ready) {
@@ -1008,7 +1016,7 @@ function formatTopBetLabel(label) {
 
   return raw.split(': ').pop();
 }
-const topBets = (postgresEnabled ? await getTopWeeklyBetsPostgres(postgresPool(), currentWeek, 8) : getTopWeeklyBets(currentWeek, 8)).map(b => ({
+const topBets = (postgresEnabled ? await getTopWeeklyBetsPostgres(postgresPool(), currentWeek, null) : getTopWeeklyBets(currentWeek, null)).map(b => ({
   ...b,
   label: formatTopBetLabel(b.label)
 }));
@@ -3318,7 +3326,8 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       settlementPreview = buildSettlementPreview({
         week: currentWeek,
         weekResults,
-        evaluator: evaluateBetAgainstResults
+        evaluator: evaluateBetAgainstResults,
+        bets: postgresEnabled ? currentWeekBets : undefined
       });
     } catch (err) {
       settlementPreview = { error: err.message };
