@@ -36,6 +36,7 @@ import {
   shuffledHorseIds
 } from './services/horseRacing.js';
 import { resolveSlotSpin as resolveCanonicalSlotSpin } from './services/casinoSlots.js';
+import { countDistinctBackedTeams, holdMissionUntilLock } from './services/wutMissionRules.js';
 
 const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
@@ -5715,15 +5716,13 @@ function dailyRotationProgress(id, userId, dayKey, matches) {
 
 function weeklyRotationProgress(id, userId, week) {
   const bets = state.bets.filter(bet => Number(bet.user_id) === Number(userId) && Number(bet.week) === week && bet.status !== 'void');
-  const locked = isWeekLockedInternal(week);
-  if (id === 'wager_500') return locked ? bets.reduce((sum, bet) => sum + Number(bet.stake || 0), 0) : 0;
+  if (id === 'wager_500') return bets.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);
   if (id === 'every_division') {
-    if (!locked) return 0;
     const divisions = [...new Set((missionBetOpportunityRecord(week)?.opportunities || []).map(item => item.division_id).filter(Boolean))];
     return divisions.length && divisions.every(division => bets.filter(bet => String(bet.division_id) === division).reduce((sum, bet) => sum + Number(bet.stake || 0), 0) >= 25) ? 1 : 0;
   }
-  if (id === 'six_teams') return locked ? new Set(bets.map(bet => bet.team_id).filter(Boolean)).size : 0;
-  if (id === 'mixed_markets') return locked ? Math.min(5, bets.filter(bet => (bet.bet_kind || 'series') !== 'prop').length) + Math.min(5, bets.filter(bet => bet.bet_kind === 'prop').length) : 0;
+  if (id === 'six_teams') return countDistinctBackedTeams(bets);
+  if (id === 'mixed_markets') return Math.min(5, bets.filter(bet => (bet.bet_kind || 'series') !== 'prop').length) + Math.min(5, bets.filter(bet => bet.bet_kind === 'prop').length);
   if (id === 'five_winners') return bets.filter(bet => bet.status === 'settled' && bet.won).length;
   if (id === 'three_x_winner') return bets.filter(bet => bet.status === 'settled' && bet.won && Number(bet.multiplier || 0) >= 3).length;
   if (id === 'puckiq_five') return (state.casino?.shotDoctorRuns || []).filter(run => Number(run.user_id) === Number(userId) && Number(run.week) === week && run.status === 'complete').length;
@@ -5785,6 +5784,7 @@ export function getWutMissionsForUser(userId, now = new Date()) {
     const rotatingMission = publicMission('weekly', `rotate:${weeklyRecord.rotating_id}`, weeklyRotation.title, weeklyRotation.description, missionRewards.weekly_rotating, weeklyRotationProgress(weeklyRecord.rotating_id, userId, week), weeklyRotation.target, claimed(weeklyRecord, `rotate:${weeklyRecord.rotating_id}`), true);
     const resolvesAtLock = Boolean(weeklyRotation.requiresLock);
     const resolvesWithSportsbook = ['five_winners', 'three_x_winner'].includes(weeklyRecord.rotating_id);
+    holdMissionUntilLock(rotatingMission, { requiresLock: resolvesAtLock, locked });
     if ((resolvesAtLock && locked) || (resolvesWithSportsbook && sportsbookSettled)) {
       if (!rotatingMission.complete) { rotatingMission.failed = true; rotatingMission.progressLabel = `Failed · ${rotatingMission.progress}/${rotatingMission.target}`; }
     } else if (resolvesWithSportsbook && locked) {

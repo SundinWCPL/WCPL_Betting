@@ -1,6 +1,7 @@
 import { withTransaction } from '../postgres.js';
 import { changeWutCoins, lockWutMembership } from './wutWallet.js';
 import { zonedDateKey } from '../../services/zonedTime.js';
+import { countDistinctBackedTeams, holdMissionUntilLock } from '../../services/wutMissionRules.js';
 
 const DAILY = {
   score_200: { title: 'Light the Lamp', description: 'Score at least 200 total FP in one completed WUT match.', target: 1 },
@@ -133,10 +134,10 @@ export async function getWutMissionsForUserWithClient(client, { userId, now = ne
   };
   const locked = (settings.lockedWeeks || []).map(Number).includes(week);
   const weeklyProgress = id => {
-    if (id === 'wager_500') return locked ? bets.reduce((sum, bet) => sum + Number(bet.stake || 0), 0) : 0;
-    if (id === 'every_division') { const divisions = [...new Set(opportunities.map(item => item.division_id).filter(Boolean))]; return locked && divisions.length && divisions.every(division => bets.filter(bet => String(bet.division_id) === division).reduce((sum, bet) => sum + Number(bet.stake || 0), 0) >= 25) ? 1 : 0; }
-    if (id === 'six_teams') return locked ? new Set(bets.map(bet => bet.team_id).filter(Boolean)).size : 0;
-    if (id === 'mixed_markets') return locked ? Math.min(5, bets.filter(bet => (bet.bet_kind || 'series') !== 'prop').length) + Math.min(5, bets.filter(bet => bet.bet_kind === 'prop').length) : 0;
+    if (id === 'wager_500') return bets.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);
+    if (id === 'every_division') { const divisions = [...new Set(opportunities.map(item => item.division_id).filter(Boolean))]; return divisions.length && divisions.every(division => bets.filter(bet => String(bet.division_id) === division).reduce((sum, bet) => sum + Number(bet.stake || 0), 0) >= 25) ? 1 : 0; }
+    if (id === 'six_teams') return countDistinctBackedTeams(bets);
+    if (id === 'mixed_markets') return Math.min(5, bets.filter(bet => (bet.bet_kind || 'series') !== 'prop').length) + Math.min(5, bets.filter(bet => bet.bet_kind === 'prop').length);
     if (id === 'five_winners') return bets.filter(bet => bet.status === 'settled' && bet.won).length;
     if (id === 'three_x_winner') return bets.filter(bet => bet.status === 'settled' && bet.won && Number(bet.multiplier || 0) >= 3).length;
     if (id === 'puckiq_five') return shots.filter(run => Number(run.week) === week && run.status === 'complete').length;
@@ -156,7 +157,11 @@ export async function getWutMissionsForUserWithClient(client, { userId, now = ne
     if (!locked) mission.complete = false;
     weekly.push(mission);
   }
-  if (weeklyRule) weekly.push(publicMission('weekly', `rotate:${weeklyRecord.rotating_id}`, weeklyRule.title, weeklyRule.description, rewards.weekly_rotating, weeklyProgress(weeklyRecord.rotating_id), weeklyRule.target, claimed(weeklyRecord, `rotate:${weeklyRecord.rotating_id}`), true));
+  if (weeklyRule) {
+    const mission = publicMission('weekly', `rotate:${weeklyRecord.rotating_id}`, weeklyRule.title, weeklyRule.description, rewards.weekly_rotating, weeklyProgress(weeklyRecord.rotating_id), weeklyRule.target, claimed(weeklyRecord, `rotate:${weeklyRecord.rotating_id}`), true);
+    holdMissionUntilLock(mission, { requiresLock: weeklyRule.requiresLock, locked });
+    weekly.push(mission);
+  }
   return { dayKey, weekKey, daily: [
     publicMission('daily', 'play_three', 'Three Games a Day', 'Complete three WUT matches today.', rewards.daily_play_three, matches.length, 3, claimed(dailyRecord, 'play_three')),
     publicMission('daily', 'first_win', 'First Win', 'Win your first WUT match of the day.', rewards.daily_first_win, matches.filter(match => Number(match.winner_user_id) === Number(userId)).length, 1, claimed(dailyRecord, 'first_win')),
