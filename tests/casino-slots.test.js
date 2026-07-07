@@ -6,7 +6,7 @@ import {
   pickSlotOutcome,
   resolveSlotSpin
 } from '../services/casinoSlots.js';
-import { publicShotDoctorRun } from '../services/shotDoctor.js';
+import { buildShotDoctorRunShots, publicShotDoctorRun } from '../services/shotDoctor.js';
 
 test('slot wagers retain the established allowed amounts', () => {
   assert.deepStrictEqual([...CASINO_SLOT_WAGERS], [10, 20, 30, 40, 50]);
@@ -34,6 +34,7 @@ test('invalid slot wagers are rejected before any storage work', () => {
 });
 
 test('Puck IQ public state exposes its active shot and deadline without leaking future results', () => {
+  assert.equal(typeof buildShotDoctorRunShots, 'function');
   const run = publicShotDoctorRun({
     id: 1, user_id: 2, status: 'active', wager: 50, current_index: 0,
     current_shot_started_at: '2026-07-06T00:00:00.000Z', created_at: '2026-07-06T00:00:00.000Z',
