@@ -404,6 +404,42 @@ test('betting leaderboard is sportsbook net only and may be negative', () => {
   assert.equal(row.last_week_change, 100);
 });
 
+test('settled bet corrections apply only the payout delta and are idempotent', () => {
+  const user = db.addUser({ username: 'settlement-correction-user', password: 'test-password', displayName: 'Settlement Correction User' });
+  db.placeOrUpdateBet({
+    userId: user.id, week: 79, divisionId: 'D1', seriesKey: 'CORRECTION', marketKey: 'CORRECTION|series_win|A',
+    marketType: 'series_win', teamId: 'A', label: 'Correction test', stake: 100, multiplier: 2.5
+  });
+  const bet = db.getUserBets(user.id, 1)[0];
+  db.settleWeek({ week: 79, results: { evaluations: { [bet.id]: { ready: true, won: false, result_summary: 'Initial stale result' } } } });
+  const before = db.getBalanceSummaryForUser(user.id).available_balance;
+
+  const corrected = db.correctSettledBet({
+    betId: bet.id,
+    week: 79,
+    evaluation: { ready: true, won: true, result_summary: 'Final boxscore result' },
+    adminUserId: 1
+  });
+  assert.equal(corrected.delta, 250);
+  assert.equal(db.getBalanceSummaryForUser(user.id).available_balance, before + 250);
+  assert.equal(db.getAdminSettledBets().find(item => item.id === bet.id).payout, 250);
+  assert.throws(() => db.correctSettledBet({
+    betId: bet.id,
+    week: 79,
+    evaluation: { ready: true, won: true, result_summary: 'Final boxscore result' },
+    adminUserId: 1
+  }), /already correct/);
+
+  const reversed = db.correctSettledBet({
+    betId: bet.id,
+    week: 79,
+    evaluation: { ready: true, won: false, result_summary: 'Corrected again' },
+    adminUserId: 1
+  });
+  assert.equal(reversed.delta, -250);
+  assert.equal(db.getBalanceSummaryForUser(user.id).available_balance, before);
+});
+
 test('the same season player cannot be played from both Active Deck and Safety Bench', () => {
   const target = db.addUser({ username: 'cross-deck-duplicate-a', password: 'test-password', displayName: 'Cross Deck A' });
   const opponent = db.addUser({ username: 'cross-deck-duplicate-b', password: 'test-password', displayName: 'Cross Deck B' });

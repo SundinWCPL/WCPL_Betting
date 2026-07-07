@@ -1972,6 +1972,59 @@ export function getAdminBetsForWeek(week, statuses = ['open']) {
     );
 }
 
+export function getAdminSettledBets() {
+  const usersById = new Map(state.users.map(user => [Number(user.id), user]));
+  return state.bets
+    .filter(bet => bet.status === 'settled')
+    .map(bet => ({
+      ...bet,
+      user_display_name: usersById.get(Number(bet.user_id))?.display_name || `User ${bet.user_id}`
+    }))
+    .sort((a, b) => Number(a.week) - Number(b.week) || Number(a.id) - Number(b.id));
+}
+
+export function correctSettledBet({ betId, week, evaluation, adminUserId = null }) {
+  const bet = state.bets.find(item => Number(item.id) === Number(betId));
+  if (!bet) throw new Error('Bet not found.');
+  if (bet.status !== 'settled') throw new Error('Only settled bets can be corrected.');
+  if (Number(bet.week) !== Number(week)) throw new Error('Bet week does not match the audit request.');
+  if (!evaluation?.ready) throw new Error(evaluation?.reason || 'The bet result is not ready to validate.');
+
+  const oldPayout = Number(bet.payout || 0);
+  const oldWon = Boolean(bet.won);
+  const newWon = Boolean(evaluation.won);
+  const newPayout = newWon ? Math.ceil(Number(bet.stake || 0) * Number(bet.multiplier || 0)) : 0;
+  if (oldWon === newWon && oldPayout === newPayout) throw new Error('This bet is already correct.');
+
+  const user = state.users.find(item => Number(item.id) === Number(bet.user_id));
+  if (!user) throw new Error('User not found.');
+  const delta = newPayout - oldPayout;
+  user.balance = Number(user.balance || 0) + delta;
+  const correctedAt = nowIso();
+  bet.won = newWon;
+  bet.payout = newPayout;
+  bet.result_summary = evaluation.result_summary || evaluation.reason || '';
+  bet.corrected_at = correctedAt;
+  bet.corrected_by = adminUserId == null ? null : Number(adminUserId);
+  state.transactions.push({
+    id: state.nextTransactionId++,
+    user_id: Number(bet.user_id),
+    week: Number(bet.week),
+    amount: delta,
+    kind: 'bet_settlement_correction',
+    bet_id: Number(bet.id),
+    old_payout: oldPayout,
+    new_payout: newPayout,
+    old_won: oldWon,
+    new_won: newWon,
+    admin_user_id: adminUserId == null ? null : Number(adminUserId),
+    note: `Settlement correction: ${bet.label} (${oldWon ? 'win' : 'loss'} to ${newWon ? 'win' : 'loss'}, payout ${oldPayout} to ${newPayout})`,
+    created_at: correctedAt
+  });
+  saveState();
+  return { betId: Number(bet.id), userId: Number(bet.user_id), oldWon, newWon, oldPayout, newPayout, delta };
+}
+
 export function getUserSummaries() {
   return state.users
     .map(user => {

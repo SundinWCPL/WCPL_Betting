@@ -26,6 +26,7 @@ import {
   applyWeeklyAllowance,
   advanceWeek,
   getAdminBetsForWeek,
+  getAdminSettledBets,
   getUserSummaries,
   resetBetsForWeek,
   resetAllData,
@@ -37,6 +38,7 @@ import {
   buildSettlementPreview,
   settleWeek,
   settleCompletedBets,
+  correctSettledBet,
   voidBetById,
   voidBetsForSeries,
   voidDeprecatedHatTrickBetsForWeek,
@@ -205,6 +207,7 @@ import {
   placeOrUpdateSeriesBetPostgres,
   resetBetsForWeekPostgres,
   settleBetsPostgres,
+  correctSettledBetPostgres,
   voidBetByIdPostgres,
   voidBetsForSeriesPostgres,
   voidDeprecatedHatTrickBetsForWeekPostgres
@@ -277,6 +280,7 @@ import { claimWutMissionByIdPostgres, setWutMissionBetOpportunitiesPostgres } fr
 import { adjustUserBalancePostgres, applyWeeklyAllowancePostgres } from './database/repositories/walletAdmin.js';
 import { addUserPostgres, adjustAllUserBalancesPostgres, updateUserDetailsPostgres } from './database/repositories/userAdmin.js';
 import {
+  getAdminSettledBetsPostgres,
   getAdminBetsForWeekPostgres,
   getCasinoSummaryPostgres,
   getOpenBetCountForWeekPostgres,
@@ -908,6 +912,65 @@ async function settleWeekOrThrow({ week, seasonId }) {
   return postgresEnabled
     ? settleBetsPostgres(postgresPool(), { week, results: { evaluations } })
     : settleWeek({ week, results: { evaluations } });
+}
+
+async function buildSettledBetAudit({ seasonId }) {
+  const settledBets = postgresEnabled
+    ? await getAdminSettledBetsPostgres(postgresPool())
+    : getAdminSettledBets();
+  const byWeek = new Map();
+  for (const bet of settledBets) {
+    const week = Number(bet.week);
+    if (!byWeek.has(week)) byWeek.set(week, []);
+    byWeek.get(week).push(bet);
+  }
+
+  const rows = [];
+  const errors = [];
+  let validated = 0;
+  let unable = 0;
+  await Promise.all([...byWeek.entries()].map(async ([week, bets]) => {
+    try {
+      const weekResults = await buildWeekSettlementResults({ seasonId, week });
+      for (const bet of bets) {
+        const evaluation = evaluateBetAgainstResults(bet, weekResults);
+        if (!evaluation.ready) {
+          unable += 1;
+          continue;
+        }
+        validated += 1;
+        const expectedPayout = evaluation.won
+          ? Math.ceil(Number(bet.stake || 0) * Number(bet.multiplier || 0))
+          : 0;
+        const storedPayout = Number(bet.payout || 0);
+        if (Boolean(bet.won) !== Boolean(evaluation.won) || storedPayout !== expectedPayout) {
+          rows.push({
+            ...bet,
+            stored_won: Boolean(bet.won),
+            stored_payout: storedPayout,
+            expected_won: Boolean(evaluation.won),
+            expected_payout: expectedPayout,
+            payout_delta: expectedPayout - storedPayout,
+            expected_summary: evaluation.result_summary || evaluation.reason || ''
+          });
+        }
+      }
+    } catch (err) {
+      unable += bets.length;
+      errors.push(`Week ${week}: ${err.message}`);
+    }
+  }));
+
+  rows.sort((a, b) => Number(b.week) - Number(a.week) || Number(a.id) - Number(b.id));
+  return {
+    seasonId,
+    total: settledBets.length,
+    validated,
+    correct: validated - rows.length,
+    unable,
+    rows,
+    errors
+  };
 }
 
 app.get('/', async (req, res, next) => {
@@ -3245,6 +3308,7 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     const cardsAdmin = postgresEnabled ? await getCardsAdminStatePostgres(postgresPool()) : getCardsAdminState();
     const cardsCatalog = sortCardsCatalogForAdmin(await getCardsCatalog());
     let settlementPreview = null;
+    let settledBetAudit = null;
     let seriesOddsRecommendations = null;
     let propOddsRecommendations = [];
     let leaderPropRecommendations = [];
@@ -3258,6 +3322,14 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       });
     } catch (err) {
       settlementPreview = { error: err.message };
+    }
+
+    if (String(req.query.audit_settled || '') === '1') {
+      try {
+        settledBetAudit = await buildSettledBetAudit({ seasonId: settings.seasonId });
+      } catch (err) {
+        settledBetAudit = { error: err.message };
+      }
     }
 
     try {
@@ -3361,6 +3433,7 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       users,
       seasons,
       settlementPreview,
+      settledBetAudit,
       seriesOddsRecommendations,
       propOddsRecommendations,
       leaderPropRecommendations,
@@ -4018,6 +4091,32 @@ app.post('/admin/settle-completed', requireAdmin, async (req, res) => {
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/admin');
+});
+
+app.post('/admin/correct-settled-bet', requireAdmin, async (req, res) => {
+  try {
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    const betId = Number(req.body.bet_id);
+    const settledBets = postgresEnabled
+      ? await getAdminSettledBetsPostgres(postgresPool())
+      : getAdminSettledBets();
+    const bet = settledBets.find(item => Number(item.id) === betId);
+    if (!bet) throw new Error('Settled bet not found.');
+    const weekResults = await buildWeekSettlementResults({ seasonId: settings.seasonId, week: bet.week });
+    const evaluation = evaluateBetAgainstResults(bet, weekResults);
+    const input = { betId, week: bet.week, evaluation, adminUserId: req.session.userId };
+    const result = postgresEnabled
+      ? await correctSettledBetPostgres(postgresPool(), input)
+      : correctSettledBet(input);
+    const delta = `${result.delta > 0 ? '+' : ''}${result.delta}`;
+    req.session.flash = {
+      type: 'success',
+      message: `Corrected bet #${result.betId}: ${result.oldWon ? 'win' : 'loss'} to ${result.newWon ? 'win' : 'loss'}, payout ${result.oldPayout} to ${result.newPayout}. User balance adjusted ${delta} Mushybux.`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin?audit_settled=1#settled-bet-audit');
 });
 
 app.post('/admin/refund-bet', requireAdmin, async (req, res) => {

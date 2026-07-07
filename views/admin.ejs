@@ -665,6 +665,74 @@
       </div>
     </section>
 
+    <section class="card admin-card" id="settled-bet-audit">
+      <div class="admin-section-head">
+        <div>
+          <h2>Back-Validate Settled Bets</h2>
+          <p class="muted">Rechecks every settled sportsbook bet against the latest <%= settings.seasonId %> results. Nothing changes until you approve a listed correction.</p>
+        </div>
+        <form method="get" action="/admin#settled-bet-audit">
+          <input type="hidden" name="audit_settled" value="1">
+          <button type="submit">Check All Settled Bets</button>
+        </form>
+      </div>
+
+      <% if (settledBetAudit && settledBetAudit.error) { %>
+        <p class="negative">Unable to run the settled-bet audit: <%= settledBetAudit.error %></p>
+      <% } else if (settledBetAudit) { %>
+        <p>
+          Checked <strong><%= settledBetAudit.validated %></strong> of <strong><%= settledBetAudit.total %></strong> settled bets.
+          <strong class="positive"><%= settledBetAudit.correct %></strong> correct ·
+          <strong class="<%= settledBetAudit.rows.length ? 'negative' : 'positive' %>"><%= settledBetAudit.rows.length %></strong> incorrect ·
+          <strong><%= settledBetAudit.unable %></strong> not yet verifiable.
+        </p>
+        <% settledBetAudit.errors.forEach(error => { %><p class="negative"><%= error %></p><% }) %>
+
+        <% if (settledBetAudit.rows.length) { %>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Week</th>
+                  <th>User</th>
+                  <th>Bet</th>
+                  <th>Stored</th>
+                  <th>Correct</th>
+                  <th>Balance change</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% settledBetAudit.rows.forEach(bet => { %>
+                  <tr>
+                    <td><%= bet.week %></td>
+                    <td><%= bet.user_display_name %></td>
+                    <td>
+                      <strong><%= bet.label %></strong><br>
+                      <small class="muted"><%= Number(bet.stake || 0).toLocaleString() %> at <%= Number(bet.multiplier || 0) %>x · <%= bet.expected_summary %></small>
+                    </td>
+                    <td class="<%= bet.stored_won ? 'positive' : 'negative' %>"><%= bet.stored_won ? 'Win' : 'Loss' %> · <%= bet.stored_payout.toLocaleString() %></td>
+                    <td class="<%= bet.expected_won ? 'positive' : 'negative' %>"><%= bet.expected_won ? 'Win' : 'Loss' %> · <%= bet.expected_payout.toLocaleString() %></td>
+                    <td class="<%= bet.payout_delta >= 0 ? 'positive' : 'negative' %>"><%= bet.payout_delta > 0 ? '+' : '' %><%= bet.payout_delta.toLocaleString() %></td>
+                    <td>
+                      <form method="post" action="/admin/correct-settled-bet" onsubmit="return confirm('Correct this bet and adjust <%= bet.user_display_name.replace(/'/g, "\\'") %>\'s balance by <%= bet.payout_delta > 0 ? '+' : '' %><%= bet.payout_delta %> Mushybux?');">
+                        <input type="hidden" name="bet_id" value="<%= bet.id %>">
+                        <button type="submit" class="small-button">Fix Bet + Balance</button>
+                      </form>
+                    </td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } else { %>
+          <p class="positive">No incorrect settled bets were found.</p>
+        <% } %>
+      <% } else { %>
+        <p class="muted">Run the audit to find stale or incorrectly settled outcomes and payout amounts.</p>
+      <% } %>
+    </section>
+
 
     <section class="card admin-card">
       <div class="admin-section-head">

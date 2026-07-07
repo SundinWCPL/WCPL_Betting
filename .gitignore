@@ -5,6 +5,7 @@ node_modules/
 .env
 betting.json
 .codex-wut-ui-test.json
+backups/automatic-startup-*.json
 
 # logs
 npm-debug.log*

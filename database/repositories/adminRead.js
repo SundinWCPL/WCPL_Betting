@@ -17,6 +17,24 @@ export async function getAdminBetsForWeekPostgres(pool, week, statuses = ['open'
     String(a.user_display_name || '').localeCompare(String(b.user_display_name || '')));
 }
 
+export async function getAdminSettledBetsPostgres(pool) {
+  const result = await pool.query(`
+    SELECT b.*,u.display_name FROM bets b JOIN users u ON u.id=b.user_id
+    WHERE b.status='settled' ORDER BY b.week,b.id
+  `);
+  return result.rows.map(row => ({
+    ...clone(row.data),
+    id: Number(row.id),
+    user_id: Number(row.user_id),
+    week: Number(row.week),
+    status: row.status,
+    bet_kind: row.bet_kind,
+    stake: Number(row.stake),
+    payout: Number(row.payout || 0),
+    user_display_name: row.display_name || `User ${row.user_id}`
+  }));
+}
+
 export async function getUserSummariesPostgres(pool) {
   const result = await pool.query(`
     SELECT u.id,u.username,u.display_name,u.role,u.balance,COALESCE(sum(b.stake) FILTER (WHERE b.status='open'),0) AS open_wagered

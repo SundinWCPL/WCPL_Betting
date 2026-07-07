@@ -229,6 +229,49 @@ export async function settleBetsWithClient(client, { week, results }) {
   };
 }
 
+export async function correctSettledBetWithClient(client, { betId, week, evaluation, adminUserId = null }) {
+  await lockSportsbook(client);
+  const result = await client.query('SELECT user_id,data FROM bets WHERE id=$1 FOR UPDATE', [Number(betId)]);
+  const row = result.rows[0];
+  const bet = row?.data;
+  if (!bet) throw new Error('Bet not found.');
+  if (bet.status !== 'settled') throw new Error('Only settled bets can be corrected.');
+  if (Number(bet.week) !== Number(week)) throw new Error('Bet week does not match the audit request.');
+  if (!evaluation?.ready) throw new Error(evaluation?.reason || 'The bet result is not ready to validate.');
+
+  const oldPayout = asNumber(bet.payout);
+  const oldWon = Boolean(bet.won);
+  const newWon = Boolean(evaluation.won);
+  const newPayout = newWon ? Math.ceil(asNumber(bet.stake) * asNumber(bet.multiplier)) : 0;
+  if (oldWon === newWon && oldPayout === newPayout) throw new Error('This bet is already correct.');
+
+  const user = await lockUser(client, row.user_id);
+  const delta = newPayout - oldPayout;
+  await changeLockedUserBalance(client, user, delta, { allowNegative: true });
+  const correctedAt = new Date().toISOString();
+  bet.won = newWon;
+  bet.payout = newPayout;
+  bet.result_summary = evaluation.result_summary || evaluation.reason || '';
+  bet.corrected_at = correctedAt;
+  bet.corrected_by = adminUserId == null ? null : Number(adminUserId);
+  await saveBet(client, bet, { insert: false });
+  await addBalanceTransaction(client, {
+    userId: row.user_id,
+    week: bet.week,
+    amount: delta,
+    kind: 'bet_settlement_correction',
+    bet_id: Number(bet.id),
+    old_payout: oldPayout,
+    new_payout: newPayout,
+    old_won: oldWon,
+    new_won: newWon,
+    admin_user_id: adminUserId == null ? null : Number(adminUserId),
+    note: `Settlement correction: ${bet.label} (${oldWon ? 'win' : 'loss'} to ${newWon ? 'win' : 'loss'}, payout ${oldPayout} to ${newPayout})`,
+    createdAt: correctedAt
+  });
+  return { betId: Number(bet.id), userId: Number(row.user_id), oldWon, newWon, oldPayout, newPayout, delta };
+}
+
 async function voidLockedBet(client, bet, user, reason, voidedAt) {
   const stake = asNumber(bet.stake);
   if (stake > 0) {
@@ -307,6 +350,8 @@ export const cancelOpenBetPostgres = (pool, input) =>
   withTransaction(pool, client => cancelOpenBetWithClient(client, input));
 export const settleBetsPostgres = (pool, input) =>
   withTransaction(pool, client => settleBetsWithClient(client, input));
+export const correctSettledBetPostgres = (pool, input) =>
+  withTransaction(pool, client => correctSettledBetWithClient(client, input));
 export const voidBetByIdPostgres = (pool, betId, reason) =>
   withTransaction(pool, client => voidBetByIdWithClient(client, betId, reason));
 export const voidBetsForSeriesPostgres = (pool, input) =>
