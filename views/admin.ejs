@@ -10,6 +10,22 @@
   <%- include('partials_header') %>
 
   <main class="container">
+    <section class="card admin-card <%= settings.maintenanceMode ? 'maintenance-active' : '' %>" id="maintenance-controls">
+      <div class="admin-section-head">
+        <div>
+          <p class="eyebrow">Cutover Safety</p>
+          <h2>Website Maintenance Mode</h2>
+          <p class="muted">Blocks non-admin traffic and freezes Casino, Arena, Draft, and other background game clocks. Admin login, backups, and this panel remain available.</p>
+        </div>
+        <span class="pill <%= settings.maintenanceMode ? 'negative' : 'positive' %>"><%= settings.maintenanceMode ? 'MAINTENANCE ACTIVE' : 'Website Open' %></span>
+      </div>
+      <form method="post" action="/admin/maintenance" class="admin-inline-form" onsubmit="return confirm('<%= settings.maintenanceMode ? 'Reopen the website to all users?' : 'Enable maintenance mode and freeze user activity?' %>');">
+        <input type="hidden" name="enabled" value="<%= settings.maintenanceMode ? 'false' : 'true' %>">
+        <label>Public maintenance message<input type="text" name="message" maxlength="500" value="<%= settings.maintenanceMessage %>" <%= settings.maintenanceMode ? 'readonly' : '' %>></label>
+        <button type="submit" class="<%= settings.maintenanceMode ? '' : 'danger' %>"><%= settings.maintenanceMode ? 'Reopen Website' : 'Enable Maintenance Mode' %></button>
+      </form>
+    </section>
+
     <section class="card page-title compact-title">
       <div>
         <p class="eyebrow">Commissioner Controls</p>
@@ -97,7 +113,7 @@
         <form method="post" action="/admin/reset-all-data" class="admin-danger-zone hard-reset" onsubmit="return confirm('Reset ALL test data? This clears bets, transactions, balances, and restores seeded users.');">
           <div>
             <strong>Reset All Test Data</strong>
-            <p class="muted">Clears the JSON database back to seeded users and starting Mushybux.</p>
+            <p class="muted">Clears the entire database back to seeded users and starting Mushybux. Production PostgreSQL hard resets are disabled; use a verified backup restore.</p>
           </div>
           <button type="submit">Reset All Data</button>
         </form>

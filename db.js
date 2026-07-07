@@ -35,6 +35,7 @@ import {
   randomHorseRaceDurationSeconds,
   shuffledHorseIds
 } from './services/horseRacing.js';
+import { resolveSlotSpin as resolveCanonicalSlotSpin } from './services/casinoSlots.js';
 
 const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
@@ -77,7 +78,10 @@ function defaultState() {
       casinoLinkVisible: false,
       cardsOpen: true,
       cardsLinkVisible: false,
-      cardsAllowRetroactiveAssignment: false
+      cardsAllowRetroactiveAssignment: false,
+      maintenanceMode: false,
+      maintenanceMessage: 'WCPL Betting is temporarily offline for scheduled maintenance.',
+      maintenanceStartedAt: null
     },
     users: [],
     bets: [],
@@ -245,6 +249,7 @@ function defaultState() {
 
 let state = defaultState();
 let loadedStateFromDisk = false;
+let runtimeStateReadOnly = false;
 
 function nowIso() {
   return new Date().toISOString();
@@ -289,6 +294,9 @@ function loadState() {
 }
 
 function saveState() {
+  if (runtimeStateReadOnly) {
+    throw new Error('This mutation has not been converted to PostgreSQL yet; refusing to create split-brain JSON state.');
+  }
   ensureDirForFile(dbPath);
   const temporaryPath = path.join(path.dirname(dbPath), `.${path.basename(dbPath)}.${process.pid}.${Date.now()}.tmp`);
   const serialized = JSON.stringify(state, null, 2);
@@ -350,6 +358,9 @@ function ensureSettings() {
     cardsOpen: true,
     cardsLinkVisible: false,
     cardsAllowRetroactiveAssignment: false,
+    maintenanceMode: false,
+    maintenanceMessage: 'WCPL Betting is temporarily offline for scheduled maintenance.',
+    maintenanceStartedAt: null,
     ...(state.settings || {})
   };
   state.settings.currentWeek = Number(state.settings.currentWeek || 1);
@@ -360,6 +371,8 @@ function ensureSettings() {
   state.settings.cardsOpen = state.settings.cardsOpen !== false;
   state.settings.cardsLinkVisible = state.settings.cardsLinkVisible === true;
   state.settings.cardsAllowRetroactiveAssignment = state.settings.cardsAllowRetroactiveAssignment === true;
+  state.settings.maintenanceMode = state.settings.maintenanceMode === true;
+  state.settings.maintenanceMessage = String(state.settings.maintenanceMessage || 'WCPL Betting is temporarily offline for scheduled maintenance.');
 
   // Migration from the old single global lock flag. If an old database had
   // bettingLocked=true, treat that as "current week locked" and then move to
@@ -853,6 +866,7 @@ export function createJsonBackup() {
 }
 
 export function initDb() {
+  runtimeStateReadOnly = false;
   loadState();
   createAutomaticStartupBackup();
   ensureSettings();
@@ -862,6 +876,20 @@ export function initDb() {
   removeDemoUsers();
   seedUser('Sundin', 'Sundin', 'admin', 'cactusgoat13');
   saveState();
+}
+
+export function initDbFromPostgresSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) || !Array.isArray(snapshot.users) || !snapshot.settings) {
+    throw new Error('Refusing to initialize the PostgreSQL compatibility snapshot from invalid state.');
+  }
+  state = { ...defaultState(), ...JSON.parse(JSON.stringify(snapshot)) };
+  loadedStateFromDisk = false;
+  runtimeStateReadOnly = true;
+  ensureSettings();
+  ensureCasinoState();
+  ensureCardsState();
+  normalizeWholeMushybux();
+  return { users: state.users.length, readOnly: true };
 }
 
 function removeDemoUsers() {
@@ -1842,6 +1870,16 @@ export function setWeeklyAllowance(amount) {
 export function setCasinoOpen(open) {
   ensureSettings();
   state.settings.casinoOpen = Boolean(open);
+  saveState();
+  return getAdminSettings();
+}
+
+export function setMaintenanceMode(enabled, message = '') {
+  ensureSettings();
+  const next = Boolean(enabled);
+  state.settings.maintenanceMode = next;
+  state.settings.maintenanceMessage = String(message || state.settings.maintenanceMessage || 'WCPL Betting is temporarily offline for scheduled maintenance.').trim().slice(0, 500);
+  state.settings.maintenanceStartedAt = next ? new Date().toISOString() : null;
   saveState();
   return getAdminSettings();
 }
@@ -7079,21 +7117,13 @@ export function spinCasinoSlots({ userId, wager }) {
   if (!user) throw new Error('User not found.');
   if (Number(user.balance || 0) < cleanWager) throw new Error('Insufficient balance.');
 
-  const jackpotBefore = Math.floor(Number(state.casino.jackpotAmount || state.casino.jackpotSeed || 1000));
-  const jackpotContribution = Math.round(cleanWager * CASINO_JACKPOT_CONTRIBUTION_RATE);
-  const outcome = pickSlotOutcome(cleanWager);
-  const reels = outcome.kind === 'loss' ? buildLosingReels() : buildWinningReels(outcome);
-
-  let payout = 0;
-  if (outcome.jackpot) {
-    payout = jackpotBefore + jackpotContribution + Math.round(cleanWager * Number(outcome.multiplier || 0));
-    state.casino.jackpotAmount = Number(state.casino.jackpotSeed || 1000);
-  } else {
-    payout = Math.round(cleanWager * Number(outcome.multiplier || 0));
-    state.casino.jackpotAmount = jackpotBefore + jackpotContribution;
-  }
-
-  const net = payout - cleanWager;
+  const resolved = resolveCanonicalSlotSpin({
+    wager: cleanWager,
+    jackpotAmount: state.casino.jackpotAmount,
+    jackpotSeed: state.casino.jackpotSeed
+  });
+  const { outcome, reels, payout, net, jackpotBefore, jackpotAfter, jackpotContribution } = resolved;
+  state.casino.jackpotAmount = jackpotAfter;
   user.balance = Number(user.balance || 0) - cleanWager + payout;
 
   state.casino.totalWagered = Number(state.casino.totalWagered || 0) + cleanWager;

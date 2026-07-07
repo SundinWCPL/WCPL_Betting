@@ -1,0 +1,133 @@
+import { ARENA_DEFAULT_ELO, ARENA_TURN_SEQUENCE } from '../../services/arenaRuntime.js';
+
+const asNumber = value => Number(value || 0);
+
+function currentPlayer(match) {
+  const first = Number(match.first_player_id);
+  const second = Number((match.player_ids || []).find(id => Number(id) !== first));
+  return Number(match.turn_index || 0) % 2 === 0 ? first : second;
+}
+
+function timerPaused(now, config) {
+  const hour = Number(new Intl.DateTimeFormat('en-CA', {
+    timeZone: config.timeZone || 'America/Los_Angeles', hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(now).find(part => part.type === 'hour')?.value || 0);
+  const start = Number(config.pauseStartHour ?? 0);
+  const end = Number(config.pauseEndHour ?? 8);
+  return start < end ? hour >= start && hour < end : hour >= start || hour < end;
+}
+
+function publicMatch(match, userId, names, config, wutConfig, now) {
+  const players = (match.player_ids || []).map(id => ({
+    id: Number(id),
+    displayName: names.get(Number(id))?.displayName || `Player ${id}`,
+    elo: names.get(Number(id))?.rating ?? ARENA_DEFAULT_ELO
+  }));
+  const ownPlacements = (match.placements || []).filter(row => Number(row.user_id) === Number(userId));
+  const loadBonus = Math.max(0, ...ownPlacements.filter(row => row.card_snapshot?.trinket?.family === 'booster_cable')
+    .map(row => asNumber(row.card_snapshot?.trinket?.effect?.loadBonus)));
+  const current = match.status === 'active' ? currentPlayer(match) : null;
+  return {
+    ...match,
+    players,
+    opponent: players.find(player => player.id !== Number(userId)) || null,
+    current_player_id: current,
+    cards_required_this_turn: match.status === 'active' ? ARENA_TURN_SEQUENCE[Number(match.turn_index)] : 0,
+    is_your_turn: current === Number(userId),
+    timer_paused: match.status === 'active' && timerPaused(now, config),
+    boost_load_cap: asNumber(wutConfig.boostLoadCap || 5) + loadBonus,
+    boost_load_used: ownPlacements.reduce((sum, row) => sum + asNumber(row.boost_load), 0)
+  };
+}
+
+export async function getArenaStateForUserPostgres(pool, userId, now = new Date()) {
+  const playerId = Number(userId);
+  const [documents, queuedEntry, queueCount, matchRows, ratings, completedRows] = await Promise.all([
+    pool.query("SELECT document_key,data FROM app_documents WHERE document_key IN ('arena_meta','cards_meta')"),
+    pool.query("SELECT data FROM arena_entries WHERE user_id=$1 AND status='queued' ORDER BY joined_at,id LIMIT 1", [playerId]),
+    pool.query("SELECT count(*)::integer AS count FROM arena_entries WHERE status='queued'"),
+    pool.query(`
+      SELECT m.match_key,m.status,m.data,
+        COALESCE((SELECT jsonb_agg(p.data ORDER BY p.placement_index) FROM arena_placements p WHERE p.match_key=m.match_key), '[]'::jsonb) AS placements
+      FROM arena_matches m
+      WHERE m.match_kind='arena' AND m.data->'player_ids' @> $1::jsonb
+      ORDER BY m.numeric_id DESC
+    `, [JSON.stringify([playerId])]),
+    pool.query(`
+      SELECT r.user_id,r.rating,u.username,u.display_name
+      FROM arena_ratings r JOIN users u ON u.id=r.user_id
+      ORDER BY r.rating DESC,r.user_id
+    `),
+    pool.query("SELECT data FROM arena_matches WHERE match_kind='arena' AND status='completed'")
+  ]);
+  const docs = Object.fromEntries(documents.rows.map(row => [row.document_key, row.data || {}]));
+  const config = structuredClone(docs.arena_meta?.config || {});
+  const wutConfig = docs.cards_meta?.config?.wut || {};
+  const names = new Map(ratings.rows.map(row => [Number(row.user_id), {
+    displayName: row.display_name || row.username || `Player ${row.user_id}`,
+    rating: Number(row.rating)
+  }]));
+  const matches = matchRows.rows.map(row => ({ ...(row.data || {}), status: row.status, placements: row.placements || [] }))
+    .map(match => publicMatch(match, playerId, names, config, wutConfig, now));
+  const resolved = matches.filter(match => match.status === 'completed' ||
+    (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(playerId)));
+  const interval = 30 * 60 * 1000;
+  const completed = completedRows.rows.map(row => row.data || {});
+  const participantIds = new Set(completed.flatMap(match => (match.player_ids || []).map(Number)));
+  const leaderboard = ratings.rows.filter(row => participantIds.has(Number(row.user_id))).map(row => {
+    const playerMatches = completed.filter(match => (match.player_ids || []).map(Number).includes(Number(row.user_id)));
+    const wins = playerMatches.filter(match => Number(match.winner_user_id) === Number(row.user_id)).length;
+    const losses = playerMatches.filter(match => match.winner_user_id != null && Number(match.winner_user_id) !== Number(row.user_id)).length;
+    return {
+      userId: Number(row.user_id), displayName: row.display_name || row.username,
+      rating: Number(row.rating), wins, losses, draws: playerMatches.length - wins - losses,
+      matches: playerMatches.length
+    };
+  }).sort((a, b) => b.rating - a.rating || b.wins - a.wins || a.losses - b.losses || a.displayName.localeCompare(b.displayName))
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+  return {
+    config,
+    nextMatchmakingAt: new Date((Math.floor(now.getTime() / interval) + 1) * interval).toISOString(),
+    queueCount: Number(queueCount.rows[0]?.count || 0),
+    queuedEntry: queuedEntry.rows[0] ? structuredClone(queuedEntry.rows[0].data || {}) : null,
+    rating: names.get(playerId)?.rating ?? ARENA_DEFAULT_ELO,
+    record: {
+      wins: resolved.filter(match => Number(match.winner_user_id) === playerId).length,
+      losses: resolved.filter(match => match.winner_user_id != null && Number(match.winner_user_id) !== playerId).length,
+      draws: resolved.filter(match => match.winner_user_id == null).length
+    },
+    leaderboard,
+    activeMatches: matches.filter(match => match.status === 'active'),
+    readyMatches: matches.filter(match => match.status === 'ready' && !(match.revealed_by || []).map(Number).includes(playerId)),
+    history: matches.filter(match => match.status === 'completed' ||
+      (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(playerId))),
+    cancelledMatches: matches.filter(match => match.status === 'cancelled'),
+    serverNow: now.toISOString()
+  };
+}
+
+export async function getArenaMatchesNeedingScoringPostgres(pool) {
+  const result = await pool.query(`
+    SELECT m.match_key,m.data,
+      COALESCE((SELECT jsonb_agg(p.data ORDER BY p.placement_index) FROM arena_placements p WHERE p.match_key=m.match_key), '[]'::jsonb) AS placements
+    FROM arena_matches m
+    WHERE m.match_kind='arena' AND m.status='scoring'
+    ORDER BY m.numeric_id
+  `);
+  return result.rows.map(row => ({ ...(row.data || {}), arena_match_key: row.match_key, status: 'scoring', placements: row.placements || [] }));
+}
+
+export async function getArenaAdminMatchStatePostgres(pool, { userId = null } = {}) {
+  const selectedUserId = Number(userId) || null;
+  const matchRows = await pool.query(`SELECT m.numeric_id,m.status,m.data,COALESCE((SELECT jsonb_agg(p.data ORDER BY p.placement_index) FROM arena_placements p WHERE p.match_key=m.match_key),'[]'::jsonb) AS placements FROM arena_matches m WHERE m.match_kind='arena' ORDER BY m.numeric_id DESC`);
+  const userRows = await pool.query('SELECT id,username,display_name FROM users ORDER BY lower(display_name),id');
+  const names = new Map(userRows.rows.map(row => [Number(row.id), row.display_name || row.username || `Player ${row.id}`]));
+  const matches = matchRows.rows.map(row => { const match = { ...(row.data || {}), id: Number(row.numeric_id ?? row.data?.id), status: row.status, placements: row.placements || [] };
+    const players = (match.player_ids || []).map(id => ({ id: Number(id), displayName: names.get(Number(id)) || `Player ${id}` })); const currentPlayerId = match.status === 'active' ? currentPlayer(match) : null;
+    return { ...match, players, playerLabel: players.map(player => player.displayName).join(' vs '), currentPlayerId,
+      currentPlayerName: players.find(player => player.id === currentPlayerId)?.displayName || '', placementCount: match.placements.length };
+  });
+  const users = userRows.rows.map(row => ({ id:Number(row.id), displayName:names.get(Number(row.id)), matchCount:matches.filter(match => match.player_ids.map(Number).includes(Number(row.id))).length })).filter(row => row.matchCount);
+  return { selectedUserId, activeMatches: matches.filter(match => ['active','scoring'].includes(match.status)),
+    history: matches.filter(match => ['ready','completed','cancelled'].includes(match.status) && (!selectedUserId || match.player_ids.map(Number).includes(selectedUserId))), users };
+}

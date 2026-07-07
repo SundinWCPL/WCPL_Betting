@@ -7,6 +7,16 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "test": "node --test tests/*.test.js",
+    "db:migrate": "node scripts/postgres-migrate.js",
+    "db:import": "node scripts/import-json-to-postgres.js",
+    "db:export": "node scripts/export-postgres-to-json.js",
+    "db:verify": "node scripts/verify-postgres-import.js",
+    "db:verify-runtime": "node scripts/verify-postgres-runtime.js",
+    "db:verify-wut-runtime": "node scripts/verify-postgres-wut-runtime.js",
+    "db:verify-wut-onboarding": "node scripts/verify-postgres-wut-onboarding.js",
+    "db:verify-horse-runtime": "node scripts/verify-postgres-horse-runtime.js",
+    "db:verify-arena-runtime": "node scripts/verify-postgres-arena-runtime.js",
+    "db:verify-draft-runtime": "node scripts/verify-postgres-draft-runtime.js",
     "wut:s1-games": "node scripts/generate-s1-wut-games.js",
     "wut:trinket-balance": "node scripts/wut-trinket-balance.js",
     "wut:boost-balance": "node scripts/wut-boost-balance.js",
@@ -27,7 +37,8 @@
     "dotenv": "^16.4.7",
     "ejs": "^3.1.10",
     "express": "^4.21.2",
-    "express-session": "^1.18.1"
+    "express-session": "^1.18.1",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

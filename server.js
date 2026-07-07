@@ -6,6 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import {
   initDb,
+  initDbFromPostgresSnapshot,
   authenticate,
   getUserById,
   getUserBets,
@@ -55,6 +56,7 @@ import {
   getCasinoStateForUser,
   getCasinoSummary,
   setCasinoOpen,
+  setMaintenanceMode,
   setCasinoLinkVisible,
   resetCasinoData,
   spinCasinoSlots,
@@ -163,6 +165,154 @@ import {
   awardWutDraftEventPrizes,
   rescheduleWutDraftEvent
 } from './db.js';
+import {
+  initializePostgresRuntime,
+  loadPostgresStateSnapshot,
+  postgresEnabled,
+  postgresPool
+} from './database/runtime.js';
+import {
+  authenticatePostgres,
+  getAdminSettingsPostgres,
+  getPendingWutDraftActionEventIdsPostgres,
+  getUserByIdPostgres,
+  getWutMembershipStatePostgres,
+  hasPendingArenaTurnPostgres
+} from './database/repositories/appRead.js';
+import {
+  getCasinoStateForUserPostgres,
+  spinCasinoSlotsPostgres
+} from './database/repositories/casinoSlots.js';
+import {
+  getShotDoctorStateForUserPostgres,
+  startShotDoctorRunPostgres,
+  submitShotDoctorGuessPostgres
+} from './database/repositories/shotDoctor.js';
+import {
+  addHorseRaceChatMessagePostgres,
+  buyHorsePostgres,
+  claimHorseOwnerWinningsPostgres,
+  controlCurrentHorseRacePostgres,
+  getHorseRaceChatStatePostgres,
+  getHorseRaceStateForUserPostgres,
+  placeOrUpdateHorseRaceBetPostgres,
+  processCurrentHorseRacePostgres,
+  saveHorseRacingConfigPostgres
+} from './database/repositories/horseRacing.js';
+import {
+  cancelOpenBetPostgres,
+  placeOrUpdatePropBetPostgres,
+  placeOrUpdateSeriesBetPostgres,
+  resetBetsForWeekPostgres,
+  settleBetsPostgres,
+  voidBetByIdPostgres,
+  voidBetsForSeriesPostgres,
+  voidDeprecatedHatTrickBetsForWeekPostgres
+} from './database/repositories/sportsbook.js';
+import {
+  getBalanceSummaryForUserPostgres,
+  getUserBetsBySeriesPostgres,
+  getUserBetsPostgres,
+  getUserPropBetsByCategoryPostgres
+} from './database/repositories/sportsbookRead.js';
+import { advanceWeekPostgres, patchSettingsPostgres, setMaintenanceModePostgres, setWeekLockedPostgres } from './database/repositories/appSettings.js';
+import { adjustWutCoinBalancePostgres } from './database/repositories/wutAdmin.js';
+import {
+  saveCardsConfigPostgres,
+  grantCardsTestItemPostgres,
+  saveCalculatedCardTiersPostgres,
+  setCardsPlayerOverridesPostgres,
+  setCardsPositionOverridePostgres,
+  setCardsTierOverridePostgres,
+  setWutFreeShopPurchasesPostgres
+} from './database/repositories/cardsAdmin.js';
+import { getCardsAdminStatePostgres, getCardsConfigPostgres, getCardsMetaPostgres } from './database/repositories/cardsRead.js';
+import { createPostgresJsonBackup, serializePostgresState } from './database/backups.js';
+import { getDraftEventLobbyPostgres } from './database/repositories/draftEventStore.js';
+import {
+  createWutDraftEventPostgres,
+  getWutDraftEventPresetsPostgres,
+  joinWutDraftEventPostgres,
+  pauseWutDraftEventPostgres,
+  rescheduleWutDraftEventPostgres,
+  resumeWutDraftEventPostgres,
+  saveWutDraftEventPresetPostgres,
+  transitionWutDraftEventPostgres,
+  withdrawWutDraftEventPostgres
+} from './database/repositories/draftEvents.js';
+import {
+  beginWutDraftEventPostgres,
+  extendWutDraftPickDeadlinePostgres,
+  forceWutDraftAutopickPostgres,
+  pickWutDraftItemPostgres,
+  startWutDraftEventPostgres
+} from './database/repositories/draftGameplay.js';
+import {
+  attachWutDraftEventTrinketPostgres,
+  detachWutDraftEventTrinketPostgres,
+  saveWutDraftEventDeckPostgres
+} from './database/repositories/draftDecks.js';
+import {
+  beginWutDraftSafetyBenchPostgres,
+  extendWutDraftSafetyBenchPostgres,
+  finishWutDraftSafetyBenchPostgres,
+  voteWutDraftSafetyBenchPostgres
+} from './database/repositories/draftBench.js';
+import {
+  commitWutDraftEventTurnPostgres,
+  completeWutDraftEventMatchPostgres,
+  completeWutDraftEventRevealPostgres,
+  advanceWutDraftEventRoundPostgres,
+  awardWutDraftEventPrizesPostgres,
+  dropWutDraftEventEntrantPostgres,
+  extendWutDraftDeckbuildingPostgres,
+  finishWutDraftDeckbuildingPostgres,
+  getDraftMatchesNeedingScoringPostgres,
+  resetCurrentWutDraftEventRoundPostgres,
+  resolveWutDraftEventMatchPostgres
+} from './database/repositories/draftTournament.js';
+import { processWutDraftEventsPostgres } from './database/repositories/draftScheduler.js';
+import { joinWutPostgres, openWutStarterPackPostgres } from './database/repositories/wutOnboarding.js';
+import { claimWutMissionByIdPostgres, setWutMissionBetOpportunitiesPostgres } from './database/repositories/wutMissions.js';
+import { adjustUserBalancePostgres, applyWeeklyAllowancePostgres } from './database/repositories/walletAdmin.js';
+import { addUserPostgres, adjustAllUserBalancesPostgres, updateUserDetailsPostgres } from './database/repositories/userAdmin.js';
+import {
+  getAdminBetsForWeekPostgres,
+  getCasinoSummaryPostgres,
+  getOpenBetCountForWeekPostgres,
+  getUserSummariesPostgres,
+  getVoidRefundsForWeekPostgres
+} from './database/repositories/adminRead.js';
+import {
+  clearPropPlayerOverrideForWeekPostgres,
+  getOddsAdjustmentsForWeekPostgres,
+  savePropDefaultOddsForWeekPostgres,
+  savePropPlayerOverrideForWeekPostgres,
+  saveSeriesOddsForWeekPostgres,
+  saveSeriesPropForWeekPostgres,
+  saveSeriesPropsForWeekPostgres
+} from './database/repositories/oddsAdmin.js';
+import { getLeaderboardsPostgres, getTopWeeklyBetsPostgres, getUserSettledBetHistoryPostgres, getWeeklyBetTotalByTeamPostgres } from './database/repositories/homeRead.js';
+import { createCardsPackPurchasePostgres, claimCardsPackPostgres } from './database/repositories/wutPacks.js';
+import { saveWutDeckPostgres, buyWutDeckSlotPostgres } from './database/repositories/wutDecks.js';
+import { buyWutTrinketPostgres, rerollWutTrinketShopPostgres } from './database/repositories/wutShop.js';
+import { attachWutTrinketPostgres, removeWutTrinketPostgres } from './database/repositories/wutTrinkets.js';
+import {
+  getCardsOwnedStatePostgres,
+  getPendingCardsPackPostgres,
+  getWutSystemsStatePostgres
+} from './database/repositories/wutRead.js';
+import { getArenaAdminMatchStatePostgres, getArenaMatchesNeedingScoringPostgres, getArenaStateForUserPostgres } from './database/repositories/arenaRead.js';
+import {
+  adminVoidArenaMatchPostgres,
+  autoAssignExpiredArenaTurnsPostgres,
+  commitArenaTurnPostgres,
+  completeArenaMatchPostgres,
+  completeArenaRevealPostgres,
+  recalculateArenaEloFromHistoryPostgres
+} from './database/repositories/arenaMatch.js';
+import { assignArenaMatchupsPostgres, enterArenaQueuePostgres } from './database/repositories/arenaQueue.js';
+import { commitWutDebugPlacementPostgres, completeWutDebugMatchPostgres, getWutDebugMatchesNeedingScoringPostgres, getWutDebugMatchPostgres, resetWutDebugMatchPostgres } from './database/repositories/arenaDebug.js';
 import { getUpcomingSeries, buildMarketsForSeries, getPropBoards, getAvailableSeasons, getGoalTotalForSeries, getPlayers } from './services/wcplData.js';
 import { buildShotDoctorRunShots } from './services/shotDoctor.js';
 import { buildWeekSettlementResults, evaluateBetAgainstResults } from './services/settlement.js';
@@ -223,7 +373,8 @@ app.locals.WUT_TRINKET_ICONS = WUT_TRINKET_ICONS;
 app.locals.wutTitleCase = wutTitleCase;
 app.locals.wutTrinketDescription = wutTrinketDescription;
 app.locals.wutTrinketName = wutTrinketName;
-app.locals.wutTrinketPower = rarity => Number(getCardsConfig().wut.trinketPowerValues?.[String(rarity || '').toLowerCase()] || 0);
+let liveCardsConfigCache = getCardsConfig();
+app.locals.wutTrinketPower = rarity => Number(liveCardsConfigCache.wut?.trinketPowerValues?.[String(rarity || '').toLowerCase()] || 0);
 const wutPacificParts = value => {
   if (!value) return null;
   const date = new Date(value);
@@ -244,16 +395,23 @@ app.locals.wutPacificDateTime = value => {
     hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
   }).format(new Date(value));
 };
-initDb();
+if (postgresEnabled) {
+  await initializePostgresRuntime();
+  initDbFromPostgresSnapshot(await loadPostgresStateSnapshot());
+  liveCardsConfigCache = await getCardsConfigPostgres(postgresPool());
+} else {
+  initDb();
+}
 
 // Keep time-based race transitions moving even when nobody has the page open.
 // The interval is deliberately unref'd so it never prevents a clean shutdown.
 const horseRaceClock = setInterval(() => {
-  try {
-    processCurrentHorseRace(new Date());
-  } catch (err) {
-    console.error('Horse race clock failed:', err);
-  }
+  Promise.resolve().then(async () => {
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    if (settings.maintenanceMode) return;
+    if (postgresEnabled) await processCurrentHorseRacePostgres(postgresPool(), new Date());
+    else processCurrentHorseRace(new Date());
+  }).catch(err => console.error('Horse race clock failed:', err));
 }, 5000);
 horseRaceClock.unref?.();
 
@@ -280,28 +438,54 @@ app.use(session({
   cookie: { httpOnly: true, sameSite: 'lax' }
 }));
 
-app.use((req, res, next) => {
-  res.locals.currentUser = req.session.userId ? getUserById(req.session.userId) : null;
-  res.locals.flash = req.session.flash || null;
-  delete req.session.flash;
-  const adminSettings = getAdminSettings();
-  res.locals.currentWeek = adminSettings.currentWeek;
-  res.locals.bettingLocked = adminSettings.currentWeekLocked;
-  res.locals.weeklyAllowance = adminSettings.weeklyAllowance;
-  res.locals.seasonId = adminSettings.seasonId;
-  res.locals.casinoOpen = adminSettings.casinoOpen;
-  res.locals.casinoLinkVisible = adminSettings.casinoLinkVisible;
-  res.locals.cardsOpen = adminSettings.cardsOpen;
-  res.locals.cardsLinkVisible = adminSettings.cardsLinkVisible;
-  res.locals.wutArenaTurnPending = res.locals.currentUser ? hasPendingArenaTurn(res.locals.currentUser.id) : false;
-  res.locals.wutDraftActionEventIds = res.locals.currentUser ? getPendingWutDraftActionEventIds(res.locals.currentUser.id) : [];
-  res.locals.wutDraftTurnPending = res.locals.wutDraftActionEventIds.length > 0;
-  res.locals.wutTurnPending = res.locals.wutArenaTurnPending || res.locals.wutDraftTurnPending;
-  res.locals.maxBet = Number(process.env.MAX_BET || 250);
-  res.locals.propMaxBet = Number(process.env.PROP_MAX_BET || 100);
-  res.locals.goalTotalLine = Number(process.env.GOAL_TOTAL_LINE || 10.5);
-  res.locals.goalTotalBoost = Number(process.env.GOAL_TOTAL_BOOST || 1.5);
-  next();
+app.use(async (req, res, next) => {
+  try {
+    const pool = postgresEnabled ? postgresPool() : null;
+    res.locals.currentUser = req.session.userId
+      ? (postgresEnabled ? await getUserByIdPostgres(pool, req.session.userId) : getUserById(req.session.userId))
+      : null;
+    res.locals.flash = req.session.flash || null;
+    delete req.session.flash;
+    const adminSettings = postgresEnabled ? await getAdminSettingsPostgres(pool) : getAdminSettings();
+    res.locals.currentWeek = adminSettings.currentWeek;
+    res.locals.bettingLocked = adminSettings.currentWeekLocked;
+    res.locals.weeklyAllowance = adminSettings.weeklyAllowance;
+    res.locals.seasonId = adminSettings.seasonId;
+    res.locals.casinoOpen = adminSettings.casinoOpen;
+    res.locals.casinoLinkVisible = adminSettings.casinoLinkVisible;
+    res.locals.cardsOpen = adminSettings.cardsOpen;
+    res.locals.cardsLinkVisible = adminSettings.cardsLinkVisible;
+    if (res.locals.currentUser && postgresEnabled) {
+      [res.locals.wutArenaTurnPending, res.locals.wutDraftActionEventIds] = await Promise.all([
+        hasPendingArenaTurnPostgres(pool, res.locals.currentUser.id),
+        getPendingWutDraftActionEventIdsPostgres(pool, res.locals.currentUser.id)
+      ]);
+    } else {
+      res.locals.wutArenaTurnPending = res.locals.currentUser ? hasPendingArenaTurn(res.locals.currentUser.id) : false;
+      res.locals.wutDraftActionEventIds = res.locals.currentUser ? getPendingWutDraftActionEventIds(res.locals.currentUser.id) : [];
+    }
+    res.locals.wutDraftTurnPending = res.locals.wutDraftActionEventIds.length > 0;
+    res.locals.wutTurnPending = res.locals.wutArenaTurnPending || res.locals.wutDraftTurnPending;
+    res.locals.maxBet = Number(process.env.MAX_BET || 250);
+    res.locals.propMaxBet = Number(process.env.PROP_MAX_BET || 100);
+    res.locals.goalTotalLine = Number(process.env.GOAL_TOTAL_LINE || 10.5);
+    res.locals.goalTotalBoost = Number(process.env.GOAL_TOTAL_BOOST || 1.5);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/health', async (req, res) => {
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+  res.json({ ok: true, storage: process.env.STORAGE_BACKEND || 'json', maintenance: Boolean(settings.maintenanceMode) });
+});
+
+app.use(async (req, res, next) => {
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+  if (!settings.maintenanceMode || res.locals.currentUser?.role === 'admin' || ['/login', '/logout', '/health'].includes(req.path)) return next();
+  res.set('Retry-After', '300');
+  return res.status(503).render('maintenance', { maintenanceMessage: settings.maintenanceMessage });
 });
 
 function requireLogin(req, res, next) {
@@ -312,8 +496,10 @@ function requireLogin(req, res, next) {
   next();
 }
 
-function requireWutReady(req, res, next) {
-  const membership = getWutMembershipState(req.session.userId);
+async function requireWutReady(req, res, next) {
+  const membership = postgresEnabled
+    ? await getWutMembershipStatePostgres(postgresPool(), req.session.userId)
+    : getWutMembershipState(req.session.userId);
   if (!membership.joined || !membership.starterOpened) {
     req.session.flash = { type: 'error', message: 'Join WUT and open your starter pack first.' };
     return res.redirect('/cards');
@@ -321,16 +507,20 @@ function requireWutReady(req, res, next) {
   next();
 }
 
-function requireWutOpen(req, res, next) {
-  if (getAdminSettings().cardsOpen) return next();
-  req.session.flash = { type: 'error', message: 'WUT is currently closed.' };
-  return res.redirect('/cards');
+async function requireWutOpen(req, res, next) {
+  try {
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    if (settings.cardsOpen) return next();
+    req.session.flash = { type: 'error', message: 'WUT is currently closed.' };
+    return res.redirect('/cards');
+  } catch (err) { return next(err); }
 }
 
-function getBettingView(req) {
-  const settings = getAdminSettings();
+async function getBettingView(req) {
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
   const currentWeek = Number(settings.currentWeek || 1);
-  return { view: 'current', week: currentWeek, locked: isWeekLocked(currentWeek), openWeek: currentWeek };
+  const locked = postgresEnabled ? (settings.lockedWeeks || []).map(Number).includes(currentWeek) : isWeekLocked(currentWeek);
+  return { view: 'current', week: currentWeek, locked, openWeek: currentWeek };
 }
 
 async function getBetClosureState({ seasonId, week }) {
@@ -421,8 +611,9 @@ async function buildWutMissionBetOpportunities({ seasonId, week }) {
   // Once betting is locked, rebuild the complete published board rather than
   // filtering markets that have since closed or completed. This matters when
   // WUT is deployed/reset after the lock snapshot would normally be created.
-  const preserveLockedBoard = isWeekLocked(week);
-  const activeOdds = getOddsAdjustmentsForWeek(week);
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+  const preserveLockedBoard = postgresEnabled ? (settings.lockedWeeks || []).map(Number).includes(Number(week)) : isWeekLocked(week);
+  const activeOdds = postgresEnabled ? await getOddsAdjustmentsForWeekPostgres(postgresPool(), week) : getOddsAdjustmentsForWeek(week);
   const [series, closureState, rawPropBoards, seriesPropMarkets] = await Promise.all([
     getUpcomingSeries(week, seasonId),
     getBetClosureState({ seasonId, week }),
@@ -679,7 +870,9 @@ async function settleCompletedBetsOrThrow({ week, seasonId }) {
     result_summary: r.result_summary
   }]));
 
-  return settleCompletedBets({ week, results: { evaluations } });
+  return postgresEnabled
+    ? settleBetsPostgres(postgresPool(), { week, results: { evaluations } })
+    : settleCompletedBets({ week, results: { evaluations } });
 }
 
 async function buildSeriesVoidPayload({ seasonId, week, seriesKey }) {
@@ -712,22 +905,25 @@ async function settleWeekOrThrow({ week, seasonId }) {
     result_summary: r.result_summary
   }]));
 
-  return settleWeek({ week, results: { evaluations } });
+  return postgresEnabled
+    ? settleBetsPostgres(postgresPool(), { week, results: { evaluations } })
+    : settleWeek({ week, results: { evaluations } });
 }
 
 app.get('/', async (req, res, next) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const currentWeek = Number(settings.currentWeek || 1);
     const formatLeaderboard = rows => rows.map(u => ({
       ...u,
       last_week_display: formatSigned(u.last_week_change),
       current_week_display: formatSigned(u.current_week_change)
     }));
-    const leaderboard = formatLeaderboard(getLeaderboard(currentWeek, false));
-    const overallLeaderboard = formatLeaderboard(getLeaderboard(currentWeek, true));
+    const liveLeaderboards = postgresEnabled ? await getLeaderboardsPostgres(postgresPool(), currentWeek) : null;
+    const leaderboard = formatLeaderboard(liveLeaderboards ? liveLeaderboards.betting : getLeaderboard(currentWeek, false));
+    const overallLeaderboard = formatLeaderboard(liveLeaderboards ? liveLeaderboards.overall : getLeaderboard(currentWeek, true));
     const series = await getUpcomingSeries(currentWeek, settings.seasonId);
-    const teamTotals = applyTeamNamesToTotals(getWeeklyBetTotalByTeam(currentWeek), series);
+    const teamTotals = applyTeamNamesToTotals(postgresEnabled ? await getWeeklyBetTotalByTeamPostgres(postgresPool(), currentWeek) : getWeeklyBetTotalByTeam(currentWeek), series);
     const teamTotalMap = getTeamTotalMap(teamTotals);
     const weekResults = await buildWeekSettlementResults({ seasonId: settings.seasonId, week: currentWeek });
     const matchupGroups = groupSeriesByDivision(series, teamTotalMap, weekResults.seriesResults);
@@ -749,11 +945,11 @@ function formatTopBetLabel(label) {
 
   return raw.split(': ').pop();
 }
-const topBets = getTopWeeklyBets(currentWeek, 8).map(b => ({
+const topBets = (postgresEnabled ? await getTopWeeklyBetsPostgres(postgresPool(), currentWeek, 8) : getTopWeeklyBets(currentWeek, 8)).map(b => ({
   ...b,
   label: formatTopBetLabel(b.label)
 }));
-    const currentUserBalance = req.session.userId ? getBalanceSummaryForUser(req.session.userId) : null;
+    const currentUserBalance = req.session.userId ? (postgresEnabled ? await getBalanceSummaryForUserPostgres(postgresPool(), req.session.userId) : getBalanceSummaryForUser(req.session.userId)) : null;
     res.render('index', {
       leaderboard,
       overallLeaderboard,
@@ -772,8 +968,10 @@ app.get('/login', (req, res) => {
   res.render('login');
 });
 
-app.post('/login', (req, res) => {
-  const user = authenticate(req.body.username || '', req.body.password || '');
+app.post('/login', async (req, res) => {
+  const user = postgresEnabled
+    ? await authenticatePostgres(postgresPool(), req.body.username || '', req.body.password || '')
+    : authenticate(req.body.username || '', req.body.password || '');
   if (!user) {
     req.session.flash = { type: 'error', message: 'Invalid username or password.' };
     return res.redirect('/login');
@@ -787,23 +985,28 @@ app.post('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
 });
 
-app.get('/history', requireLogin, (req, res) => {
-  const history = getUserSettledBetHistory(req.session.userId);
+app.get('/history', requireLogin, async (req, res) => {
+  const history = postgresEnabled ? await getUserSettledBetHistoryPostgres(postgresPool(), req.session.userId) : getUserSettledBetHistory(req.session.userId);
   res.render('history', { history });
 });
 
-app.get('/casino', requireLogin, (req, res) => {
-  const casinoState = getCasinoStateForUser(req.session.userId);
+app.get('/casino', requireLogin, async (req, res) => {
+  const casinoState = postgresEnabled
+    ? await getCasinoStateForUserPostgres(postgresPool(), req.session.userId)
+    : getCasinoStateForUser(req.session.userId);
   const lastSpin = req.session.lastCasinoSpin || null;
   const lastWager = Number(req.session.lastCasinoWager || casinoState.allowedWagers[0] || 10);
   delete req.session.lastCasinoSpin;
   res.render('casino', { casinoState, lastSpin, lastWager });
 });
 
-app.post('/casino/slots/spin', requireLogin, (req, res) => {
+app.post('/casino/slots/spin', requireLogin, async (req, res) => {
   const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
   try {
-    const spin = spinCasinoSlots({
+    const spin = postgresEnabled ? await spinCasinoSlotsPostgres(postgresPool(), {
+      userId: req.session.userId,
+      wager: req.body.wager
+    }) : spinCasinoSlots({
       userId: req.session.userId,
       wager: req.body.wager
     });
@@ -811,7 +1014,10 @@ app.post('/casino/slots/spin', requireLogin, (req, res) => {
     req.session.lastCasinoWager = spin.wager;
 
     if (wantsJson) {
-      return res.json({ ok: true, spin, casinoState: getCasinoStateForUser(req.session.userId) });
+      const casinoState = postgresEnabled
+        ? await getCasinoStateForUserPostgres(postgresPool(), req.session.userId)
+        : getCasinoStateForUser(req.session.userId);
+      return res.json({ ok: true, spin, casinoState });
     }
 
     return res.redirect('/casino');
@@ -824,24 +1030,34 @@ app.post('/casino/slots/spin', requireLogin, (req, res) => {
   }
 });
 
-app.get('/casino/horse-racing', requireLogin, (req, res) => {
-  const horseRaceState = getHorseRaceStateForUser(req.session.userId);
+app.get('/casino/horse-racing', requireLogin, async (req, res) => {
+  const horseRaceState = postgresEnabled
+    ? await getHorseRaceStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+    : getHorseRaceStateForUser(req.session.userId);
   res.render('horse_racing', { horseRaceState });
 });
 
-app.get('/casino/horse-racing/state', requireLogin, (req, res) => {
-  res.json({ ok: true, horseRaceState: getHorseRaceStateForUser(req.session.userId) });
+app.get('/casino/horse-racing/state', requireLogin, async (req, res) => {
+  const horseRaceState = postgresEnabled
+    ? await getHorseRaceStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+    : getHorseRaceStateForUser(req.session.userId);
+  res.json({ ok: true, horseRaceState });
 });
 
-app.post('/casino/horse-racing/bet', requireLogin, (req, res) => {
+app.post('/casino/horse-racing/bet', requireLogin, async (req, res) => {
   const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
   try {
-    const result = placeOrUpdateHorseRaceBet({
+    const input = {
       userId: req.session.userId,
       horseId: req.body.horse_id,
       stake: req.body.stake
-    });
-    const horseRaceState = getHorseRaceStateForUser(req.session.userId);
+    };
+    const result = postgresEnabled
+      ? await placeOrUpdateHorseRaceBetPostgres(postgresPool(), input)
+      : placeOrUpdateHorseRaceBet(input);
+    const horseRaceState = postgresEnabled
+      ? await getHorseRaceStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+      : getHorseRaceStateForUser(req.session.userId);
     if (wantsJson) return res.json({ ok: true, result, horseRaceState });
     req.session.flash = { type: 'success', message: `Race wager ${result.action}.` };
     return res.redirect('/casino/horse-racing');
@@ -852,9 +1068,10 @@ app.post('/casino/horse-racing/bet', requireLogin, (req, res) => {
   }
 });
 
-app.post('/casino/horse-racing/horses/buy', requireLogin, (req, res) => {
+app.post('/casino/horse-racing/horses/buy', requireLogin, async (req, res) => {
   try {
-    const horse = buyHorse({ userId: req.session.userId, name: req.body.name });
+    const input = { userId: req.session.userId, name: req.body.name };
+    const horse = postgresEnabled ? await buyHorsePostgres(postgresPool(), input) : buyHorse(input);
     req.session.flash = { type: 'success', message: `${horse.name} has joined the horse pool.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -862,9 +1079,10 @@ app.post('/casino/horse-racing/horses/buy', requireLogin, (req, res) => {
   res.redirect('/casino/horse-racing#horse-ownership');
 });
 
-app.post('/casino/horse-racing/horses/claim', requireLogin, (req, res) => {
+app.post('/casino/horse-racing/horses/claim', requireLogin, async (req, res) => {
   try {
-    const result = claimHorseOwnerWinnings({ userId: req.session.userId, horseId: req.body.horse_id });
+    const input = { userId: req.session.userId, horseId: req.body.horse_id };
+    const result = postgresEnabled ? await claimHorseOwnerWinningsPostgres(postgresPool(), input) : claimHorseOwnerWinnings(input);
     req.session.flash = { type: 'success', message: `${result.amount} Mushybux collected from ${result.horseName}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -872,9 +1090,9 @@ app.post('/casino/horse-racing/horses/claim', requireLogin, (req, res) => {
   res.redirect('/casino/horse-racing#owned-horses');
 });
 
-app.get('/casino/horse-racing/chat', requireLogin, (req, res) => {
+app.get('/casino/horse-racing/chat', requireLogin, async (req, res) => {
   const now = new Date();
-  const chat = getHorseRaceChatState(now);
+  const chat = postgresEnabled ? await getHorseRaceChatStatePostgres(postgresPool(), now) : getHorseRaceChatState(now);
   syncHorseChatCooldowns(chat.cardDate);
   res.json({
     ok: true,
@@ -885,9 +1103,9 @@ app.get('/casino/horse-racing/chat', requireLogin, (req, res) => {
   });
 });
 
-app.post('/casino/horse-racing/chat', requireLogin, (req, res) => {
+app.post('/casino/horse-racing/chat', requireLogin, async (req, res) => {
   const now = new Date();
-  const chat = getHorseRaceChatState(now);
+  const chat = postgresEnabled ? await getHorseRaceChatStatePostgres(postgresPool(), now) : getHorseRaceChatState(now);
   syncHorseChatCooldowns(chat.cardDate);
   if (!chat.open) {
     return res.status(400).json({ ok: false, error: 'Race chat is currently closed.' });
@@ -905,26 +1123,33 @@ app.post('/casino/horse-racing/chat', requireLogin, (req, res) => {
     return res.status(429).json({ ok: false, error: 'Easy, jockey. Wait two seconds between messages.' });
   }
 
-  const user = getUserById(userId);
-  const chatMessage = addHorseRaceChatMessage({
+  const user = res.locals.currentUser;
+  const input = {
     userId,
     username: user?.display_name || user?.username || `User ${userId}`,
     message,
     now
-  });
+  };
+  const chatMessage = postgresEnabled
+    ? await addHorseRaceChatMessagePostgres(postgresPool(), input)
+    : addHorseRaceChatMessage(input);
   horseChatCooldowns.set(userId, now.getTime());
   res.json({ ok: true, message: chatMessage });
 });
 
-app.post('/casino/horse-racing/admin/:action', requireAdmin, (req, res) => {
+app.post('/casino/horse-racing/admin/:action', requireAdmin, async (req, res) => {
   const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
   try {
-    const result = controlCurrentHorseRace(req.params.action);
+    const result = postgresEnabled
+      ? await controlCurrentHorseRacePostgres(postgresPool(), req.params.action)
+      : controlCurrentHorseRace(req.params.action);
     if (wantsJson) {
       return res.json({
         ok: true,
         result,
-        horseRaceState: getHorseRaceStateForUser(req.session.userId)
+        horseRaceState: postgresEnabled
+          ? await getHorseRaceStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+          : getHorseRaceStateForUser(req.session.userId)
       });
     }
     req.session.flash = { type: 'success', message: `Horse race debug command: ${result.action}.` };
@@ -936,24 +1161,35 @@ app.post('/casino/horse-racing/admin/:action', requireAdmin, (req, res) => {
 });
 
 
-app.get('/casino/puckIQ', requireLogin, (req, res) => {
-  const shotDoctorState = getShotDoctorStateForUser(req.session.userId);
+app.get('/casino/puckIQ', requireLogin, async (req, res) => {
+  const shotDoctorState = postgresEnabled
+    ? await getShotDoctorStateForUserPostgres(postgresPool(), req.session.userId)
+    : getShotDoctorStateForUser(req.session.userId);
   res.render('shot_doctor', { shotDoctorState });
 });
 
 app.post('/casino/puckIQ/start', requireLogin, async (req, res) => {
   const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
   try {
-    const shotDoctorState = getShotDoctorStateForUser(req.session.userId);
+    const shotDoctorState = postgresEnabled
+      ? await getShotDoctorStateForUserPostgres(postgresPool(), req.session.userId)
+      : getShotDoctorStateForUser(req.session.userId);
     const shots = await buildShotDoctorRunShots();
-    const payload = startShotDoctorRun({
+    const payload = postgresEnabled ? await startShotDoctorRunPostgres(postgresPool(), {
+      userId: req.session.userId,
+      wager: shotDoctorState.entryFee,
+      shots
+    }) : startShotDoctorRun({
       userId: req.session.userId,
       wager: shotDoctorState.entryFee,
       shots
     });
 
     if (wantsJson) {
-      return res.json({ ok: true, ...payload, shotDoctorState: getShotDoctorStateForUser(req.session.userId) });
+      const nextState = postgresEnabled
+        ? await getShotDoctorStateForUserPostgres(postgresPool(), req.session.userId)
+        : getShotDoctorStateForUser(req.session.userId);
+      return res.json({ ok: true, ...payload, shotDoctorState: nextState });
     }
     return res.redirect('/casino/puckIQ');
   } catch (err) {
@@ -963,17 +1199,24 @@ app.post('/casino/puckIQ/start', requireLogin, async (req, res) => {
   }
 });
 
-app.post('/casino/puckIQ/guess', requireLogin, (req, res) => {
+app.post('/casino/puckIQ/guess', requireLogin, async (req, res) => {
   const wantsJson = req.xhr || String(req.get('accept') || '').includes('application/json');
   try {
-    const payload = submitShotDoctorGuess({
+    const payload = postgresEnabled ? await submitShotDoctorGuessPostgres(postgresPool(), {
+      userId: req.session.userId,
+      runId: req.body.run_id,
+      guess: req.body.guess
+    }) : submitShotDoctorGuess({
       userId: req.session.userId,
       runId: req.body.run_id,
       guess: req.body.guess
     });
 
     if (wantsJson) {
-      return res.json({ ok: true, ...payload, shotDoctorState: getShotDoctorStateForUser(req.session.userId) });
+      const nextState = postgresEnabled
+        ? await getShotDoctorStateForUserPostgres(postgresPool(), req.session.userId)
+        : getShotDoctorStateForUser(req.session.userId);
+      return res.json({ ok: true, ...payload, shotDoctorState: nextState });
     }
     return res.redirect('/casino/puckIQ');
   } catch (err) {
@@ -988,13 +1231,19 @@ app.post('/casino/shot-doctor/start', requireLogin, (req, res) => res.redirect(3
 app.post('/casino/shot-doctor/guess', requireLogin, (req, res) => res.redirect(307, '/casino/puckIQ/guess'));
 
 async function getCardsCatalog() {
-  const admin = getCardsAdminState();
+  const admin = postgresEnabled ? await getCardsMetaPostgres(postgresPool()) : getCardsAdminState();
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
   return buildCardPlayerCatalog({
-    seasonId: getAdminSettings().seasonId,
+    seasonId: settings.seasonId,
     positionOverrides: admin.positionOverrides,
     tierOverrides: admin.tierOverrides,
     scoringConfig: admin.config.scoring
   });
+}
+
+async function getLiveCardsConfig() {
+  liveCardsConfigCache = postgresEnabled ? await getCardsConfigPostgres(postgresPool()) : getCardsConfig();
+  return liveCardsConfigCache;
 }
 
 function sortCardsCatalogForAdmin(catalog) {
@@ -1090,7 +1339,7 @@ async function seriesOptionsForCard({ settings, week, card }) {
 
 async function scoreOwnedCardLineup({ settings, week, row, card, boost }) {
   if (!card?.player?.position) return null;
-  const cardsConfig = getCardsConfig();
+  const cardsConfig = await getLiveCardsConfig();
   const scoringBoost = boost ? {
     ...boost,
     effect: cardsConfig.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect
@@ -1127,12 +1376,12 @@ function chemistryBonusForCard({ lineup, ownedCards, catalogByKey, card }) {
     const decorated = ownedCard ? decorateOwnedCard(ownedCard, catalogByKey) : null;
     if (wutChemistryKey(decorated?.player) === chemistryKey) count += 1;
   }
-  return { count, multiplier: chemistryMultiplierForCount(count, getCardsConfig().scoring) };
+  return { count, multiplier: chemistryMultiplierForCount(count, liveCardsConfigCache.scoring) };
 }
 
 function scoreFromResolvedLineup({ row, card, boost }) {
   if (!row?.finalized || !row.stats || !card?.player?.position) return null;
-  const scoringConfig = getCardsConfig().scoring;
+  const scoringConfig = liveCardsConfigCache.scoring;
   const breakdown = buildFantasyBreakdown(row.stats, card.player.position, boost, {
     unavailableStats: card.player.unavailableStats || [],
     scoringConfig
@@ -1278,7 +1527,7 @@ async function buildCardsHub(userId) {
       breakdown: row.finalized && row.score_breakdown?.length
         ? row.score_breakdown
         : row.finalized && row.stats && card
-        ? buildFantasyBreakdown(row.stats, card.player.position, boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: getCardsConfig().scoring })
+        ? buildFantasyBreakdown(row.stats, card.player.position, boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: liveCardsConfigCache.scoring })
         : [],
       warning: selected?.voided
         ? 'This series is postponed or voided. The card and boost will not be consumed.'
@@ -1507,13 +1756,43 @@ function arenaCatalogByIdentity(catalog) {
   return out;
 }
 
+function arenaSnapshotForCard(card, wutConfig) {
+    if (!card?.player) throw new Error('A saved deck references a card that is no longer in the WUT catalog.');
+    const player = card.player;
+    const season = player.cardType === 'mythic' ? player.sourceSeason : player.edition;
+    return {
+      card_id: Number(card.id), card_identity: card.card_identity, position: player.position,
+      rarity: player.tier, team_id: player.teamId || '', team_name: player.teamName || player.teamId || '',
+      season: season || '', chemistry_key: `${season || ''}|${player.teamId || ''}`,
+      display_name: player.name || player.displayName || '',
+      base_power: calculateWutPower(player.tier, null, wutConfig),
+      power: Number(card.power || calculateWutPower(player.tier, card.trinket?.rarity, wutConfig)),
+      trinket: card.trinket ? JSON.parse(JSON.stringify(card.trinket)) : null
+    };
+}
+
+function arenaDeckSnapshotFromHub(hub, deck) {
+  const cards = new Map((hub.cards || []).map(card => [Number(card.id), card]));
+  return {
+    active: (deck.active_card_ids || []).map(id => arenaSnapshotForCard(cards.get(Number(id)), hub.wut?.config)),
+    bench: (deck.bench_card_ids || []).map(id => arenaSnapshotForCard(cards.get(Number(id)), hub.wut?.config))
+  };
+}
+
 async function scorePendingArenaMatches(catalog = null) {
   const activeCatalog = catalog || await getCardsCatalog();
   const catalogByKey = cardsCatalogMap(activeCatalog);
-  const globalConfig = getCardsConfig();
+  const globalConfig = await getLiveCardsConfig();
   let resolved = 0;
-  for (const match of getArenaMatchesNeedingScoring()) {
-    const draftEvent = match.draft_event_id ? getWutDraftEventLobby({ eventId: match.draft_event_id, includePrivate: true })[0] : null;
+  const scoringMatches = postgresEnabled
+    ? [...await getArenaMatchesNeedingScoringPostgres(postgresPool()), ...await getDraftMatchesNeedingScoringPostgres(postgresPool()), ...await getWutDebugMatchesNeedingScoringPostgres(postgresPool())]
+    : getArenaMatchesNeedingScoring();
+  for (const match of scoringMatches) {
+    const draftEvent = match.draft_event_id
+      ? (postgresEnabled
+        ? (await getDraftEventLobbyPostgres(postgresPool(), { eventId: match.draft_event_id, includePrivate: true }))[0]
+        : getWutDraftEventLobby({ eventId: match.draft_event_id, includePrivate: true })[0])
+      : null;
     const frozenRules = draftEvent?.environment_snapshot?.rules || match.rules_snapshot || {};
     const config = draftEvent ? {
       ...globalConfig,
@@ -1524,7 +1803,9 @@ async function scorePendingArenaMatches(catalog = null) {
     let rawScores = [];
     for (const placement of match.placements) {
       const eventInventory = draftEvent?.inventories?.[String(placement.owner_user_id || placement.user_id)] || null;
-      const owned = eventInventory ? null : getCardsOwnedState(placement.owner_user_id || placement.user_id);
+      const owned = eventInventory ? null : (postgresEnabled
+        ? await getCardsOwnedStatePostgres(postgresPool(), placement.owner_user_id || placement.user_id)
+        : getCardsOwnedState(placement.owner_user_id || placement.user_id));
       const rawCard = (eventInventory?.cards || owned?.cards || []).find(card => Number(card.id) === Number(placement.card_id));
       const card = rawCard ? (eventInventory ? draftEventCardView(rawCard, eventInventory, catalogByKey) : decorateOwnedCard(rawCard, catalogByKey)) : null;
       const rawBoost = (eventInventory?.boosts || owned?.boosts || []).find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
@@ -1698,10 +1979,13 @@ async function scorePendingArenaMatches(catalog = null) {
         effect_log: entry.logs
       };
     });
-    completeArenaMatch(match.arena_match_key || match.id, scored);
+    if (postgresEnabled && match.debug) await completeWutDebugMatchPostgres(postgresPool(), { adminUserId: match.admin_user_id, scoredPlacements: scored });
+    else if (postgresEnabled && match.draft_event_id) await completeWutDraftEventMatchPostgres(postgresPool(), { eventId: match.draft_event_id, matchId: match.id, scoredPlacements: scored });
+    else if (postgresEnabled) await completeArenaMatchPostgres(postgresPool(), { matchId: match.id, scoredPlacements: scored });
+    else completeArenaMatch(match.arena_match_key || match.id, scored);
     resolved += 1;
   }
-  await awardCompletedWutDraftEvents(activeCatalog);
+  if (!postgresEnabled) await awardCompletedWutDraftEvents(activeCatalog);
   return resolved;
 }
 
@@ -1716,7 +2000,7 @@ async function processAutomaticWutDraftStarts(catalog = null, now = new Date()) 
   const activeCatalog = catalog || await getCardsCatalog();
   const started = [];
   for (const event of due) {
-    startWutDraftEvent({ eventId: event.id, environment: draftEnvironmentFromCatalog(event, activeCatalog), adminUserId: null, system: true, now });
+    startWutDraftEvent({ eventId: event.id, environment: await draftEnvironmentFromCatalog(event, activeCatalog), adminUserId: null, system: true, now });
     beginWutDraftSafetyBench({ eventId: event.id, adminUserId: null, system: true, now });
     started.push(Number(event.id));
   }
@@ -1725,7 +2009,7 @@ async function processAutomaticWutDraftStarts(catalog = null, now = new Date()) 
 
 async function awardCompletedWutDraftEvents(catalog = null, eventId = null, adminUserId = null) {
   const activeCatalog = catalog || await getCardsCatalog();
-  const config = getCardsConfig();
+  const config = await getLiveCardsConfig();
   const completed = getWutDraftEventLobby({ includePrivate: true }).filter(event => event.phase === 'complete' && !event.prizes?.awarded_at && (eventId == null || Number(event.id) === Number(eventId)));
   const results = [];
   for (const event of completed) results.push(awardWutDraftEventPrizes({
@@ -1739,6 +2023,31 @@ async function processArena(now = new Date()) {
   if (arenaClockBusy) return;
   arenaClockBusy = true;
   try {
+    if (postgresEnabled) {
+      const settings = await getAdminSettingsPostgres(postgresPool());
+      if (settings.maintenanceMode) return null;
+      const catalog = await getCardsCatalog();
+      if (!settings.cardsOpen) return catalog;
+      const arenaMeta = (await postgresPool().query("SELECT data FROM app_documents WHERE document_key='arena_meta'")).rows[0]?.data || {};
+      const slot = String(Math.floor(now.getTime() / (30 * 60 * 1000)));
+      if (String(arenaMeta.lastMatchmakingSlot || '') !== slot) await assignArenaMatchupsPostgres(postgresPool(), { now });
+      await autoAssignExpiredArenaTurnsPostgres(postgresPool(), { now });
+      await scorePendingArenaMatches(catalog);
+      const draftTick = await processWutDraftEventsPostgres(postgresPool(), now);
+      for (const eventId of draftTick.startDueEventIds) {
+        const current = (await getDraftEventLobbyPostgres(postgresPool(), { eventId, includePrivate: true }))[0];
+        if (!current || current.phase !== 'signup_closed') continue;
+        await startWutDraftEventPostgres(postgresPool(), {
+          eventId,
+          environment: await draftEnvironmentFromCatalog(current, catalog),
+          system: true,
+          now
+        });
+        await beginWutDraftSafetyBenchPostgres(postgresPool(), { eventId, system: true, now });
+      }
+      return catalog;
+    }
+    if (getAdminSettings().maintenanceMode) return null;
     if (!getAdminSettings().cardsOpen) return getCardsCatalog();
     const admin = getArenaAdminState(now);
     if (admin.matchmakingDue) {
@@ -1766,7 +2075,7 @@ function decorateArenaMatch(match, allCards, boosts) {
       card,
       boost,
       score_breakdown: needsSavePctBreakdown
-        ? buildFantasyBreakdown(row.stats, 'G', boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: getCardsConfig().scoring })
+        ? buildFantasyBreakdown(row.stats, 'G', boost, { unavailableStats: card.player.unavailableStats || [], scoringConfig: liveCardsConfigCache.scoring })
         : row.score_breakdown
     };
   });
@@ -1789,14 +2098,18 @@ function decorateArenaMatch(match, allCards, boosts) {
 }
 
 async function buildArenaCardsHub(userId, query = {}) {
-  const catalog = await processArena(new Date()) || await getCardsCatalog();
+  const catalog = postgresEnabled ? await getCardsCatalog() : await processArena(new Date()) || await getCardsCatalog();
   const catalogByKey = cardsCatalogMap(catalog);
-  reconcileWutTrinketPositions(userId, arenaCatalogByIdentity(catalog));
-  const owned = getCardsOwnedState(userId);
-  const config = getCardsConfig();
-  const membership = getWutMembershipState(userId);
-  if (membership.starterOpened) {
-    const settings = getAdminSettings();
+  if (!postgresEnabled) reconcileWutTrinketPositions(userId, arenaCatalogByIdentity(catalog));
+  const owned = postgresEnabled
+    ? await getCardsOwnedStatePostgres(postgresPool(), userId)
+    : getCardsOwnedState(userId);
+  const config = await getLiveCardsConfig();
+  const membership = postgresEnabled
+    ? await getWutMembershipStatePostgres(postgresPool(), userId)
+    : getWutMembershipState(userId);
+  if (membership.starterOpened && !postgresEnabled) {
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     try {
       const opportunities = await buildWutMissionBetOpportunities({
         seasonId: settings.seasonId,
@@ -1811,7 +2124,9 @@ async function buildArenaCardsHub(userId, query = {}) {
       console.error('Could not refresh WUT sportsbook mission options:', err);
     }
   }
-  const wut = membership.starterOpened ? getWutSystemsState(userId) : { wutCoins: 0, decks: [], trinkets: [], shop: null, config: getCardsConfig().wut };
+  const wut = membership.starterOpened
+    ? (postgresEnabled ? await getWutSystemsStatePostgres(postgresPool(), userId) : getWutSystemsState(userId))
+    : { wutCoins: 0, decks: [], trinkets: [], shop: null, config: liveCardsConfigCache.wut };
   const trinketsById = new Map((wut.trinkets || []).map(item => [Number(item.id), item]));
   const cards = owned.cards.map(card => {
     const decorated = decorateOwnedCard(card, catalogByKey);
@@ -1822,14 +2137,19 @@ async function buildArenaCardsHub(userId, query = {}) {
     ...boost,
     effect: config.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect || DEFAULT_BOOST_EFFECTS[boost.boost_type]?.[boost.rarity]
   }));
-  const arena = getArenaStateForUser(userId);
+  const arena = postgresEnabled
+    ? await getArenaStateForUserPostgres(postgresPool(), userId)
+    : getArenaStateForUser(userId);
   const allMatchCardIds = new Set([
     ...arena.activeMatches, ...arena.readyMatches, ...arena.history
   ].flatMap(match => match.placements.map(row => Number(row.card_id))));
   const missingCards = [];
   for (const matchUserId of [...new Set([...arena.activeMatches, ...arena.readyMatches, ...arena.history].flatMap(match => match.player_ids))]) {
     if (Number(matchUserId) === Number(userId)) continue;
-    for (const card of getCardsOwnedState(matchUserId).cards) {
+    const matchOwned = postgresEnabled
+      ? await getCardsOwnedStatePostgres(postgresPool(), matchUserId)
+      : getCardsOwnedState(matchUserId);
+    for (const card of matchOwned.cards) {
       if (allMatchCardIds.has(Number(card.id))) missingCards.push(decorateOwnedCard(card, catalogByKey));
     }
   }
@@ -1837,7 +2157,10 @@ async function buildArenaCardsHub(userId, query = {}) {
   const otherBoosts = [];
   for (const matchUserId of [...new Set([...arena.activeMatches, ...arena.readyMatches, ...arena.history].flatMap(match => match.player_ids))]) {
     if (Number(matchUserId) === Number(userId)) continue;
-    otherBoosts.push(...getCardsOwnedState(matchUserId).boosts);
+    const matchOwned = postgresEnabled
+      ? await getCardsOwnedStatePostgres(postgresPool(), matchUserId)
+      : getCardsOwnedState(matchUserId);
+    otherBoosts.push(...matchOwned.boosts);
   }
   const matchBoosts = [...boosts, ...otherBoosts];
   arena.activeMatches = arena.activeMatches.map(match => decorateArenaMatch(match, matchCards, matchBoosts));
@@ -1852,7 +2175,7 @@ async function buildArenaCardsHub(userId, query = {}) {
     wut,
     cards: cards.map(card => ({ ...card, arenaLocked: false })),
     boosts: boosts.filter(boost => !boost.consumed).map(boost => ({ ...boost, arenaLocked: lockedBoostIds.has(Number(boost.id)) })),
-    balance: getUserById(userId)?.balance || 0,
+    balance: postgresEnabled ? Number((await getUserByIdPostgres(postgresPool(), userId))?.balance || 0) : getUserById(userId)?.balance || 0,
     wutCoins: Number(wut.wutCoins || 0),
     adminArena: getArenaAdminState(),
     replayMatchId: Number(query.replay || query.reveal || 0) || null,
@@ -1871,8 +2194,8 @@ const arenaClock = setInterval(() => {
 }, 60000);
 arenaClock.unref?.();
 
-app.use('/cards', (req, res, next) => {
-  if (getAdminSettings().cardsOpen || (req.method === 'GET' && req.path === '/')) return next();
+app.use('/cards', async (req, res, next) => {
+  if (req.method === 'GET' && req.path === '/') return next();
   return requireWutOpen(req, res, next);
 });
 
@@ -1884,17 +2207,23 @@ app.get('/cards', requireLogin, async (req, res, next) => {
   }
 });
 
-app.get('/cards/guide', requireLogin, (req, res) => {
-  res.render('cards_guide', { wutConfig: getCardsConfig().wut });
+app.get('/cards/guide', requireLogin, async (req, res, next) => {
+  try { res.render('cards_guide', { wutConfig: (await getLiveCardsConfig()).wut }); }
+  catch (err) { next(err); }
 });
 
-app.get('/cards/drafts', requireLogin, requireWutReady, (req, res, next) => {
+app.get('/cards/drafts', requireLogin, requireWutReady, async (req, res, next) => {
   try {
-    processWutDraftEvents(new Date());
-    const membership = getWutMembershipState(req.session.userId);
-    const user = getUserById(req.session.userId);
+    if (!postgresEnabled) processWutDraftEvents(new Date());
+    const membership = postgresEnabled
+      ? await getWutMembershipStatePostgres(postgresPool(), req.session.userId)
+      : getWutMembershipState(req.session.userId);
+    const user = res.locals.currentUser;
+    const draftEvents = postgresEnabled
+      ? await getDraftEventLobbyPostgres(postgresPool(), { userId: req.session.userId })
+      : getWutDraftEventLobby({ userId: req.session.userId });
     res.render('cards_draft_events', {
-      draftEvents: getWutDraftEventLobby({ userId: req.session.userId }).filter(isWutDraftEventLobbyVisible),
+      draftEvents: draftEvents.filter(isWutDraftEventLobbyVisible),
       wutCoins: Number(membership.wutCoins || 0),
       mushybux: Number(user?.balance || 0)
     });
@@ -1924,10 +2253,31 @@ function draftEventCardView(item, inventory = null, catalogByKey = null) {
   };
 }
 
-app.get('/cards/drafts/:eventId', requireLogin, requireWutReady, (req, res, next) => {
+async function postgresDraftMatchPayload(eventId, matchId, userId) {
+  const event = (await getDraftEventLobbyPostgres(postgresPool(), { eventId, userId, includePrivate: true }))[0];
+  if (!event) throw new Error('Draft Event not found.');
+  const raw = (event.tournament?.matches || []).find(item => String(item.id) === String(matchId));
+  if (!raw || !(raw.player_ids || []).map(Number).includes(Number(userId))) throw new Error('Draft Event match not found.');
+  const first = Number(raw.first_player_id);
+  const second = Number(raw.player_ids.find(id => Number(id) !== first));
+  const current = raw.status === 'active' ? (Number(raw.turn_index || 0) % 2 === 0 ? first : second) : null;
+  const players = raw.player_ids.map(id => {
+    const entrant = event.entrants.find(item => Number(item.user_id) === Number(id));
+    return { id: Number(id), displayName: entrant?.display_name || `Player ${id}` };
+  });
+  const match = { ...raw, players, opponent: players.find(player => player.id !== Number(userId)) || null,
+    current_player_id: current, cards_required_this_turn: raw.status === 'active' ? [1, 2, 2, 2, 2, 1][Number(raw.turn_index)] : 0,
+    is_your_turn: current === Number(userId), timer_paused: Boolean(event.paused_at),
+    boost_load_used: (raw.placements || []).filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.boost_load || 0), 0) };
+  return { event, match };
+}
+
+app.get('/cards/drafts/:eventId', requireLogin, requireWutReady, async (req, res, next) => {
   try {
-    processWutDraftEvents(new Date());
-    const event = getWutDraftEventLobby({ eventId: req.params.eventId, userId: req.session.userId })[0];
+    if (!postgresEnabled) processWutDraftEvents(new Date());
+    const event = (postgresEnabled
+      ? await getDraftEventLobbyPostgres(postgresPool(), { eventId: req.params.eventId, userId: req.session.userId })
+      : getWutDraftEventLobby({ eventId: req.params.eventId, userId: req.session.userId }))[0];
     if (!event) return res.status(404).send('Draft Event not found.');
     const inventorySource = Object.keys(event.inventories || {}).length ? event.inventories : event.archived_inventories || {};
     const inventory = inventorySource[String(req.session.userId)] || { cards: [], boosts: [], trinkets: [], safety_bench_card_ids: [] };
@@ -1960,10 +2310,12 @@ app.get('/cards/drafts/:eventId', requireLogin, requireWutReady, (req, res, next
   }
 });
 
-app.get('/cards/drafts/:eventId/status', requireLogin, requireWutReady, (req, res, next) => {
+app.get('/cards/drafts/:eventId/status', requireLogin, requireWutReady, async (req, res, next) => {
   try {
-    processWutDraftEvents(new Date());
-    const event = getWutDraftEventLobby({ eventId: req.params.eventId, userId: req.session.userId })[0];
+    if (!postgresEnabled) processWutDraftEvents(new Date());
+    const event = (postgresEnabled
+      ? await getDraftEventLobbyPostgres(postgresPool(), { eventId: req.params.eventId, userId: req.session.userId })
+      : getWutDraftEventLobby({ eventId: req.params.eventId, userId: req.session.userId }))[0];
     if (!event) return res.status(404).json({ error: 'Draft Event not found.' });
     const currentPack = event.phase === 'draft' ? event.draft.boosters.find(pack =>
       Number(pack.booster_number) === Number(event.draft.current_booster) &&
@@ -1985,13 +2337,15 @@ app.get('/cards/drafts/:eventId/status', requireLogin, requireWutReady, (req, re
   } catch (err) { next(err); }
 });
 
-app.post('/cards/drafts/:eventId/bench-vote', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/bench-vote', requireLogin, requireWutReady, async (req, res) => {
   try {
     const values = key => req.body[key] == null ? [] : Array.isArray(req.body[key]) ? req.body[key] : [req.body[key]];
-    voteWutDraftSafetyBench({
+    const input = {
       eventId: req.params.eventId, userId: req.session.userId,
       selections: { F: values('F'), D: values('D'), G: values('G') }
-    });
+    };
+    if (postgresEnabled) await voteWutDraftSafetyBenchPostgres(postgresPool(), input);
+    else voteWutDraftSafetyBench(input);
     req.session.flash = { type: 'success', message: 'Your shared Safety Bench vote was saved.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -1999,9 +2353,10 @@ app.post('/cards/drafts/:eventId/bench-vote', requireLogin, requireWutReady, (re
   res.redirect(`/cards/drafts/${req.params.eventId}`);
 });
 
-app.post('/cards/drafts/:eventId/pick', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/pick', requireLogin, requireWutReady, async (req, res) => {
   try {
-    const result = pickWutDraftItem({ eventId: req.params.eventId, userId: req.session.userId, itemId: req.body.item_id });
+    const input = { eventId: req.params.eventId, userId: req.session.userId, itemId: req.body.item_id };
+    const result = postgresEnabled ? await pickWutDraftItemPostgres(postgresPool(), input) : pickWutDraftItem(input);
     const item = result.pick.item;
     const label = item.item_type === 'player' ? item.player_snapshot?.displayName : item.item_type === 'boost' ? `${item.rarity} ${item.boost_type} boost` : `${item.rarity} ${wutTrinketName(item.family)}`;
     req.session.flash = { type: 'success', message: `${label || 'Item'} drafted.` };
@@ -2011,10 +2366,11 @@ app.post('/cards/drafts/:eventId/pick', requireLogin, requireWutReady, (req, res
   res.redirect(`/cards/drafts/${req.params.eventId}`);
 });
 
-app.post('/cards/drafts/:eventId/deck', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/deck', requireLogin, requireWutReady, async (req, res) => {
   try {
     const values = req.body.active_card_ids == null ? [] : Array.isArray(req.body.active_card_ids) ? req.body.active_card_ids : [req.body.active_card_ids];
-    const result = saveWutDraftEventDeck({ eventId: req.params.eventId, userId: req.session.userId, activeCardIds: values });
+    const input = { eventId: req.params.eventId, userId: req.session.userId, activeCardIds: values };
+    const result = postgresEnabled ? await saveWutDraftEventDeckPostgres(postgresPool(), input) : saveWutDraftEventDeck(input);
     req.session.flash = { type: 'success', message: result.event.phase === 'tournament' ? 'Event Deck saved for the next tournament round.' : result.event.phase === 'complete' ? 'Event Deck locked. The tournament is complete.' : 'Event Deck saved. You can revise it until deckbuilding closes.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2022,9 +2378,11 @@ app.post('/cards/drafts/:eventId/deck', requireLogin, requireWutReady, (req, res
   res.redirect(`/cards/drafts/${req.params.eventId}`);
 });
 
-app.post('/cards/drafts/:eventId/trinkets/attach', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/trinkets/attach', requireLogin, requireWutReady, async (req, res) => {
   try {
-    attachWutDraftEventTrinket({ eventId: req.params.eventId, userId: req.session.userId, cardId: req.body.card_id, trinketId: req.body.trinket_id });
+    const input = { eventId: req.params.eventId, userId: req.session.userId, cardId: req.body.card_id, trinketId: req.body.trinket_id };
+    if (postgresEnabled) await attachWutDraftEventTrinketPostgres(postgresPool(), input);
+    else attachWutDraftEventTrinket(input);
     req.session.flash = { type: 'success', message: 'Temporary trinket attached for this event.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2032,9 +2390,11 @@ app.post('/cards/drafts/:eventId/trinkets/attach', requireLogin, requireWutReady
   res.redirect(`/cards/drafts/${req.params.eventId}`);
 });
 
-app.post('/cards/drafts/:eventId/trinkets/detach', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/trinkets/detach', requireLogin, requireWutReady, async (req, res) => {
   try {
-    detachWutDraftEventTrinket({ eventId: req.params.eventId, userId: req.session.userId, cardId: req.body.card_id });
+    const input = { eventId: req.params.eventId, userId: req.session.userId, cardId: req.body.card_id };
+    if (postgresEnabled) await detachWutDraftEventTrinketPostgres(postgresPool(), input);
+    else detachWutDraftEventTrinket(input);
     req.session.flash = { type: 'success', message: 'Temporary trinket detached.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2044,8 +2404,10 @@ app.post('/cards/drafts/:eventId/trinkets/detach', requireLogin, requireWutReady
 
 app.get('/cards/drafts/:eventId/matches/:matchId', requireLogin, requireWutReady, async (req, res, next) => {
   try {
-    processWutDraftEvents(new Date());
-    const payload = getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    if (!postgresEnabled) processWutDraftEvents(new Date());
+    const payload = postgresEnabled
+      ? await postgresDraftMatchPayload(req.params.eventId, req.params.matchId, req.session.userId)
+      : getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
     const { event } = payload; let { match } = payload;
     const allCards = []; const allBoosts = [];
     const inventorySource = Object.keys(event.inventories || {}).length ? event.inventories : event.archived_inventories || {};
@@ -2065,15 +2427,17 @@ app.get('/cards/drafts/:eventId/matches/:matchId', requireLogin, requireWutReady
     }));
     res.render('cards_match', {
       match, cards, boosts, arena: { rating: getArenaStateForUser(req.session.userId).rating },
-      wut: { config: { ...getCardsConfig().wut, ...(event.environment_snapshot?.rules || {}), boostLoadCap: event.config.match.boostLoadCap } },
+      wut: { config: { ...(await getLiveCardsConfig()).wut, ...(event.environment_snapshot?.rules || {}), boostLoadCap: event.config.match.boostLoadCap } },
       eventContext: { id: event.id, name: event.config.basic.name }
     });
   } catch (err) { next(err); }
 });
 
-app.get('/cards/drafts/:eventId/matches/:matchId/results', requireLogin, requireWutReady, (req, res, next) => {
+app.get('/cards/drafts/:eventId/matches/:matchId/results', requireLogin, requireWutReady, async (req, res, next) => {
   try {
-    const payload = getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    const payload = postgresEnabled
+      ? await postgresDraftMatchPayload(req.params.eventId, req.params.matchId, req.session.userId)
+      : getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
     const { event } = payload; let { match } = payload;
     if (!['ready', 'completed'].includes(match.status) || !(match.revealed_by || []).map(Number).includes(Number(req.session.userId))) return res.redirect(`/cards/drafts/${event.id}/matches/${match.id}`);
     const allCards = []; const allBoosts = [];
@@ -2096,16 +2460,20 @@ app.post('/cards/drafts/:eventId/matches/:matchId/turn', requireLogin, requireWu
     const placements = Array.from({ length: count }, (_, index) => ({
       slot: req.body[`slot_${index}`], cardId: req.body[`card_id_${index}`], boostId: req.body[`boost_id_${index}`] || null, journeymanKey: req.body[`journeyman_key_${index}`] || ''
     }));
-    commitWutDraftEventTurn({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId, placements });
+    const input = { eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId, placements };
+    if (postgresEnabled) await commitWutDraftEventTurnPostgres(postgresPool(), input);
+    else commitWutDraftEventTurn(input);
     await scorePendingArenaMatches();
     req.session.flash = { type: 'success', message: 'Draft Event turn locked in.' };
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
   res.redirect(`/cards/drafts/${req.params.eventId}/matches/${req.params.matchId}`);
 });
 
-app.post('/cards/drafts/:eventId/matches/:matchId/reveal', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/matches/:matchId/reveal', requireLogin, requireWutReady, async (req, res) => {
   try {
-    completeWutDraftEventReveal({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    const input = { eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId };
+    if (postgresEnabled) await completeWutDraftEventRevealPostgres(postgresPool(), input);
+    else completeWutDraftEventReveal(input);
     return res.redirect(`/cards/drafts/${req.params.eventId}/matches/${req.params.matchId}/results#arena-results`);
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2113,9 +2481,10 @@ app.post('/cards/drafts/:eventId/matches/:matchId/reveal', requireLogin, require
   }
 });
 
-app.post('/cards/drafts/:eventId/join', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/join', requireLogin, requireWutReady, async (req, res) => {
   try {
-    const event = joinWutDraftEvent({ eventId: req.params.eventId, userId: req.session.userId });
+    const input = { eventId: req.params.eventId, userId: req.session.userId };
+    const event = postgresEnabled ? await joinWutDraftEventPostgres(postgresPool(), input) : joinWutDraftEvent(input);
     req.session.flash = { type: 'success', message: `You joined ${event.config.basic.name}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2123,9 +2492,10 @@ app.post('/cards/drafts/:eventId/join', requireLogin, requireWutReady, (req, res
   res.redirect('/cards/drafts');
 });
 
-app.post('/cards/drafts/:eventId/withdraw', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/drafts/:eventId/withdraw', requireLogin, requireWutReady, async (req, res) => {
   try {
-    const event = withdrawWutDraftEvent({ eventId: req.params.eventId, userId: req.session.userId });
+    const input = { eventId: req.params.eventId, userId: req.session.userId };
+    const event = postgresEnabled ? await withdrawWutDraftEventPostgres(postgresPool(), input) : withdrawWutDraftEvent(input);
     req.session.flash = { type: 'success', message: `You withdrew from ${event.config.basic.name}. Your entry fee was refunded.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2133,9 +2503,10 @@ app.post('/cards/drafts/:eventId/withdraw', requireLogin, requireWutReady, (req,
   res.redirect('/cards/drafts');
 });
 
-app.post('/cards/wut/join', requireLogin, (req, res) => {
+app.post('/cards/wut/join', requireLogin, async (req, res) => {
   try {
-    joinWut(req.session.userId);
+    if (postgresEnabled) await joinWutPostgres(postgresPool(), req.session.userId);
+    else joinWut(req.session.userId);
     req.session.flash = { type: 'success', message: 'Welcome to WUT. Your starter pack is ready.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2145,14 +2516,18 @@ app.post('/cards/wut/join', requireLogin, (req, res) => {
 
 app.post('/cards/wut/starter-pack', requireLogin, async (req, res) => {
   try {
-    const membership = getWutMembershipState(req.session.userId);
+    const membership = postgresEnabled
+      ? await getWutMembershipStatePostgres(postgresPool(), req.session.userId)
+      : getWutMembershipState(req.session.userId);
     if (!membership.joined) throw new Error('Join WUT before opening your starter pack.');
     if (membership.starterOpened) throw new Error('Your WUT starter pack has already been opened.');
     const catalog = await getCardsCatalog();
-    const config = getCardsConfig();
+    const config = await getLiveCardsConfig();
     const items = generateWutStarterPack(catalog);
     const bonusPackItems = generateWutPlayerPack({ packType: 'standard', catalog, config });
-    openWutStarterPack({ userId: req.session.userId, items, bonusPackItems });
+    const input = { userId: req.session.userId, items, bonusPackItems };
+    if (postgresEnabled) await openWutStarterPackPostgres(postgresPool(), input);
+    else openWutStarterPack(input);
     req.session.flash = { type: 'success', message: 'Starter pack opened: 2F, 2D, 1G, two Common trinkets, 1,000 WUT Coins, and a free Standard pack waiting in the WUT Shop.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2160,9 +2535,10 @@ app.post('/cards/wut/starter-pack', requireLogin, async (req, res) => {
   res.redirect('/cards');
 });
 
-app.post('/cards/missions/claim', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/missions/claim', requireLogin, requireWutReady, async (req, res) => {
   try {
-    const result = claimWutMission({ userId: req.session.userId, period: req.body.period, missionId: req.body.mission_id });
+    const input = { userId: req.session.userId, period: req.body.period, missionId: req.body.mission_id };
+    const result = postgresEnabled ? await claimWutMissionByIdPostgres(postgresPool(), input) : claimWutMission(input);
     req.session.flash = { type: 'success', message: `${result.mission.reward} WUT Coins claimed from ${result.mission.title}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2207,8 +2583,18 @@ app.get('/cards/arena/history', requireLogin, requireWutReady, async (req, res, 
 
 app.post('/cards/arena/enter', requireLogin, requireWutReady, async (req, res) => {
   try {
-    const catalog = await getCardsCatalog();
-    const entry = enterArenaQueue(req.session.userId, req.body.deck_id, arenaCatalogByIdentity(catalog));
+    let entry;
+    if (postgresEnabled) {
+      const hub = await buildArenaCardsHub(req.session.userId);
+      const deck = (hub.wut.decks || []).find(item => Number(item.id) === Number(req.body.deck_id));
+      if (!deck) throw new Error('Select a saved deck before entering the queue.');
+      entry = await enterArenaQueuePostgres(postgresPool(), {
+        userId: req.session.userId, deckId: deck.id, deckSnapshot: arenaDeckSnapshotFromHub(hub, deck)
+      });
+    } else {
+      const catalog = await getCardsCatalog();
+      entry = enterArenaQueue(req.session.userId, req.body.deck_id, arenaCatalogByIdentity(catalog));
+    }
     req.session.flash = { type: 'success', message: entry.matchmakingTriggered ? 'Queue reached 10 players. Matchmaking ran immediately.' : 'WUT entry confirmed. Matchmaking will assign your opponent.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2225,13 +2611,17 @@ app.post('/cards/arena/matches/:matchId/turn', requireLogin, requireWutReady, as
       boostId: req.body[`boost_id_${index}`] || null,
       journeymanKey: req.body[`journeyman_key_${index}`] || ''
     }));
-    const catalog = await getCardsCatalog();
-    commitArenaTurn({
+    const input = {
       userId: req.session.userId,
       matchId: req.params.matchId,
-      placements,
-      catalogByIdentity: arenaCatalogByIdentity(catalog)
-    });
+      placements
+    };
+    let catalog = null;
+    if (postgresEnabled) await commitArenaTurnPostgres(postgresPool(), input);
+    else {
+      catalog = await getCardsCatalog();
+      commitArenaTurn({ ...input, catalogByIdentity: arenaCatalogByIdentity(catalog) });
+    }
     await scorePendingArenaMatches(catalog);
     req.session.flash = { type: 'success', message: 'Turn locked in. Your opponent can now see the committed cards.' };
   } catch (err) {
@@ -2240,9 +2630,10 @@ app.post('/cards/arena/matches/:matchId/turn', requireLogin, requireWutReady, as
   res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
 });
 
-app.post('/cards/arena/matches/:matchId/reveal', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/arena/matches/:matchId/reveal', requireLogin, requireWutReady, async (req, res) => {
   try {
-    completeArenaReveal(req.session.userId, req.params.matchId);
+    if (postgresEnabled) await completeArenaRevealPostgres(postgresPool(), { userId: req.session.userId, matchId: req.params.matchId });
+    else completeArenaReveal(req.session.userId, req.params.matchId);
     return res.redirect(`/cards/arena/history?reveal=${encodeURIComponent(req.params.matchId)}#arena-results`);
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2252,8 +2643,12 @@ app.post('/cards/arena/matches/:matchId/reveal', requireLogin, requireWutReady, 
 
 app.post('/cards/arena/matches/:matchId/claim', requireLogin, requireWutReady, (req, res) => {
   try {
-    const result = claimArenaWinnings(req.session.userId, req.params.matchId);
-    req.session.flash = { type: 'success', message: result.alreadyAwarded ? `${result.prize} WUT Coins were already awarded.` : `${result.prize} legacy Mushybux collected.` };
+    if (postgresEnabled) {
+      req.session.flash = { type: 'success', message: 'Arena rewards are awarded automatically when scoring completes.' };
+    } else {
+      const result = claimArenaWinnings(req.session.userId, req.params.matchId);
+      req.session.flash = { type: 'success', message: result.alreadyAwarded ? `${result.prize} WUT Coins were already awarded.` : `${result.prize} legacy Mushybux collected.` };
+    }
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
@@ -2262,7 +2657,7 @@ app.post('/cards/arena/matches/:matchId/claim', requireLogin, requireWutReady, (
 
 app.post('/cards/arena/admin/match', requireAdmin, async (req, res) => {
   try {
-    const result = assignArenaMatchups();
+    const result = postgresEnabled ? await assignArenaMatchupsPostgres(postgresPool(), {}) : assignArenaMatchups();
     await scorePendingArenaMatches();
     req.session.flash = { type: 'success', message: `${result.createdMatchIds.length} WUT matchup${result.createdMatchIds.length === 1 ? '' : 's'} assigned.` };
   } catch (err) {
@@ -2271,9 +2666,9 @@ app.post('/cards/arena/admin/match', requireAdmin, async (req, res) => {
   res.redirect('/cards#arena-admin');
 });
 
-app.post('/cards/arena/admin/recalculate-elo', requireAdmin, (req, res) => {
+app.post('/cards/arena/admin/recalculate-elo', requireAdmin, async (req, res) => {
   try {
-    const result = recalculateArenaEloFromHistory();
+    const result = postgresEnabled ? await recalculateArenaEloFromHistoryPostgres(postgresPool()) : recalculateArenaEloFromHistory();
     req.session.flash = {
       type: 'success',
       message: `ELO recalculated from ${result.matchesReplayed} completed match${result.matchesReplayed === 1 ? '' : 'es'} for ${result.playersRanked} player${result.playersRanked === 1 ? '' : 's'}.`
@@ -2287,12 +2682,12 @@ app.post('/cards/arena/admin/recalculate-elo', requireAdmin, (req, res) => {
 app.get('/cards/arena/debug', requireAdmin, requireWutReady, async (req, res, next) => {
   try {
     const payload = await buildArenaCardsHub(req.session.userId);
-    let debugMatch = getWutDebugMatch(req.session.userId);
-    if (!debugMatch) debugMatch = resetWutDebugMatch(req.session.userId);
+    let debugMatch = postgresEnabled ? await getWutDebugMatchPostgres(postgresPool(), req.session.userId) : getWutDebugMatch(req.session.userId);
+    if (!debugMatch) debugMatch = postgresEnabled ? await resetWutDebugMatchPostgres(postgresPool(), req.session.userId) : resetWutDebugMatch(req.session.userId);
     const needsRevealData = debugMatch.status === 'completed' && debugMatch.placements.some(row =>
       !Array.isArray(row.rolled_games) || !Array.isArray(row.scoring_effects) || Number(row.reveal_data_version || 0) < 8
     );
-    if (needsRevealData && queueWutDebugRescore(req.session.userId)) {
+    if (needsRevealData && !postgresEnabled && queueWutDebugRescore(req.session.userId)) {
       await scorePendingArenaMatches();
       debugMatch = getWutDebugMatch(req.session.userId);
     }
@@ -2301,8 +2696,8 @@ app.get('/cards/arena/debug', requireAdmin, requireWutReady, async (req, res, ne
   } catch (err) { next(err); }
 });
 
-app.post('/cards/arena/debug/reset', requireAdmin, requireWutReady, (req, res) => {
-  resetWutDebugMatch(req.session.userId);
+app.post('/cards/arena/debug/reset', requireAdmin, requireWutReady, async (req, res) => {
+  if (postgresEnabled) await resetWutDebugMatchPostgres(postgresPool(), req.session.userId); else resetWutDebugMatch(req.session.userId);
   req.session.flash = { type: 'success', message: 'Admin debug game reset.' };
   res.redirect('/cards/arena/debug');
 });
@@ -2310,7 +2705,10 @@ app.post('/cards/arena/debug/reset', requireAdmin, requireWutReady, (req, res) =
 app.post('/cards/arena/debug/place', requireAdmin, requireWutReady, async (req, res) => {
   try {
     const catalog = await getCardsCatalog();
-    commitWutDebugPlacement({ adminUserId: req.session.userId, side: req.body.side, slot: req.body.slot,
+    if (postgresEnabled) {
+      const hub = await buildArenaCardsHub(req.session.userId); const card = hub.cards.find(item => Number(item.id) === Number(req.body.card_id)); const boost = hub.boosts.find(item => Number(item.id) === Number(req.body.boost_id)) || null;
+      await commitWutDebugPlacementPostgres(postgresPool(), { adminUserId:req.session.userId,side:req.body.side,slot:req.body.slot,cardSnapshot:arenaSnapshotForCard(card,hub.wut.config),boost,journeymanKey:req.body.journeyman_key||'',config:await getLiveCardsConfig() });
+    } else commitWutDebugPlacement({ adminUserId: req.session.userId, side: req.body.side, slot: req.body.slot,
       cardId: req.body.card_id, boostId: req.body.boost_id || null, journeymanKey: req.body.journeyman_key || '', catalogByIdentity: arenaCatalogByIdentity(catalog) });
     await scorePendingArenaMatches(catalog);
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
@@ -2319,6 +2717,7 @@ app.post('/cards/arena/debug/place', requireAdmin, requireWutReady, async (req, 
 
 app.post('/cards/legacy-lineup/calculate', requireLogin, async (req, res) => {
   try {
+    if (postgresEnabled) throw new Error('The retired weekly lineup mode is unavailable after the WUT 2.0 migration. Use Arena or Draft Events.');
     const settings = getAdminSettings();
     const week = Number(settings.currentWeek);
     const slot = String(req.body.slot || '').toUpperCase();
@@ -2369,6 +2768,7 @@ app.post('/cards/legacy-lineup/calculate', requireLogin, async (req, res) => {
 
 app.post('/cards/legacy-lineup', requireLogin, async (req, res) => {
   try {
+    if (postgresEnabled) throw new Error('The retired weekly lineup mode is unavailable after the WUT 2.0 migration. Use Arena or Draft Events.');
     const settings = getAdminSettings();
     const catalog = await getCardsCatalog();
     const catalogByKey = cardsCatalogMap(catalog);
@@ -2434,6 +2834,7 @@ app.post('/cards/legacy-lineup', requireLogin, async (req, res) => {
 
 app.post('/cards/legacy-week-review/ack', requireLogin, (req, res) => {
   try {
+    if (postgresEnabled) throw new Error('Legacy weekly reviews are read-only after the WUT 2.0 migration.');
     acknowledgeCardsWeekReview(req.session.userId, req.body.week);
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2444,7 +2845,9 @@ app.post('/cards/legacy-week-review/ack', requireLogin, (req, res) => {
 app.get('/cards/store', requireLogin, requireWutReady, async (req, res, next) => {
   try {
     const catalog = await getCardsCatalog();
-    const pendingPack = getPendingCardsPack(req.session.userId);
+    const pendingPack = postgresEnabled
+      ? await getPendingCardsPackPostgres(postgresPool(), req.session.userId)
+      : getPendingCardsPack(req.session.userId);
     const catalogByKey = cardsCatalogMap(catalog);
     const decoratedPack = pendingPack ? {
       ...pendingPack,
@@ -2455,11 +2858,14 @@ app.get('/cards/store', requireLogin, requireWutReady, async (req, res, next) =>
           : null
       }))
     } : null;
+    const wut = postgresEnabled
+      ? await getWutSystemsStatePostgres(postgresPool(), req.session.userId)
+      : getWutSystemsState(req.session.userId);
     res.render('cards_store', {
-      config: getCardsConfig(),
-      balance: getUserById(req.session.userId)?.balance || 0,
-      wut: getWutSystemsState(req.session.userId),
-      wutCoins: getWutSystemsState(req.session.userId).wutCoins,
+      config: await getLiveCardsConfig(),
+      balance: res.locals.currentUser?.balance || 0,
+      wut,
+      wutCoins: wut.wutCoins,
       pendingPack: decoratedPack
     });
   } catch (err) {
@@ -2474,18 +2880,20 @@ app.post('/cards/store/buy', requireLogin, requireWutReady, async (req, res) => 
     if (packKind !== 'player' || !['standard', 'premium', 'prestige'].includes(packType)) {
       throw new Error('Invalid pack selection.');
     }
-    const config = getCardsConfig();
+    const config = await getLiveCardsConfig();
     const catalog = await getCardsCatalog();
     const items = generateWutPlayerPack({ packType, catalog, config });
     const prices = config.playerPackPrices;
-    createCardsPackPurchase({
+    const input = {
       userId: req.session.userId,
-      week: getAdminSettings().currentWeek,
+      week: (postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings()).currentWeek,
       packKind,
       packType,
       price: prices[packType],
       items
-    });
+    };
+    if (postgresEnabled) await createCardsPackPurchasePostgres(postgresPool(), input);
+    else createCardsPackPurchase(input);
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
@@ -2499,40 +2907,43 @@ app.get('/cards/decks', requireLogin, requireWutReady, async (req, res, next) =>
 app.post('/cards/decks/save', requireLogin, requireWutReady, async (req, res) => {
   try {
     const catalog = await getCardsCatalog();
-    saveWutDeck({ userId: req.session.userId, deckId: req.body.deck_id || null, name: req.body.name,
+    const input = { userId: req.session.userId, deckId: req.body.deck_id || null, name: req.body.name,
       activeCardIds: [].concat(req.body.active_card_ids || []), benchCardIds: [].concat(req.body.bench_card_ids || []),
-      catalogByIdentity: arenaCatalogByIdentity(catalog) });
+      catalogByIdentity: arenaCatalogByIdentity(catalog) };
+    if (postgresEnabled) await saveWutDeckPostgres(postgresPool(), input);
+    else saveWutDeck(input);
     req.session.flash = { type: 'success', message: 'WUT deck saved.' };
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
   res.redirect('/cards/decks');
 });
 
-app.post('/cards/decks/slot', requireLogin, requireWutReady, (req, res) => {
-  try { buyWutDeckSlot(req.session.userId); req.session.flash = { type: 'success', message: 'Extra saved deck slot purchased.' }; }
+app.post('/cards/decks/slot', requireLogin, requireWutReady, async (req, res) => {
+  try { if (postgresEnabled) await buyWutDeckSlotPostgres(postgresPool(), req.session.userId); else buyWutDeckSlot(req.session.userId); req.session.flash = { type: 'success', message: 'Extra saved deck slot purchased.' }; }
   catch (err) { req.session.flash = { type: 'error', message: err.message }; }
   res.redirect('/cards/decks');
 });
 
-app.post('/cards/trinkets/buy', requireLogin, requireWutReady, (req, res) => {
-  try { buyWutTrinket({ userId: req.session.userId, slot: req.body.slot }); req.session.flash = { type: 'success', message: 'Trinket added to inventory.' }; }
+app.post('/cards/trinkets/buy', requireLogin, requireWutReady, async (req, res) => {
+  try { const input = { userId: req.session.userId, slot: req.body.slot }; if (postgresEnabled) await buyWutTrinketPostgres(postgresPool(), input); else buyWutTrinket(input); req.session.flash = { type: 'success', message: 'Trinket added to inventory.' }; }
   catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/store');
 });
-app.post('/cards/trinkets/reroll', requireLogin, requireWutReady, (req, res) => {
-  try { rerollWutTrinketShop({ userId: req.session.userId, currency: req.body.currency }); req.session.flash = { type: 'success', message: 'Trinket shop rerolled.' }; }
+app.post('/cards/trinkets/reroll', requireLogin, requireWutReady, async (req, res) => {
+  try { const input = { userId: req.session.userId, currency: req.body.currency }; if (postgresEnabled) await rerollWutTrinketShopPostgres(postgresPool(), input); else rerollWutTrinketShop(input); req.session.flash = { type: 'success', message: 'Trinket shop rerolled.' }; }
   catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/store');
 });
 app.post('/cards/trinkets/attach', requireLogin, requireWutReady, async (req, res) => {
-  try { attachWutTrinket({ userId: req.session.userId, cardId: req.body.card_id, trinketId: req.body.trinket_id, catalogByIdentity: arenaCatalogByIdentity(await getCardsCatalog()) }); req.session.flash = { type: 'success', message: 'Trinket attached.' }; }
+  try { const input = { userId: req.session.userId, cardId: req.body.card_id, trinketId: req.body.trinket_id, catalogByIdentity: arenaCatalogByIdentity(await getCardsCatalog()) }; if (postgresEnabled) await attachWutTrinketPostgres(postgresPool(), input); else attachWutTrinket(input); req.session.flash = { type: 'success', message: 'Trinket attached.' }; }
   catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/collection');
 });
-app.post('/cards/trinkets/remove', requireLogin, requireWutReady, (req, res) => {
-  try { removeWutTrinket({ userId: req.session.userId, cardId: req.body.card_id, currency: req.body.currency }); req.session.flash = { type: 'success', message: 'Trinket removed.' }; }
+app.post('/cards/trinkets/remove', requireLogin, requireWutReady, async (req, res) => {
+  try { const input = { userId: req.session.userId, cardId: req.body.card_id, currency: req.body.currency }; if (postgresEnabled) await removeWutTrinketPostgres(postgresPool(), input); else removeWutTrinket(input); req.session.flash = { type: 'success', message: 'Trinket removed.' }; }
   catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/collection');
 });
 
-app.post('/cards/store/claim', requireLogin, requireWutReady, (req, res) => {
+app.post('/cards/store/claim', requireLogin, requireWutReady, async (req, res) => {
   try {
-    claimCardsPack(req.session.userId, req.body.purchase_id);
+    if (postgresEnabled) await claimCardsPackPostgres(postgresPool(), { userId: req.session.userId, purchaseId: req.body.purchase_id });
+    else claimCardsPack(req.session.userId, req.body.purchase_id);
     req.session.flash = { type: 'success', message: 'Pack added to your collection.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -2542,15 +2953,17 @@ app.post('/cards/store/claim', requireLogin, requireWutReady, (req, res) => {
 
 app.get('/betting', requireLogin, async (req, res, next) => {
   try {
-    const bettingView = getBettingView(req);
+    const bettingView = await getBettingView(req);
     const betType = String(req.query.type || 'series').toLowerCase() === 'props' ? 'props' : 'series';
-    const activeOdds = getOddsAdjustmentsForWeek(bettingView.week);
-    const seasonId = getAdminSettings().seasonId;
+    const activeOdds = postgresEnabled ? await getOddsAdjustmentsForWeekPostgres(postgresPool(), bettingView.week) : getOddsAdjustmentsForWeek(bettingView.week);
+    const seasonId = (postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings()).seasonId;
     const [series, closureState] = await Promise.all([
       getUpcomingSeries(bettingView.week, seasonId),
       getBetClosureState({ seasonId, week: bettingView.week })
     ]);
-    const betsBySeries = getUserBetsBySeries(req.session.userId, bettingView.week);
+    const betsBySeries = postgresEnabled
+      ? await getUserBetsBySeriesPostgres(postgresPool(), req.session.userId, bettingView.week)
+      : getUserBetsBySeries(req.session.userId, bettingView.week);
     const board = series.map(s => ({
       ...s,
       markets: buildMarketsForSeries(s, activeOdds),
@@ -2560,8 +2973,10 @@ app.get('/betting', requireLogin, async (req, res, next) => {
       result: closureState.weekResults.seriesResults[s.series_key] || null
     }));
 
-    const propBetsByCategory = getUserPropBetsByCategory(req.session.userId, bettingView.week);
-    const rawPropBoards = (await getPropBoards(bettingView.week, getAdminSettings().seasonId, activeOdds)).map(div => ({
+    const propBetsByCategory = postgresEnabled
+      ? await getUserPropBetsByCategoryPostgres(postgresPool(), req.session.userId, bettingView.week)
+      : getUserPropBetsByCategory(req.session.userId, bettingView.week);
+    const rawPropBoards = (await getPropBoards(bettingView.week, seasonId, activeOdds)).map(div => ({
       ...div,
       categories: div.categories.map(cat => ({
         ...cat,
@@ -2569,11 +2984,11 @@ app.get('/betting', requireLogin, async (req, res, next) => {
       }))
     }));
     const basePropBoards = await filterLeaderPropPools(rawPropBoards, {
-      seasonId: getAdminSettings().seasonId,
+      seasonId,
       week: bettingView.week
     });
     const seriesPropMarkets = await buildWeeklyPropMarkets({
-      seasonId: getAdminSettings().seasonId,
+      seasonId,
       week: bettingView.week,
       odds: activeOdds,
       publishedOnly: true
@@ -2587,7 +3002,9 @@ app.get('/betting', requireLogin, async (req, res, next) => {
       bettingClosed: closureState.closedDivisionIds.has(board.division_id)
     }));
 
-    const balanceSummary = getBalanceSummaryForUser(req.session.userId);
+    const balanceSummary = postgresEnabled
+      ? await getBalanceSummaryForUserPostgres(postgresPool(), req.session.userId)
+      : getBalanceSummaryForUser(req.session.userId);
     res.render('betting', { board, propBoards, bettingView, betType, balanceSummary });
   } catch (err) {
     next(err);
@@ -2595,16 +3012,17 @@ app.get('/betting', requireLogin, async (req, res, next) => {
 });
 
 app.post('/bets', requireLogin, async (req, res) => {
-  const bettingView = getBettingView(req);
+  const bettingView = await getBettingView(req);
   try {
     if (bettingView.locked) throw new Error('Betting is locked for this week.');
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
 
     const stake = Number(req.body.stake);
-    const activeOdds = getOddsAdjustmentsForWeek(bettingView.week);
-    const series = (await getUpcomingSeries(bettingView.week, getAdminSettings().seasonId)).find(s => s.series_key === req.body.series_key);
+    const activeOdds = postgresEnabled ? await getOddsAdjustmentsForWeekPostgres(postgresPool(), bettingView.week) : getOddsAdjustmentsForWeek(bettingView.week);
+    const series = (await getUpcomingSeries(bettingView.week, settings.seasonId)).find(s => s.series_key === req.body.series_key);
     if (!series) throw new Error('Series not found.');
     const closureState = await getBetClosureState({
-      seasonId: getAdminSettings().seasonId,
+      seasonId: settings.seasonId,
       week: bettingView.week
     });
     if (closureState.completedSeriesKeys.has(series.series_key)) {
@@ -2622,7 +3040,7 @@ app.post('/bets', requireLogin, async (req, res) => {
     const multiplier = goalTotalSide ? Number((Number(market.multiplier) * goalTotalBoost).toFixed(2)) : Number(market.multiplier);
     const goalTotalLabel = goalTotalSide ? ` + ${goalTotalSide === 'over' ? 'Over' : 'Under'} ${goalTotalLine}` : '';
 
-    const result = placeOrUpdateBet({
+    const betInput = {
       userId: req.session.userId,
       week: bettingView.week,
       divisionId: series.division_id,
@@ -2637,7 +3055,10 @@ app.post('/bets', requireLogin, async (req, res) => {
       goalTotalLine: goalTotalSide ? goalTotalLine : null,
       goalTotalBoost: goalTotalSide ? goalTotalBoost : null,
       locked: bettingView.locked
-    });
+    };
+    const result = postgresEnabled
+      ? await placeOrUpdateSeriesBetPostgres(postgresPool(), betInput)
+      : placeOrUpdateBet(betInput);
 
     req.session.flash = {
       type: 'success',
@@ -2650,31 +3071,32 @@ app.post('/bets', requireLogin, async (req, res) => {
 });
 
 app.post('/prop-bets', requireLogin, async (req, res) => {
-  const bettingView = getBettingView(req);
+  const bettingView = await getBettingView(req);
   try {
     if (bettingView.locked) throw new Error('Betting is locked for this week.');
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
 
     const propKey = String(req.body.prop_key || '');
     const [divisionId, category] = propKey.split('|');
     if (!divisionId || !category) throw new Error('Prop not found.');
     const closureState = await getBetClosureState({
-      seasonId: getAdminSettings().seasonId,
+      seasonId: settings.seasonId,
       week: bettingView.week
     });
     if (closureState.closedDivisionIds.has(divisionId)) {
       throw new Error(`${divisionId} prop betting is closed because a series in that division is complete.`);
     }
 
-    const activeOdds = getOddsAdjustmentsForWeek(bettingView.week);
+    const activeOdds = postgresEnabled ? await getOddsAdjustmentsForWeekPostgres(postgresPool(), bettingView.week) : getOddsAdjustmentsForWeek(bettingView.week);
     const basePropBoards = await filterLeaderPropPools(
-      await getPropBoards(bettingView.week, getAdminSettings().seasonId, activeOdds),
+      await getPropBoards(bettingView.week, settings.seasonId, activeOdds),
       {
-        seasonId: getAdminSettings().seasonId,
+        seasonId: settings.seasonId,
         week: bettingView.week
       }
     );
     const seriesPropMarkets = await buildWeeklyPropMarkets({
-      seasonId: getAdminSettings().seasonId,
+      seasonId: settings.seasonId,
       week: bettingView.week,
       odds: activeOdds,
       publishedOnly: true
@@ -2708,7 +3130,7 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
       ? `${division.division_name} ${prop.title}: ${player.display_name} · ${quantityLabel}`
       : `${division.division_name} ${prop.title}: ${player.display_name}`;
 
-    const result = placeOrUpdatePropBet({
+    const betInput = {
       userId: req.session.userId,
       week: bettingView.week,
       divisionId,
@@ -2725,7 +3147,10 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
       multiplier,
       quantity,
       locked: bettingView.locked
-    });
+    };
+    const result = postgresEnabled
+      ? await placeOrUpdatePropBetPostgres(postgresPool(), betInput)
+      : placeOrUpdatePropBet(betInput);
 
     req.session.flash = {
       type: 'success',
@@ -2738,17 +3163,21 @@ app.post('/prop-bets', requireLogin, async (req, res) => {
 });
 
 app.post('/bets/cancel', requireLogin, async (req, res) => {
-  const bettingView = getBettingView(req);
+  const bettingView = await getBettingView(req);
   const betType = String(req.body.type || 'series').toLowerCase() === 'props' ? 'props' : 'series';
 
   try {
     if (bettingView.locked) throw new Error('Betting is locked for this week.');
-    const bet = getUserBets(req.session.userId, 10000).find(
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    const userBets = postgresEnabled
+      ? await getUserBetsPostgres(postgresPool(), req.session.userId, 10000)
+      : getUserBets(req.session.userId, 10000);
+    const bet = userBets.find(
       candidate => Number(candidate.id) === Number(req.body.bet_id)
     );
     if (!bet) throw new Error('Bet not found.');
     const closureState = await getBetClosureState({
-      seasonId: getAdminSettings().seasonId,
+      seasonId: settings.seasonId,
       week: bettingView.week
     });
     if ((bet.bet_kind || 'series') === 'series' &&
@@ -2760,11 +3189,14 @@ app.post('/bets/cancel', requireLogin, async (req, res) => {
       throw new Error(`${bet.division_id} prop betting is closed for this week.`);
     }
 
-    const result = cancelOpenBet({
+    const cancelInput = {
       userId: req.session.userId,
       betId: req.body.bet_id,
       locked: bettingView.locked
-    });
+    };
+    const result = postgresEnabled
+      ? await cancelOpenBetPostgres(postgresPool(), cancelInput)
+      : cancelOpenBet(cancelInput);
 
     req.session.flash = {
       type: 'success',
@@ -2782,24 +3214,24 @@ function requireAdmin(req, res, next) {
     req.session.flash = { type: 'error', message: 'Please log in first.' };
     return res.redirect('/login');
   }
-  const user = getUserById(req.session.userId);
+  const user = res.locals.currentUser;
   if (!user || user.role !== 'admin') return res.status(403).send('Admin only.');
   next();
 }
 
 app.get('/admin', requireAdmin, async (req, res, next) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const currentWeek = Number(settings.currentWeek || 1);
     const nextWeek = currentWeek + 1;
     const oddsWeekMode = String(req.query.odds_week || '') === 'current' ? 'current' : 'next';
     const oddsWeek = oddsWeekMode === 'current' ? currentWeek : nextWeek;
-    const currentWeekBets = getAdminBetsForWeek(currentWeek);
-    const reviewableWeekBets = getAdminBetsForWeek(currentWeek, ['open', 'settled']);
-    const nextWeekBets = getAdminBetsForWeek(nextWeek);
-    const users = getUserSummaries();
+    const currentWeekBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), currentWeek) : getAdminBetsForWeek(currentWeek);
+    const reviewableWeekBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), currentWeek, ['open', 'settled']) : getAdminBetsForWeek(currentWeek, ['open', 'settled']);
+    const nextWeekBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), nextWeek) : getAdminBetsForWeek(nextWeek);
+    const users = postgresEnabled ? await getUserSummariesPostgres(postgresPool()) : getUserSummaries();
     const seasons = await getAvailableSeasons();
-    const reviewedOdds = getOddsAdjustmentsForWeek(oddsWeek);
+    const reviewedOdds = postgresEnabled ? await getOddsAdjustmentsForWeekPostgres(postgresPool(), oddsWeek) : getOddsAdjustmentsForWeek(oddsWeek);
     const currentWeekSeries = await getUpcomingSeries(currentWeek, settings.seasonId);
     const seriesBetReview = await buildSeriesBetReview({
       seasonId: settings.seasonId,
@@ -2807,10 +3239,10 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       series: currentWeekSeries,
       bets: reviewableWeekBets
     });
-    const voidRefunds = getVoidRefundsForWeek(currentWeek);
+    const voidRefunds = postgresEnabled ? await getVoidRefundsForWeekPostgres(postgresPool(), currentWeek) : getVoidRefundsForWeek(currentWeek);
     const backupInfo = getBackupInfo();
-    const casinoSummary = getCasinoSummary();
-    const cardsAdmin = getCardsAdminState();
+    const casinoSummary = postgresEnabled ? await getCasinoSummaryPostgres(postgresPool()) : getCasinoSummary();
+    const cardsAdmin = postgresEnabled ? await getCardsAdminStatePostgres(postgresPool()) : getCardsAdminState();
     const cardsCatalog = sortCardsCatalogForAdmin(await getCardsCatalog());
     let settlementPreview = null;
     let seriesOddsRecommendations = null;
@@ -2947,24 +3379,25 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
   }
 });
 
-app.get('/admin/cards/matches', requireAdmin, (req, res, next) => {
+app.get('/admin/cards/matches', requireAdmin, async (req, res, next) => {
   try {
     const selectedUserId = Number(req.query.user_id) || null;
     res.render('admin_cards_matches', {
-      arenaMatches: getArenaAdminMatchState({ userId: selectedUserId })
+      arenaMatches: postgresEnabled ? await getArenaAdminMatchStatePostgres(postgresPool(), { userId: selectedUserId }) : getArenaAdminMatchState({ userId: selectedUserId })
     });
   } catch (err) {
     next(err);
   }
 });
 
-app.post('/admin/cards/matches/:matchId/void', requireAdmin, (req, res) => {
+app.post('/admin/cards/matches/:matchId/void', requireAdmin, async (req, res) => {
   try {
-    const result = adminVoidArenaMatch({
+    const input = {
       matchId: req.params.matchId,
       adminUserId: req.session.userId,
       reason: req.body.reason
-    });
+    };
+    const result = postgresEnabled ? await adminVoidArenaMatchPostgres(postgresPool(), input) : adminVoidArenaMatch(input);
     const released = result.releasedBoostIds.length
       ? ` ${result.releasedBoostIds.length} committed boost${result.releasedBoostIds.length === 1 ? '' : 's'} returned.`
       : '';
@@ -2977,11 +3410,13 @@ app.post('/admin/cards/matches/:matchId/void', requireAdmin, (req, res) => {
   res.redirect(`/admin/cards/matches${userId ? `?user_id=${userId}` : ''}`);
 });
 
-app.get('/admin/cards/drafts', requireAdmin, (req, res, next) => {
+app.get('/admin/cards/drafts', requireAdmin, async (req, res, next) => {
   try {
     res.render('admin_draft_events', {
-      draftPresets: getWutDraftEventPresets(),
-      draftEvents: getWutDraftEventLobby({ userId: req.session.userId, includePrivate: true }),
+      draftPresets: postgresEnabled ? await getWutDraftEventPresetsPostgres(postgresPool()) : getWutDraftEventPresets(),
+      draftEvents: postgresEnabled
+        ? await getDraftEventLobbyPostgres(postgresPool(), { userId: req.session.userId, includePrivate: true })
+        : getWutDraftEventLobby({ userId: req.session.userId, includePrivate: true }),
       draftTransitions: WUT_DRAFT_TRANSITIONS
     });
   } catch (err) {
@@ -2997,13 +3432,14 @@ function parsedDraftConfig(body) {
   }
 }
 
-app.post('/admin/cards/drafts/events', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/events', requireAdmin, async (req, res) => {
   try {
-    const event = createWutDraftEvent({
+    const input = {
       config: parsedDraftConfig(req.body),
       presetId: req.body.preset_id || null,
       adminUserId: req.session.userId
-    });
+    };
+    const event = postgresEnabled ? await createWutDraftEventPostgres(postgresPool(), input) : createWutDraftEvent(input);
     req.session.flash = { type: 'success', message: `Draft Event #${event.id}, ${event.config.basic.name}, was published.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3011,15 +3447,16 @@ app.post('/admin/cards/drafts/events', requireAdmin, (req, res) => {
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/presets', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/presets', requireAdmin, async (req, res) => {
   try {
-    const preset = saveWutDraftEventPreset({
+    const input = {
       presetId: req.body.update_selected === '1' ? req.body.preset_id : null,
       name: req.body.preset_name,
       description: req.body.preset_description,
       config: parsedDraftConfig(req.body),
       adminUserId: req.session.userId
-    });
+    };
+    const preset = postgresEnabled ? await saveWutDraftEventPresetPostgres(postgresPool(), input) : saveWutDraftEventPreset(input);
     req.session.flash = { type: 'success', message: `Draft preset “${preset.name}” was saved.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3027,12 +3464,13 @@ app.post('/admin/cards/drafts/presets', requireAdmin, (req, res) => {
   res.redirect('/admin/cards/drafts');
 });
 
-function draftEnvironmentFromCatalog(event, catalog) {
+async function draftEnvironmentFromCatalog(event, catalog) {
   const { boosterCards, benchCards } = splitWutDraftCardPools(event.config, catalog);
   const cards = boosterCards.map(snapshotWutDraftCard);
-  const global = getCardsConfig();
+  const global = await getLiveCardsConfig();
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
   return {
-    season_id: getAdminSettings().seasonId,
+    season_id: settings.seasonId,
     cards,
     bench_cards: benchCards.map(snapshotWutDraftCard),
     rules: {
@@ -3051,18 +3489,26 @@ app.post('/admin/cards/drafts/:eventId/phase', requireAdmin, async (req, res) =>
     const nextPhase = req.body.next_phase;
     let event;
     if (nextPhase === 'starting') {
-      const current = getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true })[0];
-      const environment = draftEnvironmentFromCatalog(current, await getCardsCatalog());
-      event = startWutDraftEvent({ eventId: req.params.eventId, environment, adminUserId: req.session.userId });
+      const current = (postgresEnabled
+        ? await getDraftEventLobbyPostgres(postgresPool(), { eventId: req.params.eventId, includePrivate: true })
+        : getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true }))[0];
+      const environment = await draftEnvironmentFromCatalog(current, await getCardsCatalog());
+      const input = { eventId: req.params.eventId, environment, adminUserId: req.session.userId };
+      event = postgresEnabled ? await startWutDraftEventPostgres(postgresPool(), input) : startWutDraftEvent(input);
     } else if (nextPhase === 'bench_vote') {
-      const current = getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true })[0];
-      const environment = draftEnvironmentFromCatalog(current, await getCardsCatalog());
-      event = beginWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId, benchCards: environment.bench_cards });
+      const current = (postgresEnabled
+        ? await getDraftEventLobbyPostgres(postgresPool(), { eventId: req.params.eventId, includePrivate: true })
+        : getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true }))[0];
+      const environment = await draftEnvironmentFromCatalog(current, await getCardsCatalog());
+      const input = { eventId: req.params.eventId, adminUserId: req.session.userId, benchCards: environment.bench_cards };
+      event = postgresEnabled ? await beginWutDraftSafetyBenchPostgres(postgresPool(), input) : beginWutDraftSafetyBench(input);
     } else if (nextPhase === 'draft') {
-      event = beginWutDraftEvent({ eventId: req.params.eventId, adminUserId: req.session.userId });
-    } else event = transitionWutDraftEvent({
-      eventId: req.params.eventId, nextPhase, adminUserId: req.session.userId, reason: req.body.reason
-    });
+      const input = { eventId: req.params.eventId, adminUserId: req.session.userId };
+      event = postgresEnabled ? await beginWutDraftEventPostgres(postgresPool(), input) : beginWutDraftEvent(input);
+    } else {
+      const input = { eventId: req.params.eventId, nextPhase, adminUserId: req.session.userId, reason: req.body.reason };
+      event = postgresEnabled ? await transitionWutDraftEventPostgres(postgresPool(), input) : transitionWutDraftEvent(input);
+    }
     req.session.flash = { type: 'success', message: `Draft Event #${event.id} moved to ${event.phase.replaceAll('_', ' ')}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3072,13 +3518,16 @@ app.post('/admin/cards/drafts/:eventId/phase', requireAdmin, async (req, res) =>
 
 app.post('/admin/cards/drafts/:eventId/start-now', requireAdmin, async (req, res) => {
   try {
-    const current = getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true })[0];
+    const current = (postgresEnabled
+      ? await getDraftEventLobbyPostgres(postgresPool(), { eventId: req.params.eventId, includePrivate: true })
+      : getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true }))[0];
     if (!['scheduled', 'signup_open', 'signup_closed'].includes(current.phase)) throw new Error('This Draft Event is not waiting to start.');
-    const environment = draftEnvironmentFromCatalog(current, await getCardsCatalog());
-    startWutDraftEvent({
-      eventId: req.params.eventId, environment, adminUserId: req.session.userId, startNow: true
-    });
-    const event = beginWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    const environment = await draftEnvironmentFromCatalog(current, await getCardsCatalog());
+    const startInput = { eventId: req.params.eventId, environment, adminUserId: req.session.userId, startNow: true };
+    if (postgresEnabled) await startWutDraftEventPostgres(postgresPool(), startInput);
+    else startWutDraftEvent(startInput);
+    const benchInput = { eventId: req.params.eventId, adminUserId: req.session.userId };
+    const event = postgresEnabled ? await beginWutDraftSafetyBenchPostgres(postgresPool(), benchInput) : beginWutDraftSafetyBench(benchInput);
     req.session.flash = { type: 'success', message: `Draft Event #${event.id} started early and is now in ${event.phase.replaceAll('_', ' ')}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3086,9 +3535,11 @@ app.post('/admin/cards/drafts/:eventId/start-now', requireAdmin, async (req, res
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/bench/finish', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/bench/finish', requireAdmin, async (req, res) => {
   try {
-    finishWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason };
+    if (postgresEnabled) await finishWutDraftSafetyBenchPostgres(postgresPool(), input);
+    else finishWutDraftSafetyBench(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} Safety Bench was finalized.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3096,9 +3547,11 @@ app.post('/admin/cards/drafts/:eventId/bench/finish', requireAdmin, (req, res) =
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/bench/extend', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/bench/extend', requireAdmin, async (req, res) => {
   try {
-    extendWutDraftSafetyBench({ eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds };
+    if (postgresEnabled) await extendWutDraftSafetyBenchPostgres(postgresPool(), input);
+    else extendWutDraftSafetyBench(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} Safety Bench timer was extended.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3106,9 +3559,10 @@ app.post('/admin/cards/drafts/:eventId/bench/extend', requireAdmin, (req, res) =
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/draft/autopick', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/draft/autopick', requireAdmin, async (req, res) => {
   try {
-    const result = forceWutDraftAutopick({ eventId: req.params.eventId, userId: req.body.user_id || null, adminUserId: req.session.userId });
+    const input = { eventId: req.params.eventId, userId: req.body.user_id || null, adminUserId: req.session.userId };
+    const result = postgresEnabled ? await forceWutDraftAutopickPostgres(postgresPool(), input) : forceWutDraftAutopick(input);
     req.session.flash = { type: 'success', message: `${result.picks.length} forced autopick${result.picks.length === 1 ? '' : 's'} completed.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3116,9 +3570,11 @@ app.post('/admin/cards/drafts/:eventId/draft/autopick', requireAdmin, (req, res)
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/draft/extend', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/draft/extend', requireAdmin, async (req, res) => {
   try {
-    extendWutDraftPickDeadline({ eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds };
+    if (postgresEnabled) await extendWutDraftPickDeadlinePostgres(postgresPool(), input);
+    else extendWutDraftPickDeadline(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} pick timer was extended.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3126,9 +3582,11 @@ app.post('/admin/cards/drafts/:eventId/draft/extend', requireAdmin, (req, res) =
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/deckbuilding/finish', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/deckbuilding/finish', requireAdmin, async (req, res) => {
   try {
-    finishWutDraftDeckbuilding({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, autosubmitMissing: true };
+    if (postgresEnabled) await finishWutDraftDeckbuildingPostgres(postgresPool(), input);
+    else finishWutDraftDeckbuilding(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} decks were locked; missing decks were autosubmitted.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3136,9 +3594,11 @@ app.post('/admin/cards/drafts/:eventId/deckbuilding/finish', requireAdmin, (req,
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/deckbuilding/extend', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/deckbuilding/extend', requireAdmin, async (req, res) => {
   try {
-    extendWutDraftDeckbuilding({ eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds };
+    if (postgresEnabled) await extendWutDraftDeckbuildingPostgres(postgresPool(), input);
+    else extendWutDraftDeckbuilding(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} deckbuilding timer was extended.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3146,9 +3606,10 @@ app.post('/admin/cards/drafts/:eventId/deckbuilding/extend', requireAdmin, (req,
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/tournament/advance', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/tournament/advance', requireAdmin, async (req, res) => {
   try {
-    const event = advanceWutDraftEventRound({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId };
+    const event = postgresEnabled ? await advanceWutDraftEventRoundPostgres(postgresPool(), input) : advanceWutDraftEventRound(input);
     req.session.flash = { type: 'success', message: `Draft Event #${event.id} advanced to ${event.phase === 'tournament' ? `round ${event.tournament.round}` : event.phase}.` };
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
   res.redirect('/admin/cards/drafts');
@@ -3156,27 +3617,35 @@ app.post('/admin/cards/drafts/:eventId/tournament/advance', requireAdmin, (req, 
 
 app.post('/admin/cards/drafts/:eventId/prizes/award', requireAdmin, async (req, res) => {
   try {
-    const results = await awardCompletedWutDraftEvents(null, req.params.eventId, req.session.userId);
-    const result = results[0];
+    let result;
+    if (postgresEnabled) {
+      const catalog = await getCardsCatalog(); const config = await getLiveCardsConfig();
+      result = await awardWutDraftEventPrizesPostgres(postgresPool(), {
+        eventId: req.params.eventId, adminUserId: req.session.userId,
+        generatePack: packType => generateWutPlayerPack({ packType, catalog, config })
+      });
+    } else result = (await awardCompletedWutDraftEvents(null, req.params.eventId, req.session.userId))[0];
     req.session.flash = { type: 'success', message: result ? `Awarded ${result.awards.length} Draft Event prize item${result.awards.length === 1 ? '' : 's'} and retired temporary inventories.` : 'Draft Event prizes were already awarded.' };
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/reschedule', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/reschedule', requireAdmin, async (req, res) => {
   try {
-    rescheduleWutDraftEvent({
+    const input = {
       eventId: req.params.eventId, adminUserId: req.session.userId,
       signupOpensAt: req.body.signup_opens_at, signupClosesAt: req.body.signup_closes_at, startsAt: req.body.starts_at
-    });
+    };
+    if (postgresEnabled) await rescheduleWutDraftEventPostgres(postgresPool(), input); else rescheduleWutDraftEvent(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} schedule updated.` };
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/entrants/:userId/drop', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/entrants/:userId/drop', requireAdmin, async (req, res) => {
   try {
-    dropWutDraftEventEntrant({ eventId: req.params.eventId, userId: req.params.userId, adminUserId: req.session.userId, reason: req.body.reason });
+    const input = { eventId: req.params.eventId, userId: req.params.userId, adminUserId: req.session.userId, reason: req.body.reason };
+    if (postgresEnabled) await dropWutDraftEventEntrantPostgres(postgresPool(), input); else dropWutDraftEventEntrant(input);
     req.session.flash = { type: 'success', message: `Player ${req.params.userId} was dropped from Draft Event #${req.params.eventId}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3184,12 +3653,14 @@ app.post('/admin/cards/drafts/:eventId/entrants/:userId/drop', requireAdmin, (re
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/matches/:matchId/resolve', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/matches/:matchId/resolve', requireAdmin, async (req, res) => {
   try {
-    resolveWutDraftEventMatch({
+    const input = {
       eventId: req.params.eventId, matchId: req.params.matchId, action: req.body.action,
       forfeitingUserId: req.body.forfeiting_user_id, adminUserId: req.session.userId, reason: req.body.reason
-    });
+    };
+    if (postgresEnabled) await resolveWutDraftEventMatchPostgres(postgresPool(), input);
+    else resolveWutDraftEventMatch(input);
     req.session.flash = { type: 'success', message: `Draft Event match ${req.params.matchId} was ${req.body.action === 'void' ? 'voided' : req.body.action === 'reset' ? 'reset to its opening turn' : 'resolved by forfeit'}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3197,9 +3668,10 @@ app.post('/admin/cards/drafts/:eventId/matches/:matchId/resolve', requireAdmin, 
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/tournament/reset-round', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/tournament/reset-round', requireAdmin, async (req, res) => {
   try {
-    const event = resetCurrentWutDraftEventRound({ eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason };
+    const event = postgresEnabled ? await resetCurrentWutDraftEventRoundPostgres(postgresPool(), input) : resetCurrentWutDraftEventRound(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} round ${event.tournament.round} was reset. Every game in the round will restart.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3207,9 +3679,10 @@ app.post('/admin/cards/drafts/:eventId/tournament/reset-round', requireAdmin, (r
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/pause', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/pause', requireAdmin, async (req, res) => {
   try {
-    pauseWutDraftEvent({ eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason };
+    if (postgresEnabled) await pauseWutDraftEventPostgres(postgresPool(), input); else pauseWutDraftEvent(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} paused.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3217,9 +3690,10 @@ app.post('/admin/cards/drafts/:eventId/pause', requireAdmin, (req, res) => {
   res.redirect('/admin/cards/drafts');
 });
 
-app.post('/admin/cards/drafts/:eventId/resume', requireAdmin, (req, res) => {
+app.post('/admin/cards/drafts/:eventId/resume', requireAdmin, async (req, res) => {
   try {
-    resumeWutDraftEvent({ eventId: req.params.eventId, adminUserId: req.session.userId });
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId };
+    if (postgresEnabled) await resumeWutDraftEventPostgres(postgresPool(), input); else resumeWutDraftEvent(input);
     req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} resumed.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3229,9 +3703,11 @@ app.post('/admin/cards/drafts/:eventId/resume', requireAdmin, (req, res) => {
 
 
 
-app.post('/admin/backup/create', requireAdmin, (req, res) => {
+app.post('/admin/backup/create', requireAdmin, async (req, res) => {
   try {
-    const backup = createJsonBackup();
+    const backup = postgresEnabled
+      ? await createPostgresJsonBackup(postgresPool())
+      : createJsonBackup();
     req.session.flash = { type: 'success', message: `Created backup: ${backup.filename}` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3239,7 +3715,28 @@ app.post('/admin/backup/create', requireAdmin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.get('/admin/backup/download', requireAdmin, (req, res) => {
+app.post('/admin/maintenance', requireAdmin, async (req, res) => {
+  const enabled = String(req.body.enabled || '') === 'true';
+  const settings = postgresEnabled
+    ? await setMaintenanceModePostgres(postgresPool(), enabled, req.body.message)
+    : setMaintenanceMode(enabled, req.body.message);
+  req.session.flash = {
+    type: 'success',
+    message: settings.maintenanceMode
+      ? 'Maintenance mode enabled. User traffic and background game clocks are frozen.'
+      : 'Maintenance mode disabled. The website is open again.'
+  };
+  res.redirect('/admin');
+});
+
+app.get('/admin/backup/download', requireAdmin, async (req, res) => {
+  if (postgresEnabled) {
+    const { state, json } = await serializePostgresState(postgresPool());
+    const filename = `wcpl-betting-week-${Number(state.settings?.currentWeek || 1)}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(json);
+  }
   const filePath = getDatabasePath();
   if (!fs.existsSync(filePath)) {
     req.session.flash = { type: 'error', message: 'No betting database exists yet.' };
@@ -3250,26 +3747,27 @@ app.get('/admin/backup/download', requireAdmin, (req, res) => {
   res.download(filePath, filename);
 });
 
-app.post('/admin/casino/open', requireAdmin, (req, res) => {
-  const settings = setCasinoOpen(true);
+app.post('/admin/casino/open', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { casinoOpen: true }); else setCasinoOpen(true);
   req.session.flash = { type: 'success', message: 'Casino opened. Users can wager again.' };
   res.redirect('/admin#casino-controls');
 });
 
-app.post('/admin/casino/close', requireAdmin, (req, res) => {
-  const settings = setCasinoOpen(false);
+app.post('/admin/casino/close', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { casinoOpen: false }); else setCasinoOpen(false);
   req.session.flash = { type: 'success', message: 'Casino closed. All casino wagering and gameplay is disabled.' };
   res.redirect('/admin#casino-controls');
 });
 
-app.post('/admin/casino/horse-racing-config', requireAdmin, (req, res) => {
+app.post('/admin/casino/horse-racing-config', requireAdmin, async (req, res) => {
   try {
-    saveHorseRacingConfig({
+    const input = {
       maxBet: req.body.max_bet,
       horsePurchasePrice: req.body.horse_purchase_price,
       ownerBetSharePercent: req.body.owner_bet_share_percent,
       ownerWinBonus: req.body.owner_win_bonus
-    });
+    };
+    if (postgresEnabled) await saveHorseRacingConfigPostgres(postgresPool(), input); else saveHorseRacingConfig(input);
     req.session.flash = { type: 'success', message: 'Horse racing settings saved.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3277,20 +3775,21 @@ app.post('/admin/casino/horse-racing-config', requireAdmin, (req, res) => {
   res.redirect('/admin#casino-controls');
 });
 
-app.post('/admin/casino/show-link', requireAdmin, (req, res) => {
-  setCasinoLinkVisible(true);
+app.post('/admin/casino/show-link', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { casinoLinkVisible: true }); else setCasinoLinkVisible(true);
   req.session.flash = { type: 'success', message: 'Casino navigation link is now visible.' };
   res.redirect('/admin#casino-controls');
 });
 
-app.post('/admin/casino/hide-link', requireAdmin, (req, res) => {
-  setCasinoLinkVisible(false);
+app.post('/admin/casino/hide-link', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { casinoLinkVisible: false }); else setCasinoLinkVisible(false);
   req.session.flash = { type: 'success', message: 'Casino navigation link is now hidden.' };
   res.redirect('/admin#casino-controls');
 });
 
 app.post('/admin/casino/reset', requireAdmin, (req, res) => {
   try {
+    if (postgresEnabled) throw new Error('Casino hard reset is intentionally disabled on PostgreSQL. Use a verified backup restore for destructive production recovery.');
     const result = resetCasinoData();
     req.session.flash = {
       type: 'success',
@@ -3302,33 +3801,33 @@ app.post('/admin/casino/reset', requireAdmin, (req, res) => {
   res.redirect('/admin#casino-controls');
 });
 
-app.post('/admin/cards/show-link', requireAdmin, (req, res) => {
-  setCardsLinkVisible(true);
+app.post('/admin/cards/show-link', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { cardsLinkVisible: true }); else setCardsLinkVisible(true);
   req.session.flash = { type: 'success', message: 'Cards navigation link is now visible.' };
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/open', requireAdmin, (req, res) => {
-  setCardsOpen(true);
+app.post('/admin/cards/open', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { cardsOpen: true }); else setCardsOpen(true);
   req.session.flash = { type: 'success', message: 'WUT opened. All WUT features are available again.' };
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/close', requireAdmin, (req, res) => {
-  setCardsOpen(false);
+app.post('/admin/cards/close', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { cardsOpen: false }); else setCardsOpen(false);
   req.session.flash = { type: 'success', message: 'WUT closed. All WUT activity and matchmaking are paused.' };
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/hide-link', requireAdmin, (req, res) => {
-  setCardsLinkVisible(false);
+app.post('/admin/cards/hide-link', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { cardsLinkVisible: false }); else setCardsLinkVisible(false);
   req.session.flash = { type: 'success', message: 'Cards navigation link is now hidden.' };
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/retroactive-assignment', requireAdmin, (req, res) => {
+app.post('/admin/cards/retroactive-assignment', requireAdmin, async (req, res) => {
   const allowed = String(req.body.allowed || '') === 'true';
-  setCardsAllowRetroactiveAssignment(allowed);
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { cardsAllowRetroactiveAssignment: allowed }); else setCardsAllowRetroactiveAssignment(allowed);
   req.session.flash = {
     type: 'success',
     message: allowed
@@ -3338,9 +3837,10 @@ app.post('/admin/cards/retroactive-assignment', requireAdmin, (req, res) => {
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/config', requireAdmin, (req, res) => {
+app.post('/admin/cards/config', requireAdmin, async (req, res) => {
   try {
-    saveCardsConfig(req.body);
+    if (postgresEnabled) await saveCardsConfigPostgres(postgresPool(), req.body); else saveCardsConfig(req.body);
+    await getLiveCardsConfig();
     req.session.flash = { type: 'success', message: 'WUT economy, match rules, boosts, missions, and trinket balance saved.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3348,21 +3848,22 @@ app.post('/admin/cards/config', requireAdmin, (req, res) => {
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/free-shop', requireAdmin, (req, res) => {
+app.post('/admin/cards/free-shop', requireAdmin, async (req, res) => {
   const enabled = String(req.body.enabled || '') === 'true';
-  setWutFreeShopPurchases(enabled);
+  if (postgresEnabled) await setWutFreeShopPurchasesPostgres(postgresPool(), enabled); else setWutFreeShopPurchases(enabled);
   req.session.flash = { type: 'success', message: enabled ? 'Free WUT shop purchases enabled for testing.' : 'Normal WUT shop pricing restored.' };
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/wut-coins', requireAdmin, (req, res) => {
+app.post('/admin/cards/wut-coins', requireAdmin, async (req, res) => {
   try {
-    const result = adjustWutCoinBalance({
+    const input = {
       userId: req.body.user_id,
       amount: req.body.amount,
       note: req.body.note,
       adminUserId: req.session.userId
-    });
+    };
+    const result = postgresEnabled ? await adjustWutCoinBalancePostgres(postgresPool(), input) : adjustWutCoinBalance(input);
     req.session.flash = { type: 'success', message: `Adjusted WUT balance by ${result.amount > 0 ? '+' : ''}${result.amount}. New balance: ${result.balance} WUT Coins.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3370,9 +3871,9 @@ app.post('/admin/cards/wut-coins', requireAdmin, (req, res) => {
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/position', requireAdmin, (req, res) => {
+app.post('/admin/cards/position', requireAdmin, async (req, res) => {
   try {
-    setCardsPositionOverride(req.body.catalog_key, req.body.position);
+    if (postgresEnabled) await setCardsPositionOverridePostgres(postgresPool(), req.body.catalog_key, req.body.position); else setCardsPositionOverride(req.body.catalog_key, req.body.position);
     req.session.flash = { type: 'success', message: 'Card position override saved.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3380,9 +3881,9 @@ app.post('/admin/cards/position', requireAdmin, (req, res) => {
   res.redirect('/admin#cards-player-pools');
 });
 
-app.post('/admin/cards/tier', requireAdmin, (req, res) => {
+app.post('/admin/cards/tier', requireAdmin, async (req, res) => {
   try {
-    setCardsTierOverride(req.body.catalog_key, req.body.tier);
+    if (postgresEnabled) await setCardsTierOverridePostgres(postgresPool(), req.body.catalog_key, req.body.tier); else setCardsTierOverride(req.body.catalog_key, req.body.tier);
     req.session.flash = { type: 'success', message: 'Card tier override saved.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3390,12 +3891,14 @@ app.post('/admin/cards/tier', requireAdmin, (req, res) => {
   res.redirect('/admin#cards-player-pools');
 });
 
-app.post('/admin/cards/player-overrides', requireAdmin, (req, res) => {
+app.post('/admin/cards/player-overrides', requireAdmin, async (req, res) => {
   try {
-    const result = setCardsPlayerOverrides({ positions: req.body.positions, tiers: req.body.tiers });
+    const input = { positions: req.body.positions, tiers: req.body.tiers };
+    const result = postgresEnabled ? await setCardsPlayerOverridesPostgres(postgresPool(), input) : setCardsPlayerOverrides(input);
+    const positions = result.positionOverrides || result.positions || {}; const tiers = result.tierOverrides || result.tiers || {};
     req.session.flash = {
       type: 'success',
-      message: `Saved ${Object.keys(result.positions).length} position and ${Object.keys(result.tiers).length} rarity override(s).`
+      message: `Saved ${Object.keys(positions).length} position and ${Object.keys(tiers).length} rarity override(s).`
     };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3406,7 +3909,7 @@ app.post('/admin/cards/player-overrides', requireAdmin, (req, res) => {
 app.post('/admin/cards/recalculate', requireAdmin, async (req, res) => {
   try {
     const catalog = await getCardsCatalog();
-    saveCalculatedCardTiers(catalog);
+    if (postgresEnabled) await saveCalculatedCardTiersPostgres(postgresPool(), catalog); else saveCalculatedCardTiers(catalog);
     req.session.flash = { type: 'success', message: `Recalculated ${catalog.length} card player tiers.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3432,7 +3935,7 @@ app.post('/admin/cards/grant', requireAdmin, async (req, res) => {
         itemType: 'boost',
         boostType,
         rarity,
-        effect: getCardsConfig().boostEffects?.[boostType]?.[rarity] || DEFAULT_BOOST_EFFECTS[boostType]?.[rarity]
+        effect: (await getLiveCardsConfig()).boostEffects?.[boostType]?.[rarity] || DEFAULT_BOOST_EFFECTS[boostType]?.[rarity]
       };
     } else {
       const player = catalog.find(entry => entry.catalogKey === req.body.catalog_key);
@@ -3455,7 +3958,8 @@ app.post('/admin/cards/grant', requireAdmin, async (req, res) => {
         rolledTier: player.tier
       };
     }
-    grantCardsTestItem({ userId: req.body.user_id, item });
+    const input = { userId: req.body.user_id, item };
+    if (postgresEnabled) await grantCardsTestItemPostgres(postgresPool(), input); else grantCardsTestItem(input);
     req.session.flash = { type: 'success', message: 'Test Cards item granted.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3465,6 +3969,7 @@ app.post('/admin/cards/grant', requireAdmin, async (req, res) => {
 
 app.post('/admin/cards/reset', requireAdmin, (req, res) => {
   try {
+    if (postgresEnabled) throw new Error('WUT hard reset is intentionally disabled on PostgreSQL. Use the migration/import recovery tools with a verified backup.');
     const result = resetCardsData();
     req.session.flash = {
       type: 'success',
@@ -3476,9 +3981,13 @@ app.post('/admin/cards/reset', requireAdmin, (req, res) => {
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/season', requireAdmin, (req, res) => {
+app.post('/admin/season', requireAdmin, async (req, res) => {
   try {
-    const settings = setSeasonId(req.body.season_id);
+    const seasonId = String(req.body.season_id || '').trim();
+    if (!seasonId) throw new Error('Season ID is required.');
+    const settings = postgresEnabled
+      ? await patchSettingsPostgres(postgresPool(), { seasonId, currentWeek: 1, lockedWeeks: [], bettingLocked: false })
+      : setSeasonId(seasonId);
     req.session.flash = { type: 'success', message: `Switched debug season to ${settings.seasonId}. Week reset to 1.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3488,7 +3997,7 @@ app.post('/admin/season', requireAdmin, (req, res) => {
 
 app.post('/admin/settle-week', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const week = Number(req.body.week || settings.currentWeek);
     const result = await settleWeekOrThrow({ week, seasonId: settings.seasonId });
     req.session.flash = { type: 'success', message: `Settled Week ${week}: ${result.winners} winner(s), ${result.losers} loser(s), ${result.payoutTotal} Mushybux paid.` };
@@ -3501,7 +4010,7 @@ app.post('/admin/settle-week', requireAdmin, async (req, res) => {
 
 app.post('/admin/settle-completed', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const week = Number(req.body.week || settings.currentWeek);
     const result = await settleCompletedBetsOrThrow({ week, seasonId: settings.seasonId });
     req.session.flash = { type: 'success', message: `Settled completed Week ${week} bets: ${result.winners} winner(s), ${result.losers} loser(s), ${result.payoutTotal} Mushybux paid. ${result.skipped} bet(s) still unresolved.` };
@@ -3511,9 +4020,11 @@ app.post('/admin/settle-completed', requireAdmin, async (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/refund-bet', requireAdmin, (req, res) => {
+app.post('/admin/refund-bet', requireAdmin, async (req, res) => {
   try {
-    const result = voidBetById(req.body.bet_id, 'Manual admin refund');
+    const result = postgresEnabled
+      ? await voidBetByIdPostgres(postgresPool(), req.body.bet_id, 'Manual admin refund')
+      : voidBetById(req.body.bet_id, 'Manual admin refund');
     req.session.flash = { type: 'success', message: `Refunded ${result.refunded} Mushybux and voided ${result.count} bet.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3523,17 +4034,18 @@ app.post('/admin/refund-bet', requireAdmin, (req, res) => {
 
 app.post('/admin/void-series', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const week = Number(req.body.week || settings.currentWeek);
     const seriesKey = String(req.body.series_key || '').trim();
     const payload = await buildSeriesVoidPayload({ seasonId: settings.seasonId, week, seriesKey });
-    const result = voidBetsForSeries({
+    const input = {
       week,
       seriesKey,
       teamIds: payload.teamIds,
       playerKeys: payload.playerKeys,
       reason: `Postponed series refund (${payload.series.away_team_name} at ${payload.series.home_team_name})`
-    });
+    };
+    const result = postgresEnabled ? await voidBetsForSeriesPostgres(postgresPool(), input) : voidBetsForSeries(input);
     req.session.flash = { type: 'success', message: `Voided postponed series bets: ${result.seriesCount} series bet(s), ${result.propCount} prop bet(s), ${result.refunded} Mushybux refunded.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3542,14 +4054,19 @@ app.post('/admin/void-series', requireAdmin, async (req, res) => {
 });
 
 app.post('/admin/lock', requireAdmin, async (req, res) => {
-  const settings = getAdminSettings();
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
   try {
     const opportunities = await buildWutMissionBetOpportunities({
       seasonId: settings.seasonId,
       week: settings.currentWeek
     });
-    setWutMissionBetOpportunities({ week: settings.currentWeek, opportunities, locked: true });
-    setWeekLocked(settings.currentWeek, true);
+    if (postgresEnabled) {
+      await setWutMissionBetOpportunitiesPostgres(postgresPool(), { week: settings.currentWeek, opportunities, locked: true });
+      await setWeekLockedPostgres(postgresPool(), settings.currentWeek, true);
+    } else {
+      setWutMissionBetOpportunities({ week: settings.currentWeek, opportunities, locked: true });
+      setWeekLocked(settings.currentWeek, true);
+    }
     req.session.flash = { type: 'success', message: `Week ${settings.currentWeek} betting locked with ${opportunities.length} WUT mission option(s).` };
   } catch (err) {
     req.session.flash = { type: 'error', message: `Betting was not locked: ${err.message}` };
@@ -3557,16 +4074,18 @@ app.post('/admin/lock', requireAdmin, async (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/unlock', requireAdmin, (req, res) => {
-  const settings = getAdminSettings();
-  setWeekLocked(settings.currentWeek, false);
+app.post('/admin/unlock', requireAdmin, async (req, res) => {
+  const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+  if (postgresEnabled) await setWeekLockedPostgres(postgresPool(), settings.currentWeek, false); else setWeekLocked(settings.currentWeek, false);
   req.session.flash = { type: 'success', message: `Week ${settings.currentWeek} betting unlocked.` };
   res.redirect('/admin');
 });
 
-app.post('/admin/allowance', requireAdmin, (req, res) => {
+app.post('/admin/allowance', requireAdmin, async (req, res) => {
   try {
-    setWeeklyAllowance(req.body.weekly_allowance);
+    const amount = Number(req.body.weekly_allowance);
+    if (!Number.isInteger(amount) || amount < 0) throw new Error('Weekly allowance must be a non-negative whole number.');
+    if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { weeklyAllowance: amount }); else setWeeklyAllowance(amount);
     req.session.flash = { type: 'success', message: 'Weekly allowance updated.' };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3574,10 +4093,12 @@ app.post('/admin/allowance', requireAdmin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/apply-allowance', requireAdmin, (req, res) => {
+app.post('/admin/apply-allowance', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
-    const result = applyWeeklyAllowance(settings.currentWeek);
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    const result = postgresEnabled
+      ? await applyWeeklyAllowancePostgres(postgresPool(), settings.currentWeek)
+      : applyWeeklyAllowance(settings.currentWeek);
     req.session.flash = { type: 'success', message: `Applied ${result.amount} Mushybux allowance to ${result.count} users.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3585,10 +4106,10 @@ app.post('/admin/apply-allowance', requireAdmin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/reset-week-bets', requireAdmin, (req, res) => {
+app.post('/admin/reset-week-bets', requireAdmin, async (req, res) => {
   try {
     const week = Number(req.body.week);
-    const result = resetBetsForWeek(week);
+    const result = postgresEnabled ? await resetBetsForWeekPostgres(postgresPool(), week) : resetBetsForWeek(week);
     req.session.flash = { type: 'success', message: `Voided ${result.count} Week ${week} bets and refunded ${result.refunded} Mushybux.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3597,11 +4118,11 @@ app.post('/admin/reset-week-bets', requireAdmin, (req, res) => {
 });
 
 // Backwards-compatible route from earlier admin page versions.
-app.post('/admin/reset-open-bets', requireAdmin, (req, res) => {
+app.post('/admin/reset-open-bets', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const nextWeek = Number(settings.currentWeek || 1) + 1;
-    const result = resetBetsForWeek(nextWeek);
+    const result = postgresEnabled ? await resetBetsForWeekPostgres(postgresPool(), nextWeek) : resetBetsForWeek(nextWeek);
     req.session.flash = { type: 'success', message: `Voided ${result.count} Week ${nextWeek} bets and refunded ${result.refunded} Mushybux.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3610,21 +4131,21 @@ app.post('/admin/reset-open-bets', requireAdmin, (req, res) => {
 });
 
 app.post('/admin/reset-all-data', requireAdmin, (req, res) => {
-  resetAllData();
-  req.session.flash = { type: 'success', message: 'All test data reset.' };
+  if (postgresEnabled) req.session.flash = { type: 'error', message: 'Full database reset is intentionally disabled on PostgreSQL. Restore or replace from a verified backup instead.' };
+  else { resetAllData(); req.session.flash = { type: 'success', message: 'All test data reset.' }; }
   res.redirect('/admin');
 });
 
 app.post('/admin/advance-week', requireAdmin, async (req, res) => {
   try {
-    const before = getAdminSettings();
-    const openCount = getOpenBetCountForWeek(before.currentWeek);
+    const before = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    const openCount = postgresEnabled ? await getOpenBetCountForWeekPostgres(postgresPool(), before.currentWeek) : getOpenBetCountForWeek(before.currentWeek);
     if (openCount > 0) {
       throw new Error(`Week ${before.currentWeek} still has ${openCount} unsettled open bet(s). Settle completed bets, wait for incomplete results, or refund/void them before advancing.`);
     }
     const targetWeek = Number(before.currentWeek) + 1;
     const targetSeries = await getUpcomingSeries(targetWeek, before.seasonId);
-    const targetOdds = getOddsAdjustmentsForWeek(targetWeek);
+    const targetOdds = postgresEnabled ? await getOddsAdjustmentsForWeekPostgres(postgresPool(), targetWeek) : getOddsAdjustmentsForWeek(targetWeek);
     const incompleteSeries = targetSeries.filter(series => {
       const expectedMarkets = buildMarketsForSeries(series, targetOdds);
       return expectedMarkets.some(market =>
@@ -3649,9 +4170,9 @@ app.post('/admin/advance-week', requireAdmin, async (req, res) => {
       throw new Error(`Week ${targetWeek} leader props are not ready: ${missingLeaderMarkets.join(', ')}.`);
     }
 
-    const retiredProps = voidDeprecatedHatTrickBetsForWeek(targetWeek);
-    const after = advanceWeek();
-    const allowance = applyWeeklyAllowance(after.currentWeek);
+    const retiredProps = postgresEnabled ? await voidDeprecatedHatTrickBetsForWeekPostgres(postgresPool(), targetWeek) : voidDeprecatedHatTrickBetsForWeek(targetWeek);
+    const after = postgresEnabled ? await advanceWeekPostgres(postgresPool()) : advanceWeek();
+    const allowance = postgresEnabled ? await applyWeeklyAllowancePostgres(postgresPool(), after.currentWeek) : applyWeeklyAllowance(after.currentWeek);
     req.session.flash = {
       type: 'success',
       message: `Advanced to Week ${after.currentWeek}. Betting is open, and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.${retiredProps.count ? ` Voided ${retiredProps.count} retired hat-trick bet(s) and refunded ${retiredProps.refunded} Mushybux.` : ''}`
@@ -3662,11 +4183,11 @@ app.post('/admin/advance-week', requireAdmin, async (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/adjust-balance', requireAdmin, (req, res) => {
+app.post('/admin/adjust-balance', requireAdmin, async (req, res) => {
   try {
     const amount = Number(req.body.amount);
     const note = String(req.body.note || '').trim();
-    adjustUserBalance(req.body.user_id, amount, note);
+    if (postgresEnabled) await adjustUserBalancePostgres(postgresPool(), req.body.user_id, amount, note); else adjustUserBalance(req.body.user_id, amount, note);
     req.session.flash = { type: 'success', message: `Balance adjusted by ${amount} Mushybux.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3674,11 +4195,11 @@ app.post('/admin/adjust-balance', requireAdmin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/adjust-all-balances', requireAdmin, (req, res) => {
+app.post('/admin/adjust-all-balances', requireAdmin, async (req, res) => {
   try {
     const amount = Number(req.body.amount);
     const note = String(req.body.note || '').trim();
-    const result = adjustAllUserBalances(amount, note);
+    const result = postgresEnabled ? await adjustAllUserBalancesPostgres(postgresPool(), amount, note) : adjustAllUserBalances(amount, note);
     req.session.flash = {
       type: 'success',
       message: `Adjusted ${result.count} user balances by ${result.amount > 0 ? '+' : ''}${result.amount} Mushybux each.`
@@ -3689,14 +4210,15 @@ app.post('/admin/adjust-all-balances', requireAdmin, (req, res) => {
   res.redirect('/admin#user-balances');
 });
 
-app.post('/admin/add-user', requireAdmin, (req, res) => {
+app.post('/admin/add-user', requireAdmin, async (req, res) => {
   try {
-    const user = addUser({
+    const input = {
       username: req.body.username,
       password: req.body.password,
       displayName: req.body.display_name,
       role: req.body.role
-    });
+    };
+    const user = postgresEnabled ? await addUserPostgres(postgresPool(), input) : addUser(input);
     req.session.flash = { type: 'success', message: `Added ${user.display_name} with starting Mushybux.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3704,15 +4226,16 @@ app.post('/admin/add-user', requireAdmin, (req, res) => {
   res.redirect('/admin');
 });
 
-app.post('/admin/update-user', requireAdmin, (req, res) => {
+app.post('/admin/update-user', requireAdmin, async (req, res) => {
   try {
-    const user = updateUserDetails({
+    const input = {
       userId: req.body.user_id,
       username: req.body.username,
       password: req.body.password,
       displayName: req.body.display_name,
       role: req.body.role
-    });
+    };
+    const user = postgresEnabled ? await updateUserDetailsPostgres(postgresPool(), input) : updateUserDetails(input);
     req.session.flash = { type: 'success', message: `Updated ${user.display_name}.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3722,18 +4245,19 @@ app.post('/admin/update-user', requireAdmin, (req, res) => {
 
 
 
-app.post('/admin/odds/series', requireAdmin, (req, res) => {
+app.post('/admin/odds/series', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
-    saveSeriesOddsForWeek({
+    const input = {
       week: targetWeek,
       seriesKey: req.body.series_key,
       marketKeys: req.body.market_key || [],
       multipliers: req.body.multiplier || [],
       goalTotalLine: req.body.goal_total_line,
       goalTotalBoost: req.body.goal_total_boost
-    });
+    };
+    if (postgresEnabled) await saveSeriesOddsForWeekPostgres(postgresPool(), input); else saveSeriesOddsForWeek(input);
     req.session.flash = { type: 'success', message: `Saved Week ${targetWeek} series odds.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3741,39 +4265,40 @@ app.post('/admin/odds/series', requireAdmin, (req, res) => {
   res.redirect('/admin#series-odds-recommendations');
 });
 
-app.post('/admin/odds/bulk-series', requireAdmin, (req, res) => {
+app.post('/admin/odds/bulk-series', requireAdmin, async (req, res) => {
   try {
     const targetWeek = Number(req.body.week);
     const rows = JSON.parse(String(req.body.payload || '[]'));
     if (!Array.isArray(rows) || !rows.length) throw new Error('No series odds were submitted.');
     for (const row of rows) {
-      saveSeriesOddsForWeek({
+      const input = {
         week: targetWeek,
         seriesKey: row.series_key,
         marketKeys: row.market_key || [],
         multipliers: row.multiplier || [],
         goalTotalLine: row.goal_total_line,
         goalTotalBoost: row.goal_total_boost
-      });
+      };
+      if (postgresEnabled) await saveSeriesOddsForWeekPostgres(postgresPool(), input); else saveSeriesOddsForWeek(input);
     }
     req.session.flash = { type: 'success', message: `Applied all displayed Week ${targetWeek} series odds.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
-  const current = Number(req.body.week) === Number(getAdminSettings().currentWeek);
+  const current = Number(req.body.week) === Number((postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings()).currentWeek);
   res.redirect(`/admin?odds_week=${current ? 'current' : 'next'}#series-odds-recommendations`);
 });
 
 app.post('/admin/odds/apply-series-recommendations', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
     const report = await buildSeriesOddsRecommendations({
       seasonId: settings.seasonId,
       targetWeek
     });
     for (const rec of report.recommendations) {
-      saveSeriesOddsForWeek({
+      const input = {
         week: targetWeek,
         seriesKey: rec.seriesKey,
         marketKeys: [
@@ -3794,7 +4319,8 @@ app.post('/admin/odds/apply-series-recommendations', requireAdmin, async (req, r
         ],
         goalTotalLine: rec.recommendedGoalLine,
         goalTotalBoost: rec.goalTotalBoost
-      });
+      };
+      if (postgresEnabled) await saveSeriesOddsForWeekPostgres(postgresPool(), input); else saveSeriesOddsForWeek(input);
     }
     req.session.flash = { type: 'success', message: `Applied all Week ${targetWeek} series recommendations.` };
   } catch (err) {
@@ -3803,10 +4329,10 @@ app.post('/admin/odds/apply-series-recommendations', requireAdmin, async (req, r
   res.redirect('/admin#series-odds-recommendations');
 });
 
-app.post('/admin/odds/series-prop', requireAdmin, (req, res) => {
+app.post('/admin/odds/series-prop', requireAdmin, async (req, res) => {
   try {
     const targetWeek = Number(req.body.week);
-    saveSeriesPropForWeek({
+    const input = {
       week: targetWeek,
       marketKey: req.body.market_key,
       config: {
@@ -3825,7 +4351,8 @@ app.post('/admin/odds/series-prop', requireAdmin, (req, res) => {
           multiplier: req.body[`multiplier_${quantity}`]
         }))
       }
-    });
+    };
+    if (postgresEnabled) await saveSeriesPropForWeekPostgres(postgresPool(), input); else saveSeriesPropForWeek(input);
     req.session.flash = { type: 'success', message: `Saved Week ${targetWeek} player prop.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3839,20 +4366,21 @@ app.post('/admin/odds/series-prop', requireAdmin, (req, res) => {
 
 app.post('/admin/odds/apply-prop-recommendations', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
     const markets = await buildWeeklyPropMarkets({
       seasonId: settings.seasonId,
       week: targetWeek,
       odds: { seriesProps: {} }
     });
-    saveSeriesPropsForWeek({
+    const input = {
       week: targetWeek,
       markets: markets.map(market => ({
         ...market,
         enabled: market.eligibility === 'automatic'
       }))
-    });
+    };
+    if (postgresEnabled) await saveSeriesPropsForWeekPostgres(postgresPool(), input); else saveSeriesPropsForWeek(input);
     req.session.flash = {
       type: 'success',
       message: `Applied Week ${targetWeek} prop recommendations. Review-only players remain disabled until you approve them.`
@@ -3865,7 +4393,7 @@ app.post('/admin/odds/apply-prop-recommendations', requireAdmin, async (req, res
 
 app.post('/admin/odds/apply-leader-prop-recommendations', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
     const divisionIds = [...new Set(
       (await getUpcomingSeries(targetWeek, settings.seasonId)).map(series => series.division_id)
@@ -3881,13 +4409,14 @@ app.post('/admin/odds/apply-leader-prop-recommendations', requireAdmin, async (r
         ['top_goalie', report.topGoalie]
       ]) {
         for (const player of players) {
-          savePropPlayerOverrideForWeek({
+          const input = {
             week: targetWeek,
             divisionId,
             category,
             playerKey: player.playerKey,
             multiplier: player.recommendedOdds
-          });
+          };
+          if (postgresEnabled) await savePropPlayerOverrideForWeekPostgres(postgresPool(), input); else savePropPlayerOverrideForWeek(input);
         }
       }
     }
@@ -3898,34 +4427,35 @@ app.post('/admin/odds/apply-leader-prop-recommendations', requireAdmin, async (r
   res.redirect('/admin#leader-prop-recommendations');
 });
 
-app.post('/admin/odds/bulk-leader-props', requireAdmin, (req, res) => {
+app.post('/admin/odds/bulk-leader-props', requireAdmin, async (req, res) => {
   try {
     const targetWeek = Number(req.body.week);
     const rows = JSON.parse(String(req.body.payload || '[]'));
     if (!Array.isArray(rows) || !rows.length) throw new Error('No leader prop odds were submitted.');
     for (const row of rows) {
-      savePropPlayerOverrideForWeek({
+      const input = {
         week: targetWeek,
         divisionId: row.division_id,
         category: row.category,
         playerKey: row.player_key,
         multiplier: row.multiplier
-      });
+      };
+      if (postgresEnabled) await savePropPlayerOverrideForWeekPostgres(postgresPool(), input); else savePropPlayerOverrideForWeek(input);
     }
     req.session.flash = { type: 'success', message: `Applied all displayed Week ${targetWeek} Top Scorer and Top Goalie odds.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
-  const current = Number(req.body.week) === Number(getAdminSettings().currentWeek);
+  const current = Number(req.body.week) === Number((postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings()).currentWeek);
   res.redirect(`/admin?odds_week=${current ? 'current' : 'next'}#leader-prop-recommendations`);
 });
 
-app.post('/admin/odds/bulk-player-props', requireAdmin, (req, res) => {
+app.post('/admin/odds/bulk-player-props', requireAdmin, async (req, res) => {
   try {
     const targetWeek = Number(req.body.week);
     const rows = JSON.parse(String(req.body.payload || '[]'));
     if (!Array.isArray(rows) || !rows.length) throw new Error('No player props were submitted.');
-    saveSeriesPropsForWeek({
+    const input = {
       week: targetWeek,
       markets: rows.map(row => ({
         marketKey: row.market_key,
@@ -3940,20 +4470,21 @@ app.post('/admin/odds/bulk-player-props', requireAdmin, (req, res) => {
         enabled: Boolean(row.enabled),
         tiers: row.tiers
       }))
-    });
+    };
+    if (postgresEnabled) await saveSeriesPropsForWeekPostgres(postgresPool(), input); else saveSeriesPropsForWeek(input);
     req.session.flash = { type: 'success', message: `Applied all displayed Week ${targetWeek} player props.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
-  const current = Number(req.body.week) === Number(getAdminSettings().currentWeek);
+  const current = Number(req.body.week) === Number((postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings()).currentWeek);
   res.redirect(`/admin?odds_week=${current ? 'current' : 'next'}#prop-odds-recommendations`);
 });
 
-app.post('/admin/odds/prop-default', requireAdmin, (req, res) => {
+app.post('/admin/odds/prop-default', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
-    savePropDefaultOddsForWeek({
+    const input = {
       week: targetWeek,
       divisionId: req.body.division_id,
       category: req.body.category,
@@ -3961,7 +4492,8 @@ app.post('/admin/odds/prop-default', requireAdmin, (req, res) => {
       quantity1: req.body.quantity_1,
       quantity2: req.body.quantity_2,
       quantity3: req.body.quantity_3
-    });
+    };
+    if (postgresEnabled) await savePropDefaultOddsForWeekPostgres(postgresPool(), input); else savePropDefaultOddsForWeek(input);
     req.session.flash = { type: 'success', message: `Saved Week ${targetWeek} prop odds.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
@@ -3969,17 +4501,18 @@ app.post('/admin/odds/prop-default', requireAdmin, (req, res) => {
   res.redirect('/admin#prop-odds-recommendations');
 });
 
-app.post('/admin/odds/player-override', requireAdmin, (req, res) => {
+app.post('/admin/odds/player-override', requireAdmin, async (req, res) => {
   try {
-    const settings = getAdminSettings();
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     const targetWeek = Number(req.body.week || Number(settings.currentWeek) + 1);
     if (String(req.body.clear || '') === '1') {
-      clearPropPlayerOverrideForWeek({
+      const input = {
         week: targetWeek,
         divisionId: req.body.division_id,
         category: req.body.category,
         playerKey: req.body.player_key
-      });
+      };
+      if (postgresEnabled) await clearPropPlayerOverrideForWeekPostgres(postgresPool(), input); else clearPropPlayerOverrideForWeek(input);
       req.session.flash = { type: 'success', message: `Cleared Week ${targetWeek} player odds override.` };
     } else {
       const category = String(req.body.category || '');
@@ -3987,24 +4520,26 @@ app.post('/admin/odds/player-override', requireAdmin, (req, res) => {
         for (const q of [1, 2, 3]) {
           const value = req.body[`quantity_${q}`];
           if (String(value ?? '').trim()) {
-            savePropPlayerOverrideForWeek({
+            const input = {
               week: targetWeek,
               divisionId: req.body.division_id,
               category,
               playerKey: req.body.player_key,
               multiplier: value,
               quantity: q
-            });
+            };
+            if (postgresEnabled) await savePropPlayerOverrideForWeekPostgres(postgresPool(), input); else savePropPlayerOverrideForWeek(input);
           }
         }
       } else {
-        savePropPlayerOverrideForWeek({
+        const input = {
           week: targetWeek,
           divisionId: req.body.division_id,
           category,
           playerKey: req.body.player_key,
           multiplier: req.body.multiplier
-        });
+        };
+        if (postgresEnabled) await savePropPlayerOverrideForWeekPostgres(postgresPool(), input); else savePropPlayerOverrideForWeek(input);
       }
       req.session.flash = { type: 'success', message: `Saved Week ${targetWeek} player odds override.` };
     }
