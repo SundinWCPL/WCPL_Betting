@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import {
   WUT_TRINKET_ADMIN_FIELDS,
   WUT_LAUNCH_TRINKET_EFFECTS,
+  journeymanCandidateIdentity,
   journeymanCandidates,
   resolveZebraStripes,
   trinketFitsWutPosition
@@ -5463,7 +5464,7 @@ function lockJourneymanChoices(existingPlacements, newPlacements) {
       continue;
     }
     const candidates = journeymanCandidates(selectionEntry, all);
-    const allowed = new Set(candidates.map(candidate => candidate.printedChemistryKey));
+    const allowed = new Set(candidates.map(journeymanCandidateIdentity));
     const mode = selectionEntry.trinket.effect?.mode || '';
     let chosen = '';
     if (mode.startsWith('random_')) chosen = '';

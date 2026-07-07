@@ -135,8 +135,19 @@ function printedIdentity(entry) {
   return String(entry.printedChemistryKey || entry.chemistryKey || '').trim();
 }
 
+export function journeymanCandidateIdentity(entry) {
+  const committed = String(
+    entry?.placement?.journeyman_key_effective || entry?.placement?.journeyman_key ||
+    entry?.row?.journeyman_key_effective || entry?.row?.journeyman_key ||
+    entry?.journeymanKey || ''
+  ).trim();
+  const isJourneyman = entry?.trinket?.family === 'journeyman' || entry?.originalTrinket?.family === 'journeyman';
+  if (isJourneyman && committed) return committed;
+  return String(entry?.chemistryKey || printedIdentity(entry)).trim();
+}
+
 function uniqueCandidates(entries) {
-  return entries.filter(entry => printedIdentity(entry));
+  return entries.filter(entry => journeymanCandidateIdentity(entry));
 }
 
 export function journeymanCandidates(entry, entries = []) {
@@ -146,8 +157,8 @@ export function journeymanCandidates(entry, entries = []) {
   const slot = String(entry.slot ?? entry.placement?.slot);
   const ownIdentity = printedIdentity(entry);
   const ownSeason = ownIdentity.split('|')[0];
-  const otherCard = candidate => candidate !== entry && printedIdentity(candidate) !== ownIdentity;
-  const allowedSeason = candidate => mode === 'choose_any' || printedIdentity(candidate).split('|')[0] === ownSeason;
+  const otherCard = candidate => candidate !== entry && journeymanCandidateIdentity(candidate) !== ownIdentity;
+  const allowedSeason = candidate => mode === 'choose_any' || journeymanCandidateIdentity(candidate).split('|')[0] === ownSeason;
   const ownSide = candidate => Number(candidate.userId ?? candidate.placement?.user_id) === userId;
   const adjacent = candidate => ownSide(candidate) && adjacentWutSlots(slot).includes(String(candidate.slot ?? candidate.placement?.slot));
   const opposite = candidate => !ownSide(candidate) && String(candidate.slot ?? candidate.placement?.slot) === slot;
@@ -166,20 +177,20 @@ export function chooseJourneymanIdentity(entry, entries = [], random = Math.rand
   const candidates = journeymanCandidates(entry, entries);
   if (!candidates.length) return '';
   if (String(entry.trinket?.effect?.mode || '').startsWith('random_')) {
-    return printedIdentity(candidates[Math.floor(random() * candidates.length)]);
+    return journeymanCandidateIdentity(candidates[Math.floor(random() * candidates.length)]);
   }
   const userId = Number(entry.userId ?? entry.placement?.user_id);
   const crossSide = Boolean(entry.trinket?.effect?.crossSide);
   const ownSide = entries.filter(candidate => Number(candidate.userId ?? candidate.placement?.user_id) === userId);
   const chemistryRate = count => count >= 5 ? .25 : count === 4 ? .2 : count === 3 ? .15 : count === 2 ? .1 : 0;
   const teamValue = identity => ownSide.reduce((sum, candidate) => {
-    const candidateIdentity = candidate === entry ? identity : printedIdentity(candidate);
+    const candidateIdentity = candidate === entry ? identity : journeymanCandidateIdentity(candidate);
     const count = candidate === entry && crossSide
-      ? entries.filter(other => (other === entry ? identity : printedIdentity(other)) === candidateIdentity).length
-      : ownSide.filter(other => (other === entry ? identity : printedIdentity(other)) === candidateIdentity).length;
+      ? entries.filter(other => (other === entry ? identity : journeymanCandidateIdentity(other)) === candidateIdentity).length
+      : ownSide.filter(other => (other === entry ? identity : journeymanCandidateIdentity(other)) === candidateIdentity).length;
     return sum + Math.max(1, Number(candidate.baseExactFp || candidate.weight || 1)) * chemistryRate(count);
   }, 0);
-  return printedIdentity([...candidates].sort((a, b) => teamValue(printedIdentity(b)) - teamValue(printedIdentity(a)))[0]);
+  return journeymanCandidateIdentity([...candidates].sort((a, b) => teamValue(journeymanCandidateIdentity(b)) - teamValue(journeymanCandidateIdentity(a)))[0]);
 }
 
 // Team selection is committed before Zebra Stripes resolves. A choice that was
@@ -205,7 +216,7 @@ export function resolveJourneymanIdentity(entry, entries = [], lockedIdentity = 
       ? entry.trinket
       : entry.originalTrinket?.family === 'journeyman' ? entry.originalTrinket : entry.trinket;
     const selectionEntry = { ...entry, trinket: selectionTrinket };
-    const allowed = new Set(journeymanCandidates(selectionEntry, entries).map(printedIdentity));
+    const allowed = new Set(journeymanCandidates(selectionEntry, entries).map(journeymanCandidateIdentity));
     if (allowed.has(locked)) return locked;
   }
   return chooseJourneymanIdentity(entry, entries, random) || printedIdentity(entry);

@@ -6,6 +6,7 @@ import {
   WUT_RARITIES,
   adjacentWutSlots,
   chooseJourneymanIdentity,
+  journeymanCandidateIdentity,
   journeymanCandidates,
   resolveJourneymanIdentity,
   resolveZebraStripes,
@@ -106,6 +107,15 @@ test('Journeyman random modes sample cards while choice modes maximize chemistry
   assert.equal(chooseJourneymanIdentity(entries[0], entries, () => 0), 'S1|B');
   entries[0].trinket.effect = { mode: 'choose_any', crossSide: true };
   assert.equal(chooseJourneymanIdentity(entries[0], entries), 'S1|B', 'ties resolve in stable lineup order');
+});
+
+test('Journeyman copies another Journeyman effective team instead of its printed team', () => {
+  const common = { userId: 1, slot: 'F1', printedChemistryKey: 'S2|ORIGINAL', trinket: { family: 'journeyman', rarity: 'common', effect: { mode: 'random_all', crossSide: false } } };
+  const epic = { userId: 1, slot: 'F2', printedChemistryKey: 'S2|BARTS', placement: { journeyman_key: 'S2|FOXES' }, trinket: { family: 'journeyman', rarity: 'epic', effect: { mode: 'choose_own_or_opposite', crossSide: true } } };
+  const entries = [common, epic];
+
+  assert.equal(journeymanCandidateIdentity(epic), 'S2|FOXES');
+  assert.equal(chooseJourneymanIdentity(common, entries, () => 0), 'S2|FOXES');
 });
 
 test('only Legendary Journeyman can copy another season', () => {

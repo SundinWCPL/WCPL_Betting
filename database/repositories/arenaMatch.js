@@ -1,6 +1,6 @@
 import { withTransaction } from '../postgres.js';
 import { ARENA_TURN_SEQUENCE, nextArenaDeadline } from '../../services/arenaRuntime.js';
-import { journeymanCandidates, resolveZebraStripes, trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
+import { journeymanCandidateIdentity, journeymanCandidates, resolveZebraStripes, trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
 import { changeWutCoins, lockWutMembership } from './wutWallet.js';
 import { addBalanceTransaction, changeLockedUserBalance, lockUser } from './wallet.js';
 
@@ -36,7 +36,7 @@ function lockJourneyman(existing, added, effects) {
       entry.row.journeyman_key = '';
       continue;
     }
-    const allowed = new Set(journeymanCandidates(effective, all).map(item => item.printedChemistryKey));
+    const allowed = new Set(journeymanCandidates(effective, all).map(journeymanCandidateIdentity));
     if (!String(effective.trinket.effect?.mode || '').startsWith('random_')) {
       const chosen = String(entry.row.journeyman_key || '').trim();
       if (allowed.size && !allowed.has(chosen)) throw new Error('Choose an eligible team for Journeyman before locking this card.');
