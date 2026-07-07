@@ -2179,18 +2179,29 @@ async function buildArenaCardsHub(userId, query = {}) {
   const membership = postgresEnabled
     ? await getWutMembershipStatePostgres(postgresPool(), userId)
     : getWutMembershipState(userId);
-  if (membership.starterOpened && !postgresEnabled) {
+  if (membership.starterOpened) {
     const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
     try {
       const opportunities = await buildWutMissionBetOpportunities({
         seasonId: settings.seasonId,
         week: settings.currentWeek
       });
-      setWutMissionBetOpportunities({
-        week: settings.currentWeek,
-        opportunities,
-        locked: isWeekLocked(settings.currentWeek)
-      });
+      const locked = postgresEnabled
+        ? (settings.lockedWeeks || []).map(Number).includes(Number(settings.currentWeek))
+        : isWeekLocked(settings.currentWeek);
+      if (postgresEnabled) {
+        await setWutMissionBetOpportunitiesPostgres(postgresPool(), {
+          week: settings.currentWeek,
+          opportunities,
+          locked
+        });
+      } else {
+        setWutMissionBetOpportunities({
+          week: settings.currentWeek,
+          opportunities,
+          locked
+        });
+      }
     } catch (err) {
       console.error('Could not refresh WUT sportsbook mission options:', err);
     }
