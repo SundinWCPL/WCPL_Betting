@@ -13,7 +13,15 @@ export const WUT_DRAFT_PHASES = Object.freeze([
 ]);
 
 export function isWutDraftEventLobbyVisible(event) {
-  return !['complete', 'prizes_awarded', 'cancelled'].includes(String(event?.phase || ''));
+  const phase = String(event?.phase || '');
+  if (phase === 'cancelled') return false;
+  if (phase === 'complete') return true;
+  if (phase === 'prizes_awarded') {
+    return (event?.prizes?.awards || []).some(award =>
+      award?.type === 'player_pack' && !['claimed'].includes(String(award.status || ''))
+    );
+  }
+  return true;
 }
 
 export function selectWutDraftEliminationBye(seededUserIds, standings = [], previousByeUserIds = []) {
@@ -649,9 +657,10 @@ export function createWutDraftEventRecord({ id, config, presetId = null, adminUs
   return event;
 }
 
-export function transitionWutDraftEventRecord(event, nextPhase, { actorUserId = null, reason = '', now = new Date() } = {}) {
+export function transitionWutDraftEventRecord(event, nextPhase, { actorUserId = null, reason = '', now = new Date(), allowPrizeAwardTransition = false } = {}) {
   const target = choice(nextPhase, WUT_DRAFT_PHASES, '');
   if (!target) throw new Error('Unknown WUT Draft Event phase.');
+  if (target === 'prizes_awarded' && !allowPrizeAwardTransition) throw new Error('Use the Draft Event prize award action to award prizes.');
   if (event.paused_at) throw new Error('Resume the event before changing phases.');
   const allowed = WUT_DRAFT_TRANSITIONS[event.phase] || [];
   if (!allowed.includes(target)) throw new Error(`Cannot move a draft event from ${event.phase} to ${target}.`);

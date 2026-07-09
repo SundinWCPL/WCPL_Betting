@@ -35,13 +35,24 @@ test('Draft Event wall times are always interpreted in Pacific Time', () => {
   assert.throws(() => draftEvents.wutPacificDateTimeToIso('2026-03-08T02:30'), /does not exist in Pacific Time/);
 });
 
-test('the public Draft lobby shows only upcoming and ongoing events', () => {
+test('the public Draft lobby keeps completed events visible until prize packs are claimed', () => {
   for (const phase of ['scheduled', 'signup_open', 'signup_closed', 'starting', 'bench_vote', 'draft', 'deckbuilding', 'tournament']) {
     assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase }), true, `${phase} should remain visible`);
   }
-  for (const phase of ['complete', 'prizes_awarded', 'cancelled']) {
+  assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase: 'complete' }), true, 'complete events should remain visible for prize follow-up');
+  assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase: 'prizes_awarded', prizes: { awards: [{ type: 'player_pack', status: 'pending' }] } }), true, 'events with pending prize packs should remain visible');
+  assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase: 'prizes_awarded', prizes: { awards: [{ type: 'player_pack', status: 'queued' }] } }), true, 'events with queued prize packs should remain visible');
+  for (const phase of ['prizes_awarded', 'cancelled']) {
     assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase }), false, `${phase} should be hidden`);
   }
+  assert.equal(draftEvents.isWutDraftEventLobbyVisible({ phase: 'prizes_awarded', prizes: { awards: [{ type: 'player_pack', status: 'claimed' }] } }), false, 'claimed prize packs can leave the lobby');
+});
+
+test('Draft Event prizes cannot be bypassed with a plain phase transition', () => {
+  const event = { phase: 'complete', paused_at: null, deadlines: {}, logs: [], nextLogId: 1 };
+  assert.throws(() => draftEvents.transitionWutDraftEventRecord(event, 'prizes_awarded'), /prize award action/);
+  draftEvents.transitionWutDraftEventRecord(event, 'prizes_awarded', { allowPrizeAwardTransition: true });
+  assert.equal(event.phase, 'prizes_awarded');
 });
 
 test('single-elimination byes reward FP performance and avoid repeat recipients', () => {

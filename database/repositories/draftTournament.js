@@ -110,7 +110,9 @@ function startRound(event, plan, now) {
   event.tournament.round = round.number; event.tournament.rounds.push(round); event.tournament.next_round_at = null;
   pairs.forEach((pair, index) => createMatch(event, pair, round, now, event.config.match.simultaneousMatches || index === 0, roles[index]));
   appendWutDraftEventLog(event, 'tournament_round_started', { round: round.number, stage: round.stage, match_ids: round.match_ids, bye_user_ids: round.bye_user_ids }, { now });
-  standings(event); return round;
+  standings(event);
+  if (!round.match_ids.length) advance(event, now);
+  return round;
 }
 
 function roundRobin(ids, meetings) {
@@ -230,6 +232,7 @@ export async function completeWutDraftEventMatchWithClient(client, { eventId, ma
     match.placements.filter(row => Number(row.user_id) === Number(id)).reduce((sum, row) => sum + asNumber(row.fp), 0)]));
   match.scores = scores; const [a, b] = match.player_ids.map(Number); match.winner_user_id = scores[a] === scores[b] ? null : scores[a] > scores[b] ? a : b;
   match.status = 'ready'; match.resolved_at = now.toISOString(); match.turn_deadline = null; standings(event);
+  activateNext(event, now); advance(event, now);
   await saveDraftTournamentEvent(client, event); return match;
 }
 
@@ -239,7 +242,9 @@ function activateNext(event, now) { if (event.config.match.simultaneousMatches) 
   if (next) { next.status = 'active'; next.turn_deadline = deadline(event, now); next.started_at = now.toISOString(); } }
 
 function advance(event, now) {
+  if (event.phase !== 'tournament') return;
   const round = event.tournament.rounds.at(-1); if (!round) return;
+  if (round.status === 'completed') return;
   const matches = round.match_ids.map(id => event.tournament.matches.find(match => Number(match.id) === Number(id))).filter(Boolean);
   if (matches.some(match => !resolved(match) && !['voided','cancelled'].includes(match.status))) return;
   round.status = 'completed'; round.completed_at = now.toISOString(); standings(event); let plan = null; const format = event.config.tournament.format;
@@ -358,9 +363,10 @@ export async function resetCurrentWutDraftEventRoundWithClient(client, { eventId
 }
 
 export async function awardWutDraftEventPrizesWithClient(client, { eventId, adminUserId, generatePack, random = Math.random, now = new Date() }) {
-  await requireAdmin(client, adminUserId); const event = await lockAndLoadDraftEvent(client, eventId);
+  if (adminUserId != null) await requireAdmin(client, adminUserId); const event = await lockAndLoadDraftEvent(client, eventId);
   if (event.prizes?.awarded_at) return { event, alreadyAwarded: true, awards: event.prizes.awards || [] };
-  if (event.phase !== 'complete' || !event.tournament.completed_at) throw new Error('Draft Event prizes can only be awarded after the tournament is complete.');
+  const strandedPrizePhase = event.phase === 'prizes_awarded' && !(event.prizes?.awards || []).length;
+  if (!['complete', 'prizes_awarded'].includes(event.phase) || (!strandedPrizePhase && event.phase !== 'complete') || !event.tournament.completed_at) throw new Error('Draft Event prizes can only be awarded after the tournament is complete.');
   const active = new Set(activeIds(event)); const rows = standings(event).filter(row => active.has(Number(row.user_id))); const awards = [];
   const cardsMeta = (await client.query("SELECT data FROM app_documents WHERE document_key='cards_meta'")).rows[0]?.data || {};
   const settings = (await client.query("SELECT data FROM app_documents WHERE document_key='settings'")).rows[0]?.data || {};
@@ -384,8 +390,13 @@ export async function awardWutDraftEventPrizesWithClient(client, { eventId, admi
       await client.query(`INSERT INTO owned_trinkets(id,user_id,family,rarity,attached_card_id,source_order,data) VALUES($1,$2,$3,$4,NULL,$5,$6::jsonb)`, [id,row.user_id,family,rarity,id,JSON.stringify(trinket)]); awards.push({ ...base, type:'trinket', family, rarity, trinket_id:id });
     }
   }
-  event.prizes.awards = awards; event.prizes.awarded_at = now.toISOString(); event.archived_inventories = event.inventories; event.archived_decks = event.decks; event.inventories = {}; event.decks = {};
-  event.cleanup.temporary_items_removed_at = now.toISOString(); transitionWutDraftEventRecord(event, 'prizes_awarded', { actorUserId: adminUserId, reason: 'Prizes awarded and temporary Event Collections retired', now });
+  event.prizes.awards = awards; event.prizes.awarded_at = now.toISOString();
+  event.archived_inventories = Object.keys(event.archived_inventories || {}).length ? event.archived_inventories : event.inventories;
+  event.archived_decks = Object.keys(event.archived_decks || {}).length ? event.archived_decks : event.decks;
+  event.inventories = {}; event.decks = {};
+  event.cleanup.temporary_items_removed_at = now.toISOString();
+  if (event.phase === 'complete') transitionWutDraftEventRecord(event, 'prizes_awarded', { actorUserId: adminUserId, reason: 'Prizes awarded and temporary Event Collections retired', now, allowPrizeAwardTransition: true });
+  else event.updated_at = now.toISOString();
   appendWutDraftEventLog(event, 'prizes_awarded', { award_count: awards.length, recipients: [...new Set(awards.map(item => item.user_id))] }, { actorUserId: adminUserId, now }); await saveDraftEvent(client, event);
   return { event, alreadyAwarded: false, awards };
 }

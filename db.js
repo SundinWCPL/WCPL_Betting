@@ -3314,7 +3314,8 @@ export function awardWutDraftEventPrizes({ eventId, adminUserId = null, generate
   if (adminUserId != null) requireWutDraftAdmin(adminUserId);
   const event = storedWutDraftEvent(eventId);
   if (event.prizes?.awarded_at) return { event: wutDraftEventView(event, adminUserId), alreadyAwarded: true, awards: JSON.parse(JSON.stringify(event.prizes.awards || [])) };
-  if (event.phase !== 'complete' || !event.tournament.completed_at) throw new Error('Draft Event prizes can only be awarded after the tournament is complete.');
+  const strandedPrizePhase = event.phase === 'prizes_awarded' && !(event.prizes?.awards || []).length;
+  if (!['complete', 'prizes_awarded'].includes(event.phase) || (!strandedPrizePhase && event.phase !== 'complete') || !event.tournament.completed_at) throw new Error('Draft Event prizes can only be awarded after the tournament is complete.');
   const activeRecipients = new Set(wutDraftActiveEntrantIds(event));
   const standings = recalculateWutDraftStandings(event).filter(row => activeRecipients.has(Number(row.user_id)));
   const actions = [];
@@ -3355,9 +3356,12 @@ export function awardWutDraftEventPrizes({ eventId, adminUserId = null, generate
     }
   }
   event.prizes.awards = awards; event.prizes.awarded_at = now.toISOString();
-  event.archived_inventories = event.inventories; event.archived_decks = event.decks; event.inventories = {}; event.decks = {};
+  event.archived_inventories = Object.keys(event.archived_inventories || {}).length ? event.archived_inventories : event.inventories;
+  event.archived_decks = Object.keys(event.archived_decks || {}).length ? event.archived_decks : event.decks;
+  event.inventories = {}; event.decks = {};
   event.cleanup.temporary_items_removed_at = now.toISOString();
-  transitionWutDraftEventRecord(event, 'prizes_awarded', { actorUserId: adminUserId, reason: 'Prizes awarded and temporary Event Collections retired', now });
+  if (event.phase === 'complete') transitionWutDraftEventRecord(event, 'prizes_awarded', { actorUserId: adminUserId, reason: 'Prizes awarded and temporary Event Collections retired', now, allowPrizeAwardTransition: true });
+  else event.updated_at = now.toISOString();
   appendWutDraftEventLog(event, 'prizes_awarded', { award_count: awards.length, recipients: [...new Set(awards.map(item => item.user_id))] }, { actorUserId: adminUserId, now });
   appendWutDraftEventLog(event, 'temporary_inventory_cleaned', { user_count: Object.keys(event.archived_inventories).length }, { actorUserId: adminUserId, now });
   saveState();

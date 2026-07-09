@@ -93,7 +93,7 @@
       <form method="post" action="/cards/drafts/<%= event.id %>/trinkets/detach" id="eventDetachTrinketForm"><input type="hidden" name="card_id"></form>
     <% } %>
 
-    <% if (['tournament','complete','prizes_awarded'].includes(event.phase)) { const entrantName = id => event.entrants.find(row => Number(row.user_id) === Number(id))?.display_name || `Player ${id}`; const activeRound = event.tournament.rounds?.at(-1); %>
+    <% if (['tournament','complete','prizes_awarded'].includes(event.phase)) { const entrantName = id => event.entrants.find(row => Number(row.user_id) === Number(id))?.display_name || `Player ${id}`; const activeRound = event.tournament.rounds?.at(-1); const userMatchHistory = (event.tournament.matches || []).filter(match => match.player_ids.map(Number).includes(Number(currentUser.id))).slice().sort((a, b) => Number(b.round || 0) - Number(a.round || 0) || Number(b.id || 0) - Number(a.id || 0)); %>
       <section class="card draft-tournament-board" id="tournament">
         <div class="cards-section-head"><div><p class="eyebrow"><%= event.config.tournament.format.replaceAll('_',' ') %></p><h2><%= event.phase === 'tournament' ? `Round ${event.tournament.round}` : 'Final Standings' %></h2><p class="muted"><%= event.tournament.next_round_at ? `Next round begins ${wutPacificDateTime(event.tournament.next_round_at)} Pacific Time.` : event.phase === 'tournament' ? 'Matches use the standard WUT lineup and scoring experience.' : 'Tournament play is complete.' %></p></div><span class="pill <%= event.phase === 'complete' ? 'positive' : '' %>"><%= event.phase === 'complete' ? 'Complete' : activeRound?.stage?.replaceAll('_',' ') || 'Tournament' %></span></div>
         <div class="draft-tournament-layout">
@@ -105,6 +105,13 @@
           </div>
           <div class="draft-standings"><h3>Standings</h3><table><thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>D</th><th>FP</th><th>Diff</th></tr></thead><tbody><% (event.tournament.standings || []).forEach(row => { %><tr class="<%= Number(row.user_id) === Number(currentUser.id) ? 'is-you' : '' %>"><td><%= row.rank %></td><td><%= entrantName(row.user_id) %></td><td><%= row.wins %></td><td><%= row.losses %></td><td><%= row.draws %></td><td><%= row.fp_for %></td><td><%= row.fp_differential >= 0 ? '+' : '' %><%= row.fp_differential %></td></tr><% }) %></tbody></table></div>
         </div>
+        <% if (isEntrant && userMatchHistory.length) { %>
+          <div class="draft-round-matches draft-match-history"><h3>Your Match History</h3>
+            <% userMatchHistory.forEach(match => { const opponentId = match.player_ids.map(Number).find(id => id !== Number(currentUser.id)); const hasReveal = (match.revealed_by || []).map(Number).includes(Number(currentUser.id)); const canReplay = ['ready','completed'].includes(match.status) && hasReveal; %>
+              <article class="draft-tournament-match"><div><span class="pill">Round <%= match.round || '?' %></span><strong><%= entrantName(currentUser.id) %> <em>vs</em> <%= entrantName(opponentId) %></strong><small><%= match.scores ? `${match.scores[String(match.player_ids[0])]}-${match.scores[String(match.player_ids[1])]}` : `Match #${match.id} - ${match.status}` %></small></div><a class="button-link ghost" href="/cards/drafts/<%= event.id %>/matches/<%= match.id %><%= canReplay ? '/results#arena-results' : '' %>"><%= canReplay ? 'View Replay' : match.status === 'ready' ? 'Reveal Result' : 'Open Match' %></a></article>
+            <% }) %>
+          </div>
+        <% } %>
       </section>
     <% } %>
 

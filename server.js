@@ -2058,7 +2058,8 @@ async function scorePendingArenaMatches(catalog = null) {
     else completeArenaMatch(match.arena_match_key || match.id, scored);
     resolved += 1;
   }
-  if (!postgresEnabled) await awardCompletedWutDraftEvents(activeCatalog);
+  if (postgresEnabled) await awardCompletedWutDraftEventsPostgres(activeCatalog);
+  else await awardCompletedWutDraftEvents(activeCatalog);
   return resolved;
 }
 
@@ -2083,10 +2084,30 @@ async function processAutomaticWutDraftStarts(catalog = null, now = new Date()) 
 async function awardCompletedWutDraftEvents(catalog = null, eventId = null, adminUserId = null) {
   const activeCatalog = catalog || await getCardsCatalog();
   const config = await getLiveCardsConfig();
-  const completed = getWutDraftEventLobby({ includePrivate: true }).filter(event => event.phase === 'complete' && !event.prizes?.awarded_at && (eventId == null || Number(event.id) === Number(eventId)));
+  const completed = getWutDraftEventLobby({ includePrivate: true }).filter(event =>
+    (event.phase === 'complete' || (event.phase === 'prizes_awarded' && !(event.prizes?.awards || []).length)) &&
+    !event.prizes?.awarded_at && (eventId == null || Number(event.id) === Number(eventId))
+  );
   const results = [];
   for (const event of completed) results.push(awardWutDraftEventPrizes({
     eventId: event.id, adminUserId,
+    generatePack: packType => generateWutPlayerPack({ packType, catalog: activeCatalog, config })
+  }));
+  return results;
+}
+
+async function awardCompletedWutDraftEventsPostgres(catalog = null, eventId = null, adminUserId = null) {
+  const activeCatalog = catalog || await getCardsCatalog();
+  const config = await getLiveCardsConfig();
+  const completed = (await getDraftEventLobbyPostgres(postgresPool(), { includePrivate: true }))
+    .filter(event =>
+      (event.phase === 'complete' || (event.phase === 'prizes_awarded' && !(event.prizes?.awards || []).length)) &&
+      !event.prizes?.awarded_at && (eventId == null || Number(event.id) === Number(eventId))
+    );
+  const results = [];
+  for (const event of completed) results.push(await awardWutDraftEventPrizesPostgres(postgresPool(), {
+    eventId: event.id,
+    adminUserId,
     generatePack: packType => generateWutPlayerPack({ packType, catalog: activeCatalog, config })
   }));
   return results;
@@ -2118,6 +2139,7 @@ async function processArena(now = new Date()) {
         });
         await beginWutDraftSafetyBenchPostgres(postgresPool(), { eventId, system: true, now });
       }
+      await awardCompletedWutDraftEventsPostgres(catalog);
       return catalog;
     }
     if (getAdminSettings().maintenanceMode) return null;
