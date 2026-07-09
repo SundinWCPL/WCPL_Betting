@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { decodeJsonState, encodeJsonState, stateManifest } from '../database/stateCodec.js';
+import { TABLE_COLUMNS } from '../database/stateStore.js';
+import { saveDraftTournamentEvent } from '../database/repositories/draftEventStore.js';
 import { getTopWeeklyBetsPostgres } from '../database/repositories/homeRead.js';
 import { getArenaAdminSummaryPostgres, getArenaRatingPostgres } from '../database/repositories/arenaRead.js';
 
@@ -68,6 +70,60 @@ test('runtime sequences cover every generated top-level numeric identifier', () 
     assert.match(sql, new RegExp(`ALTER TABLE ${table} ALTER COLUMN id SET DEFAULT nextval`));
     assert.match(sql, new RegExp(`SELECT max\\(id\\) \\+ 1 FROM ${table}`));
   }
+});
+
+test('draft tournament saves keep placement rows after refreshing match rows', async () => {
+  const tables = {
+    draft_rounds: [],
+    draft_matches: [{ event_id: 42, match_key: '1', data: { id: 1 } }],
+    draft_match_placements: [],
+    draft_logs: []
+  };
+  const client = {
+    query: async (sql, values = []) => {
+      const normalized = sql.replace(/\s+/g, ' ').trim();
+      const deleted = normalized.match(/^DELETE FROM (\w+) WHERE event_id=\$1$/);
+      if (deleted) {
+        tables[deleted[1]] ||= [];
+        tables[deleted[1]] = tables[deleted[1]].filter(row => Number(row.event_id) !== Number(values[0]));
+        if (deleted[1] === 'draft_matches') {
+          tables.draft_match_placements = tables.draft_match_placements.filter(row => Number(row.event_id) !== Number(values[0]));
+        }
+        return { rows: [] };
+      }
+      const inserted = normalized.match(/^INSERT INTO (\w+) \(([^)]+)\) VALUES /);
+      if (inserted) {
+        const table = inserted[1];
+        const columns = TABLE_COLUMNS[table];
+        for (let offset = 0; offset < values.length; offset += columns.length) {
+          const row = {};
+          columns.forEach((column, index) => { row[column] = values[offset + index]; });
+          tables[table].push(row);
+        }
+        return { rows: [] };
+      }
+      return { rows: [] };
+    }
+  };
+  const event = {
+    id: 42, phase: 'tournament', updated_at: '2026-07-09T00:00:00.000Z',
+    config: { basic: { visibility: 'public' }, scheduling: {} },
+    entrants: [], logs: [], draft: {}, inventories: {}, archived_inventories: {}, decks: {}, archived_decks: {},
+    tournament: {
+      round: 1,
+      rounds: [{ number: 1, match_ids: [1] }],
+      matches: [{
+        id: 1, round: 1, status: 'active', player_ids: [7, 8], first_player_id: 7, turn_index: 1,
+        placements: [{ user_id: 7, owner_user_id: 7, slot: 'F1', card_id: 101, card_snapshot: { card_identity: 'S2|F|test' } }]
+      }]
+    }
+  };
+
+  await saveDraftTournamentEvent(client, event);
+
+  assert.equal(tables.draft_matches.length, 1);
+  assert.equal(tables.draft_match_placements.length, 1);
+  assert.equal(JSON.parse(tables.draft_match_placements[0].data).slot, 'F1');
 });
 
 test('top weekly bets keep different player selections in goalie and scorer leader props separate', async () => {

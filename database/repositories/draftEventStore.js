@@ -157,6 +157,8 @@ export async function saveDraftTournamentEvent(client, event) {
     timestamp(event.config?.scheduling?.startsAt), timestamp(event.paused_at), timestamp(event.updated_at) || new Date().toISOString(), JSON.stringify(eventData)]);
   for (const table of ['draft_match_placements', 'draft_matches', 'draft_rounds']) {
     await client.query(`DELETE FROM ${table} WHERE event_id=$1`, [Number(event.id)]);
+  }
+  for (const table of ['draft_rounds', 'draft_matches', 'draft_match_placements']) {
     await insertStateRows(client, table, rows[table]);
   }
   for (const row of rows.draft_inventories) {

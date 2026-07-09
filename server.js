@@ -160,6 +160,7 @@ import {
   detachWutDraftEventTrinket,
   finishWutDraftDeckbuilding,
   extendWutDraftDeckbuilding,
+  updateWutDraftTournamentTurnSeconds,
   getWutDraftEventMatch,
   commitWutDraftEventTurn,
   completeWutDraftEventReveal,
@@ -272,7 +273,8 @@ import {
   finishWutDraftDeckbuildingPostgres,
   getDraftMatchesNeedingScoringPostgres,
   resetCurrentWutDraftEventRoundPostgres,
-  resolveWutDraftEventMatchPostgres
+  resolveWutDraftEventMatchPostgres,
+  updateWutDraftTournamentTurnSecondsPostgres
 } from './database/repositories/draftTournament.js';
 import { processWutDraftEventsPostgres } from './database/repositories/draftScheduler.js';
 import { joinWutPostgres, openWutStarterPackPostgres } from './database/repositories/wutOnboarding.js';
@@ -3708,6 +3710,17 @@ app.post('/admin/cards/drafts/:eventId/tournament/advance', requireAdmin, async 
     const event = postgresEnabled ? await advanceWutDraftEventRoundPostgres(postgresPool(), input) : advanceWutDraftEventRound(input);
     req.session.flash = { type: 'success', message: `Draft Event #${event.id} advanced to ${event.phase === 'tournament' ? `round ${event.tournament.round}` : event.phase}.` };
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/admin/cards/drafts');
+});
+
+app.post('/admin/cards/drafts/:eventId/tournament/timers', requireAdmin, async (req, res) => {
+  try {
+    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds };
+    const event = postgresEnabled ? await updateWutDraftTournamentTurnSecondsPostgres(postgresPool(), input) : updateWutDraftTournamentTurnSeconds(input);
+    req.session.flash = { type: 'success', message: `Draft Event #${event.id} tournament turns now use ${event.config.match.turnSeconds} seconds.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
   res.redirect('/admin/cards/drafts');
 });
 

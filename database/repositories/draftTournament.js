@@ -303,6 +303,28 @@ export async function extendWutDraftDeckbuildingWithClient(client, { eventId, ad
   return event;
 }
 
+export async function updateWutDraftTournamentTurnSecondsWithClient(client, { eventId, adminUserId, seconds, now = new Date() }) {
+  await requireAdmin(client, adminUserId);
+  const event = await lockAndLoadDraftEvent(client, eventId);
+  if (event.phase !== 'tournament') throw new Error('Tournament turn timers can only be changed during the tournament phase.');
+  const amount = Math.max(15, Math.min(604800, Math.round(Number(seconds) || 0)));
+  event.config.match.turnSeconds = amount;
+  const base = event.paused_at ? new Date(event.paused_at) : now;
+  const activeMatchIds = [];
+  for (const match of event.tournament.matches || []) {
+    if (match.status !== 'active') continue;
+    match.turn_deadline = deadline(event, base);
+    activeMatchIds.push(Number(match.id));
+  }
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'tournament_turn_timer_updated', {
+    seconds: amount,
+    active_match_ids: activeMatchIds
+  }, { actorUserId: adminUserId, now });
+  await saveDraftTournamentEvent(client, event);
+  return event;
+}
+
 export async function advanceWutDraftEventRoundWithClient(client, { eventId, adminUserId, now = new Date() }) {
   await requireAdmin(client, adminUserId); const event = await lockAndLoadDraftEvent(client, eventId); const before = event.tournament.round;
   advance(event, now);
@@ -375,6 +397,7 @@ export const completeWutDraftEventRevealPostgres = (pool, input) => withTransact
 export const resolveWutDraftEventMatchPostgres = (pool, input) => withTransaction(pool, client => resolveWutDraftEventMatchWithClient(client, input));
 export const timeoutWutDraftEventMatchPostgres = (pool, input) => withTransaction(pool, client => timeoutWutDraftEventMatchWithClient(client, input));
 export const extendWutDraftDeckbuildingPostgres = (pool, input) => withTransaction(pool, client => extendWutDraftDeckbuildingWithClient(client, input));
+export const updateWutDraftTournamentTurnSecondsPostgres = (pool, input) => withTransaction(pool, client => updateWutDraftTournamentTurnSecondsWithClient(client, input));
 export const advanceWutDraftEventRoundPostgres = (pool, input) => withTransaction(pool, client => advanceWutDraftEventRoundWithClient(client, input));
 export const dropWutDraftEventEntrantPostgres = (pool, input) => withTransaction(pool, client => dropWutDraftEventEntrantWithClient(client, input));
 export const resetCurrentWutDraftEventRoundPostgres = (pool, input) => withTransaction(pool, client => resetCurrentWutDraftEventRoundWithClient(client, input));

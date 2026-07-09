@@ -3463,6 +3463,28 @@ export function extendWutDraftDeckbuilding({ eventId, adminUserId, seconds, now 
   return wutDraftEventView(event, adminUserId);
 }
 
+export function updateWutDraftTournamentTurnSeconds({ eventId, adminUserId, seconds, now = new Date() }) {
+  requireWutDraftAdmin(adminUserId);
+  const event = storedWutDraftEvent(eventId);
+  if (event.phase !== 'tournament') throw new Error('Tournament turn timers can only be changed during the tournament phase.');
+  const amount = Math.max(15, Math.min(604800, Math.round(Number(seconds) || 0)));
+  event.config.match.turnSeconds = amount;
+  const base = event.paused_at ? new Date(event.paused_at) : now;
+  const activeMatchIds = [];
+  for (const match of event.tournament.matches || []) {
+    if (match.status !== 'active') continue;
+    match.turn_deadline = wutDraftTurnDeadline(event, base);
+    activeMatchIds.push(Number(match.id));
+  }
+  event.updated_at = now.toISOString();
+  appendWutDraftEventLog(event, 'tournament_turn_timer_updated', {
+    seconds: amount,
+    active_match_ids: activeMatchIds
+  }, { actorUserId: adminUserId, now });
+  saveState();
+  return wutDraftEventView(event, adminUserId);
+}
+
 function wutDraftTemporaryBenchCard(event, winner) {
   const card = winner.card;
   return {
