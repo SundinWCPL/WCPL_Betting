@@ -62,7 +62,31 @@ function setDeadline(event, now) {
   event.deadlines.draft_pick = event.draft.deadline_at;
 }
 
-function generateRound(event, boosterNumber, packs, now) {
+function prepareAutopicks(event, now, random = Math.random) {
+  if (!event.config.draft.autopick.enabled) {
+    event.draft.prepared_autopicks = {};
+    return;
+  }
+  const prepared = {};
+  for (const userId of event.draft.pending_user_ids || []) {
+    const playerId = Number(userId);
+    const pack = event.draft.boosters.find(item => Number(item.booster_number) === Number(event.draft.current_booster) &&
+      Number(item.current_owner_user_id) === playerId && !item.awaiting_pass && item.items.length);
+    const item = chooseWutDraftAutopick(pack?.items || [], event.config.draft.autopick.priority, random);
+    if (!pack || !item) continue;
+    prepared[String(playerId)] = {
+      user_id: playerId,
+      pack_id: Number(pack.id),
+      item_id: Number(item.id),
+      booster_number: Number(event.draft.current_booster),
+      pick_number: Number(event.draft.current_pick),
+      prepared_at: now.toISOString()
+    };
+  }
+  event.draft.prepared_autopicks = prepared;
+}
+
+function generateRound(event, boosterNumber, packs, now, random = Math.random) {
   const template = event.draft.round_templates.find(item => Number(item.boosterNumber) === Number(boosterNumber));
   const materialized = packs.map(pack => ({
     ...pack, id: Number(event.nextDraftPackId++), opened_at: now.toISOString(),
@@ -73,6 +97,7 @@ function generateRound(event, boosterNumber, packs, now) {
   event.draft.current_pick = 1;
   event.draft.pending_user_ids = [...event.draft.seat_user_ids];
   setDeadline(event, now);
+  prepareAutopicks(event, now, random);
   appendWutDraftEventLog(event, 'booster_generated', {
     booster_number: boosterNumber,
     pack_ids: materialized.map(pack => pack.id),
@@ -105,7 +130,7 @@ export async function beginWutDraftEventWithClient(client, {
     event.draft.boosters = [];
     event.draft.picks = [];
     event.draft.pass_log = [];
-    generateRound(event, 1, packs, now);
+    generateRound(event, 1, packs, now, random);
     appendWutDraftEventLog(event, 'draft_started', { seats, booster_count: templates.length }, { actorUserId: adminUserId, now });
   }
   await saveDraftEvent(client, event);
@@ -145,12 +170,13 @@ function passPacks(event, now, random = Math.random) {
         trinketEffects: event.environment_snapshot.rules?.trinketEffects || {},
         poolRules: event.config.boosters.pool, usedCardIdentities: used, random
       });
-      generateRound(event, nextNumber, nextPacks, now);
+      generateRound(event, nextNumber, nextPacks, now, random);
       return;
     }
     event.draft.completed_at = now.toISOString();
     event.draft.deadline_at = null;
     event.draft.pending_user_ids = [];
+    event.draft.prepared_autopicks = {};
     delete event.deadlines.draft_pick;
     transitionWutDraftEventRecord(event, 'deckbuilding', { reason: 'All boosters exhausted', now });
     event.deckbuilding.deadline_at = new Date(now.getTime() + Number(event.config.deckbuilding.seconds) * 1000).toISOString();
@@ -175,10 +201,10 @@ function passPacks(event, now, random = Math.random) {
   event.draft.current_pick += 1;
   event.draft.pending_user_ids = [...seats];
   setDeadline(event, now);
+  prepareAutopicks(event, now, random);
 }
 
-export async function pickWutDraftItemWithClient(client, { eventId, userId, itemId, autopick = false, now = new Date() }) {
-  const event = await lockAndLoadDraftEvent(client, eventId);
+function commitDraftPick(event, { userId, itemId, autopick = false, now = new Date(), random = Math.random }) {
   const playerId = Number(userId);
   if (!event.draft.seat_user_ids.map(Number).includes(playerId)) throw new Error('Only Draft Event entrants can pick.');
   if (event.paused_at || event.phase !== 'draft' || event.draft.completed_at) throw new Error('The Booster Draft is not active.');
@@ -203,12 +229,19 @@ export async function pickWutDraftItemWithClient(client, { eventId, userId, item
   pack.history.push(pick);
   event.draft.picks.push(pick);
   event.draft.pending_user_ids = event.draft.pending_user_ids.filter(id => Number(id) !== playerId);
+  if (event.draft.prepared_autopicks) delete event.draft.prepared_autopicks[String(playerId)];
   event.updated_at = now.toISOString();
   appendWutDraftEventLog(event, autopick ? 'item_autopicked' : 'item_drafted', {
     user_id: playerId, pack_id: pack.id, booster_number: pick.booster_number,
     pick_number: pick.pick_number, item_id: item.id, item_type: item.item_type, rarity: item.rarity
   }, { actorUserId: playerId, now });
-  if (!event.draft.pending_user_ids.length) passPacks(event, now);
+  if (!event.draft.pending_user_ids.length) passPacks(event, now, random);
+  return pick;
+}
+
+export async function pickWutDraftItemWithClient(client, { eventId, userId, itemId, autopick = false, now = new Date(), random = Math.random }) {
+  const event = await lockAndLoadDraftEvent(client, eventId);
+  const pick = commitDraftPick(event, { userId, itemId, autopick, now, random });
   await saveDraftEvent(client, event);
   return { event, pick };
 }
@@ -220,16 +253,21 @@ export async function forceWutDraftAutopickWithClient(client, { eventId, userId 
   const targets = userId == null ? [...event.draft.pending_user_ids] : [Number(userId)];
   const picks = [];
   for (const target of targets) {
-    const current = await lockAndLoadDraftEvent(client, eventId);
-    if (!current.draft.pending_user_ids.map(Number).includes(Number(target))) continue;
-    const pack = current.draft.boosters.find(item => Number(item.booster_number) === Number(current.draft.current_booster) &&
+    if (!event.draft.pending_user_ids.map(Number).includes(Number(target))) continue;
+    const pack = event.draft.boosters.find(item => Number(item.booster_number) === Number(event.draft.current_booster) &&
       Number(item.current_owner_user_id) === Number(target) && !item.awaiting_pass);
-    const item = chooseWutDraftAutopick(pack?.items || [], current.config.draft.autopick.priority, random);
+    const prepared = event.draft.prepared_autopicks?.[String(Number(target))] || null;
+    const preparedItem = prepared && Number(prepared.pack_id) === Number(pack?.id) &&
+      Number(prepared.booster_number) === Number(event.draft.current_booster) &&
+      Number(prepared.pick_number) === Number(event.draft.current_pick)
+      ? pack?.items.find(item => Number(item.id) === Number(prepared.item_id))
+      : null;
+    const item = preparedItem || chooseWutDraftAutopick(pack?.items || [], event.config.draft.autopick.priority, random);
     if (!item) continue;
-    const result = await pickWutDraftItemWithClient(client, { eventId, userId: target, itemId: item.id, autopick: true, now });
-    picks.push(result.pick);
+    picks.push(commitDraftPick(event, { userId: target, itemId: item.id, autopick: true, now, random }));
   }
-  return { event: await lockAndLoadDraftEvent(client, eventId), picks };
+  await saveDraftEvent(client, event);
+  return { event, picks };
 }
 
 export async function extendWutDraftPickDeadlineWithClient(client, { eventId, adminUserId, seconds, now = new Date() }) {
