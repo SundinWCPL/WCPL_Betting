@@ -569,7 +569,7 @@
             <% cardsCatalog.forEach(player => { %>
               <tr>
                 <td><strong><%= player.name %></strong><br><span class="muted"><%= player.edition %> · <%= player.divisionId %> · <%= player.teamId %></span></td>
-                <td><strong class="tier-text-<%= player.tier %>"><%= player.tier %></strong><% if (cardsAdmin.tierOverrides[player.catalogKey]) { %><br><small class="muted">Manual override</small><% } %></td>
+                <td><strong class="tier-text-<%= player.tier %>"><%= player.tier %></strong><% if (cardsAdmin.tierOverrides[player.catalogKey]) { %><br><small class="muted">Manual override</small><% } %><% if (player.packEligible === false) { %><br><small class="muted">Pack/Draft excluded: under 6 GP</small><% } %></td>
                 <td>F <%= player.positionCountsS3?.F || 0 %> · D <%= player.positionCountsS3?.D || 0 %> · G <%= player.positionCountsS3?.G || 0 %></td>
                 <td>F <%= player.positionCountsS2?.F || 0 %> · D <%= player.positionCountsS2?.D || 0 %> · G <%= player.positionCountsS2?.G || 0 %></td>
                 <td><%= player.rarityGamesPlayed || 0 %></td>

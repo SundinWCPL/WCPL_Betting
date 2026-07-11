@@ -1,0 +1,29 @@
+[
+  {
+    "id": "mythic-s2-playoffs-milk",
+    "display_name": "Champ Milk",
+    "position": "G",
+    "source_type": "automatic",
+    "source_division_id": "ALL",
+    "source_season": "S2",
+    "source_stage": "playoffs",
+    "source_team_id": "FOX",
+    "source_player_key": "name:milk",
+    "player_name": "Milk",
+    "card_art": "S2",
+    "flavor_text": "Posting a stunning record of 6-1 with 5 shutouts and a 0.959 save percentage, Milk was simply unbeatable en route to winning the Season 2 championship."
+  },
+  {
+    "id": "mythic-ruleset-Sundin",
+    "display_name": "Ruleset Sundin",
+    "position": "G",
+    "source_type": "manual",
+    "team_id": "OG",
+    "manual_saverate": 10.0,
+    "manual_shutoutrate": 0.4,
+    "manual_savep": 0.925,
+    "manual_logo": "wcpl",
+    "card_art": "S1",
+    "flavor_text": "At the tail end of 2025, Mushy implemented a WCPL Ruleset queue. While widely regarded as a bad move, one man quickly emerged as a legend.\n''*Dad, how good was ruleset Sundin?*'' -CB"
+  }
+]

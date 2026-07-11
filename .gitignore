@@ -25,6 +25,7 @@ Thumbs.db
 data/
 !data/
 data/*
+!data/cards_mythic.json
 !data/S1/
 data/S1/*
 !data/S1/s1_wut_synthetic_games.csv

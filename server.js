@@ -356,6 +356,7 @@ import {
   generatePlayerPack,
   generateWutBoostPack,
   generateWutPlayerPack,
+  isPlayerPackEligible,
   availableWutMatchCards,
   generateWutStarterPack,
   chemistryMultiplierForCount,
@@ -1336,7 +1337,10 @@ async function getCardsCatalog() {
     tierOverrides: admin.tierOverrides,
     rarityThresholds: admin.config.rarityThresholds,
     scoringConfig: admin.config.scoring
-  });
+  }).then(catalog => catalog.map(player => ({
+    ...player,
+    packEligible: isPlayerPackEligible(player)
+  })));
 }
 
 async function getLiveCardsConfig() {
