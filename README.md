@@ -97,7 +97,7 @@ Horse names, ownership, career statistics, claimable owner rewards, and race eco
 The nightly horse-racing card posts at 7:00, 8:00, and 9:00 PM Pacific. Race-one betting and chat open at 6:30 PM; each later betting window opens after the preceding race settles. Chat becomes read-only 15 minutes after race three and its history is retained until the next card opens at 6:30 PM.
 # WUT 2.0 migration notes
 
-WUT data is migrated idempotently when the JSON database loads (`ensureCardsState`). Existing cards remain owned, cooldown values are cleared, Hit/Block Boosts become same-rarity Grit Boosts, and users with a recorded five-card starter set receive an overlapping Starter Deck/Safety Bench. Queue entries created before deck snapshots are cancelled without cost so their owner can choose a deck again.
+WUT data is migrated idempotently when the JSON database loads (`ensureCardsState`). Existing cards remain owned, cooldown values are cleared, Hit/Block Boosts become same-rarity Grit Boosts, and queue entries created before deck snapshots are cancelled without cost so their owner can choose a deck again.
 
 New WUT starter bundles contain five unique Common players in a 2F / 2D / 1G split, two random Common trinkets, and a free Standard pack that opens through the normal shop reveal flow on the user's next visit.
 

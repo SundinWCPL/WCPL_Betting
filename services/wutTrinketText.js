@@ -32,6 +32,14 @@ export function wutTrinketName(family) {
   return WUT_TRINKET_NAMES[String(family || '')] || wutTitleCase(family);
 }
 
+export function wutTrinketIcon(itemOrFamily) {
+  const item = typeof itemOrFamily === 'object' && itemOrFamily !== null ? itemOrFamily : { family: itemOrFamily };
+  const family = String(item.family || '');
+  const role = String(item.captain_role || item.captainRole || '').toLowerCase();
+  if (family === 'team_crest' && role === 'assistant_captain') return 'A';
+  return WUT_TRINKET_ICONS[family] || '◆';
+}
+
 function percent(value) {
   return `${Math.round(Number(value || 0) * 100)}%`;
 }
@@ -49,9 +57,10 @@ export function wutTrinketDescription(item = {}) {
     case 'glass_skates':
       return `If the highest roll beats the second-highest by ${percent(effect?.threshold)}, gain ${percent(effect?.bonus)} total base FP. Otherwise lose ${percent(effect?.penalty)}.`;
     case 'hex_bag':
+      return `If the matching opponent has at least ${effect?.[0]}x this card's pre-counter FP (10 FP minimum), reduce their FP by ${percent(effect?.[1])}, capped at ${effect?.[2]}x this card's FP.`;
       return `If the matching opponent has at least ${effect?.[0]}× this card's pre-counter FP (10 FP minimum), reduce their FP by ${percent(effect?.[1])}.`;
     case 'warding_charm':
-      return `Block ${percent(effect)} of incoming Hex Charm and Siphon Stone effects in the matching slot.`;
+      return `When committed, choose another friendly card. If an opposing trinket would reduce that card's FP, prevent up to 100% of the loss based on how much this card outscored the attacker. Full prevention requires a ${Number(effect || 0)} FP lead.`;
     case 'specialist_tape':
       return `Skaters only. Add ${percent(effect)} of this card's highest-scoring stat category to its total FP.`;
     case 'first_strike_tape':
@@ -60,10 +69,15 @@ export function wutTrinketDescription(item = {}) {
       return `Gain ${percent(effect)} base FP when this card is committed after its matching opponent.`;
     case 'underdog_patch':
       return `Gain ${percent(effect?.[0])} base FP for each card-rarity tier the matching opponent is above this card, up to ${percent(effect?.[1])}. Trinket rarity does not count.`;
-    case 'team_crest':
-      return `Increase this lineup's same-team, same-season chemistry bonus by ${percent(effect)}. Only one Captain's Patch can be active per lineup.`;
+    case 'team_crest': {
+      const value = effect && typeof effect === 'object' ? effect.value : effect;
+      const role = String(item.captain_role || item.captainRole || '').toLowerCase();
+      const base = `This card gains ${percent(value)} base FP for each other same-team, same-season player in your lineup.`;
+      if (role === 'assistant_captain') return `Assistant Captain: ${base} Assistant Captains receive 50% of this benefit.`;
+      return `${base} Up to two Captain's Patches can be active; the second one played becomes an Assistant Captain and receives 50% of this benefit.`;
+    }
     case 'siphon_stone':
-      return `Steal ${percent(effect)} of the pre-counter FP lead held by the matching opponent.`;
+      return `If this card outscores the opposing card by ${percent(effect?.threshold)} or more, steal ${percent(effect?.steal)} of their FP.`;
     case 'journeyman':
       return ({
         random_all: 'Randomly copy another same-season team in either lineup for chemistry.',
@@ -80,7 +94,7 @@ export function wutTrinketDescription(item = {}) {
       return `${own}${adjacent}.${effect?.loadBonus ? ` Lineup Boost Load +${effect.loadBonus}.` : ''}`;
     }
     case 'generalist':
-      return `Skaters only. Gain ${percent(effect?.[3])}, ${percent(effect?.[4])}, or ${percent(effect?.[5])} total base FP for recording 3, 4, or 5 of: goals, assists, shots, hits, and blocks.`;
+      return `Skaters only. If this card scores FP in at least ${effect?.minCategories || 3} skater categories, gain up to ${percent(effect?.maxBonus)} base FP based on how evenly its FP is spread across goals, assists, shots, hits, and blocks.`;
     case 'zebra_stripes':
       return `Downgrade the trinket in the opposing slot by ${effect} rarit${Number(effect) === 1 ? 'y' : 'ies'}. A trinket pushed below Common is nullified.`;
     default:

@@ -2,8 +2,20 @@ import { getWutTrinketShopPostgres } from './wutShop.js';
 import { getWutMembershipStatePostgres } from './appRead.js';
 import { getWutMissionsForUserPostgres } from './wutMissions.js';
 import { withTransaction } from '../postgres.js';
+import { WUT_LAUNCH_TRINKET_EFFECTS, normalizeWutTrinketEffect } from '../../services/wutBalanceRules.js';
 
 const dataRows = rows => rows.map(row => structuredClone(row.data || {}));
+const normalizeWutConfig = config => {
+  const next = structuredClone(config || {});
+  next.trinketEffects ||= {};
+  for (const [family, rarities] of Object.entries(WUT_LAUNCH_TRINKET_EFFECTS)) {
+    next.trinketEffects[family] ||= {};
+    for (const rarity of Object.keys(rarities)) {
+      next.trinketEffects[family][rarity] = normalizeWutTrinketEffect(family, rarity, next.trinketEffects[family][rarity] ?? rarities[rarity]);
+    }
+  }
+  return next;
+};
 
 export async function getCardsOwnedStatePostgres(pool, userId) {
   const [cards, boosts] = await Promise.all([
@@ -38,14 +50,25 @@ export async function getWutSystemsStatePostgres(pool, userId, now = new Date())
     getWutTrinketShopPostgres(pool, { userId, now }),
     getWutMissionsForUserPostgres(pool, { userId, now })
   ]);
-  const config = structuredClone(cardsMeta.rows[0]?.data?.config?.wut || {});
+  const config = normalizeWutConfig(cardsMeta.rows[0]?.data?.config?.wut || {});
+  const normalizedTrinkets = dataRows(trinkets.rows).map(trinket => ({
+    ...trinket,
+    effect: structuredClone(config.trinketEffects?.[trinket.family]?.[trinket.rarity] ?? trinket.effect)
+  }));
+  const shop = structuredClone(shopState.shop);
+  if (shop?.offers) {
+    shop.offers = shop.offers.map(offer => ({
+      ...offer,
+      effect: structuredClone(config.trinketEffects?.[offer.family]?.[offer.rarity] ?? offer.effect)
+    }));
+  }
   return {
     wutCoins: Number(membership.wutCoins || 0),
     deckSlots: Number(membership.deckSlots || 3),
     nextDeckSlotCost: config.deckSlotCosts?.[String(Number(membership.deckSlots || 3) + 1)] || null,
     decks: dataRows(decks.rows),
-    trinkets: dataRows(trinkets.rows),
-    shop: structuredClone(shopState.shop),
+    trinkets: normalizedTrinkets,
+    shop,
     missions,
     config
   };

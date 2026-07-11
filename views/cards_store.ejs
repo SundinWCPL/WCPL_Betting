@@ -16,7 +16,23 @@
     const trinketName = wutTrinketName;
     const trinketIcons = WUT_TRINKET_ICONS;
     const trinketEffectText = wutTrinketDescription;
-    const trinketTooltip = item => `${trinketName(item.family)} · ${titleCase(item.rarity)} · +${item.power_cost} Power\n${trinketEffectText(item)}\nRemoval: ${wut.config.trinketRemovalWut[item.rarity]} WUT Coins or ${wut.config.trinketRemovalMushy[item.rarity]} Mushybux`;
+    const trinketTooltip = item => `${trinketName(item.family)} · ${titleCase(item.rarity)} · +${item.power_cost} Power\n${trinketEffectText(item)}`;
+    const boostPack = {
+      price: 250,
+      commonRareRolls: 4,
+      guaranteedHighRolls: 1,
+      commonRareOdds: { common: 55, uncommon: 30, rare: 15 },
+      guaranteedHighOdds: { epic: 85, legendary: 15 },
+      ...(config.boostPack || {})
+    };
+    const boostPackCount = Number(boostPack.commonRareRolls || 0) + Number(boostPack.guaranteedHighRolls || 0);
+    const pendingPackLabel = pendingPack
+      ? pendingPack.source === 'starter_bonus'
+        ? 'Free Starter Bonus Pack'
+        : pendingPack.pack_kind === 'boost'
+          ? 'Boost Pack'
+          : `${pendingPack.pack_type} ${pendingPack.pack_kind} pack`
+      : '';
     const cleanPlayerName = player => {
       const edition = String(player?.edition || '').trim();
       const name = String(player?.name || '').trim();
@@ -27,14 +43,14 @@
   %>
   <main class="container cards-page">
     <section class="card page-title cards-title">
-      <div><p class="eyebrow">WUT Economy</p><h1>WUT Shop</h1><p>Every player pack contains three players and two boosts.</p></div>
+      <div><p class="eyebrow">WUT Economy</p><h1>WUT Shop</h1><p>Buy player packs, boost packs, and trinkets.</p></div>
       <div class="cards-title-actions"><span class="cards-balance"><%= Math.ceil(wutCoins) %> WUT Coins</span><a class="button-link ghost" href="/cards">Back to Hub</a></div>
     </section>
     <% if (wut.config.freeShopPurchases) { %><section class="card casino-closed-notice"><strong>Admin testing: shop purchases are free.</strong><span>Pack, trinket, and shop-reroll prices are not charged while this toggle is active.</span></section><% } %>
 
     <% if (pendingPack) { %>
       <section class="card pack-reveal">
-        <p class="eyebrow"><%= pendingPack.source === 'starter_bonus' ? 'Free Starter Bonus · Standard Pack' : `${pendingPack.pack_type} ${pendingPack.pack_kind} pack` %></p>
+        <p class="eyebrow"><%= pendingPackLabel %></p>
         <h2>Your Pack</h2>
         <div class="pack-reveal-grid">
           <% pendingPack.items.forEach((item, index) => { %>
@@ -77,9 +93,19 @@
             <form method="post" action="/cards/store/buy"><input type="hidden" name="pack_kind" value="player"><input type="hidden" name="pack_type" value="<%= type %>"><button class="pack-buy-button" <%= !wut.config.freeShopPurchases && wutCoins < prices[type] ? 'disabled' : '' %>><span><%= type %></span><strong><%= wut.config.freeShopPurchases ? 'FREE · Admin Test' : `${prices[type]} WUT Coins` %></strong></button></form>
           <% }) %>
         </article>
+        <article class="card pack-shop-column">
+          <div class="pack-art boost-pack"><span>BOOST</span><strong>PACK</strong></div>
+          <h2>Boost Pack</h2>
+          <p class="muted"><%= boostPackCount %> boosts: <%= Number(boostPack.commonRareRolls || 0) %> common-rare roll(s) plus <%= Number(boostPack.guaranteedHighRolls || 0) %> epic-legendary guarantee(s).</p>
+          <form method="post" action="/cards/store/buy">
+            <input type="hidden" name="pack_kind" value="boost">
+            <input type="hidden" name="pack_type" value="boost">
+            <button class="pack-buy-button" <%= !wut.config.freeShopPurchases && wutCoins < boostPack.price ? 'disabled' : '' %>><span>boost</span><strong><%= wut.config.freeShopPurchases ? 'FREE - Admin Test' : `${boostPack.price} WUT Coins` %></strong></button>
+          </form>
+        </article>
         <article class="card wut-trinket-shop-panel">
           <div class="cards-section-head"><div><p class="eyebrow">Your personal daily rotation</p><h2>Trinket Shop</h2><p class="muted wut-shop-refresh">New offers at midnight <%= wut.shop.refresh_timezone === 'America/Los_Angeles' ? 'Pacific' : `(${wut.shop.refresh_timezone})` %> · <span data-shop-refresh-at="<%= wut.shop.next_refresh_at %>">--:--:--</span></p></div><span class="pill"><%= wut.shop.date_key %></span></div>
-          <div class="wut-shop-trinket-stack">
+          <div class="wut-shop-trinket-stack <%= wut.shop.locked_slot ? 'has-locked-offer' : '' %>" data-locked-slot="<%= wut.shop.locked_slot || '' %>">
             <% wut.shop.offers.forEach(offer => { %><article class="wut-shop-trinket-offer tier-<%= offer.rarity %> <%= offer.sold_at ? 'is-sold' : '' %>" data-trinket-family="<%= offer.family %>"><span class="wut-trinket-icon wut-shop-trinket-icon" title="<%= trinketTooltip(offer) %>"><%= trinketIcons[offer.family] || '◆' %></span><strong class="wut-shop-trinket-name"><%= titleCase(offer.rarity) %> <%= trinketName(offer.family) %></strong><form method="post" action="/cards/trinkets/buy"><input type="hidden" name="slot" value="<%= offer.slot %>"><button <%= offer.sold_at || (!wut.config.freeShopPurchases && wutCoins < offer.price) ? 'disabled' : '' %>><%= offer.sold_at ? 'Sold Out' : wut.config.freeShopPurchases ? 'FREE' : `${offer.price} WUT Coins` %></button></form></article><% }) %>
           </div>
           <button type="button" id="openTrinketReroll">Reroll Trinket Shop</button>
@@ -92,6 +118,37 @@
     const rerollDialog = document.getElementById('rerollTrinketDialog');
     document.getElementById('openTrinketReroll')?.addEventListener('click', () => rerollDialog.showModal());
     document.getElementById('cancelTrinketReroll')?.addEventListener('click', () => rerollDialog.close());
+    const trinketStack = document.querySelector('.wut-shop-trinket-stack');
+    if (trinketStack) {
+      const lockedSlot = trinketStack.dataset.lockedSlot || '';
+      if (lockedSlot) {
+        const rerollCopy = rerollDialog?.querySelector('p');
+        if (rerollCopy) rerollCopy.textContent = 'Your locked offer will stay, and the other slots will refresh.';
+      }
+      trinketStack.querySelectorAll('.wut-shop-trinket-offer').forEach(offer => {
+        const slot = offer.querySelector('input[name="slot"]')?.value || '';
+        const locked = lockedSlot && slot === lockedSlot;
+        if (lockedSlot && !locked) offer.hidden = true;
+        offer.classList.toggle('is-locked', Boolean(locked));
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = '/cards/trinkets/lock';
+        form.className = 'wut-shop-lock-form';
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'slot';
+        input.value = slot;
+        const button = document.createElement('button');
+        button.type = 'submit';
+        button.className = 'wut-shop-lock-button';
+        button.disabled = offer.classList.contains('is-sold');
+        button.title = locked ? 'Unlock this offer' : 'Lock this offer through rerolls';
+        button.setAttribute('aria-label', locked ? 'Unlock this trinket offer' : 'Lock this trinket offer');
+        button.textContent = locked ? String.fromCodePoint(0x1f512) : String.fromCodePoint(0x1f513);
+        form.append(input, button);
+        offer.prepend(form);
+      });
+    }
     const revealCards = [...document.querySelectorAll('[data-reveal-card]')];
     revealCards.forEach(card => card.addEventListener('click', () => {
       card.classList.remove('is-hidden');

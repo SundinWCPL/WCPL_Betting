@@ -1,6 +1,5 @@
 import { getDraftEventPostgres } from './draftEventStore.js';
 import { transitionWutDraftEventPostgres } from './draftEvents.js';
-import { finishWutDraftSafetyBenchPostgres } from './draftBench.js';
 import { forceWutDraftAutopickPostgres } from './draftGameplay.js';
 import { finishWutDraftDeckbuildingPostgres, timeoutWutDraftEventMatchPostgres } from './draftTournament.js';
 
@@ -20,9 +19,6 @@ export async function processWutDraftEventsPostgres(pool, now = new Date()) {
     }
     if (event.phase === 'signup_closed' && event.config.basic.automaticStart && starts && now >= starts &&
       event.entrants.filter(item => item.status === 'active').length >= Number(event.config.basic.minimumEntrants)) startDue.push(id);
-    if (event.phase === 'bench_vote' && event.bench?.deadline_at && !event.bench.completed_at && now >= new Date(event.bench.deadline_at)) {
-      await finishWutDraftSafetyBenchPostgres(pool, { eventId: id, system: true, reason: 'Voting timer expired', now }); changed.push(id); continue;
-    }
     if (event.phase === 'draft' && event.draft?.deadline_at && event.config.draft.autopick.enabled && now >= new Date(event.draft.deadline_at)) {
       await forceWutDraftAutopickPostgres(pool, { eventId: id, system: true, now }); changed.push(id); continue;
     }

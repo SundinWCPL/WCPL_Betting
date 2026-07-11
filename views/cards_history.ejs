@@ -85,61 +85,6 @@
       <% }) %>
     </section>
   </main>
-  <script>
-    const board = document.querySelector('[data-reveal-board]');
-    if (board) {
-      const entries = [...board.querySelectorAll('[data-reveal-entry]')];
-      const outcome = board.querySelector('[data-arena-outcome]');
-      const running = {};
-      const updateScore = () => {
-        board.querySelectorAll('[data-total-for]').forEach(total => { total.textContent = Math.round(running[total.dataset.totalFor] || 0); });
-      };
-      const runReveal = async () => {
-        entries.forEach(entry => {
-          entry.classList.remove('is-revealed');
-          entry.querySelectorAll('.arena-reveal-step').forEach(step => step.hidden = true);
-          const playerTotal = entry.querySelector('.arena-player-fp');
-          if (playerTotal) playerTotal.hidden = true;
-        });
-        outcome.hidden = true;
-        updateScore();
-        for (const entry of entries) {
-          entry.classList.add('is-revealed');
-          for (const step of entry.querySelectorAll('.arena-reveal-step')) {
-            step.hidden = false;
-            const family = step.dataset.trinketFamily;
-            if (family) {
-              entry.dataset.triggerFamily = family;
-              entry.dataset.triggerDirection = step.dataset.effectDirection || 'self';
-              entry.classList.add('is-trinket-firing');
-              step.classList.add('is-triggering');
-              const targetLabel = family === 'specialist_tape' ? step.textContent.match(/Specialist \(([^)]+)\)/)?.[1] : '';
-              const targetStep = targetLabel
-                ? [...entry.querySelectorAll('.arena-reveal-step:not(.is-trinket)')].find(candidate => candidate.querySelector('span')?.textContent.trim().startsWith(targetLabel))
-                : family === 'booster_cable' ? entry.querySelector('.arena-reveal-step.is-boost') : null;
-              targetStep?.classList.add('is-trinket-targeted');
-              step._trinketTarget = targetStep;
-            }
-            const user = step.dataset.user;
-            running[user] = (running[user] || 0) + Number(step.dataset.points || 0);
-            updateScore();
-            await new Promise(resolve => setTimeout(resolve, family ? 800 : step.classList.contains('is-boost') ? 650 : 350));
-            step.classList.remove('is-triggering');
-            step._trinketTarget?.classList.remove('is-trinket-targeted');
-            delete step._trinketTarget;
-            entry.classList.remove('is-trinket-firing');
-            delete entry.dataset.triggerFamily;
-            delete entry.dataset.triggerDirection;
-          }
-          const playerTotal = entry.querySelector('.arena-player-fp');
-          if (playerTotal) playerTotal.hidden = false;
-          await new Promise(resolve => setTimeout(resolve, 250));
-        }
-        board.querySelectorAll('[data-final-total]').forEach(total => { total.textContent = total.dataset.finalTotal; });
-        outcome.hidden = false;
-      };
-      runReveal();
-    }
-  </script>
+  <%- include('partials_arena_reveal_script') %>
 </body>
 </html>

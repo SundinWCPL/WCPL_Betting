@@ -191,43 +191,37 @@ test('S1 catalog uses the canonical historical positions before rarity calculati
   }
 });
 
-test('rarities rank S1+S2 together and S3 separately within exact positions', async () => {
+test('rarities use configurable FP/M thresholds across all seasons within exact positions', async () => {
   const catalog = (await cards.buildCardPlayerCatalog()).filter(player => player.cardType !== 'mythic' && player.position);
-  const tierForRank = (index, total) => {
-    const percentile = total ? index / total : 1;
-    if (percentile < 0.05) return 'legendary';
-    if (percentile < 0.15) return 'epic';
-    if (percentile < 0.35) return 'rare';
-    if (percentile < 0.70) return 'uncommon';
-    return 'common';
-  };
   for (const position of ['F', 'D', 'G']) {
-    for (const seasonPool of ['historical', 'S3']) {
-      const allPositionCards = catalog.filter(player => player.position === position && (seasonPool === 'S3' ? player.edition === 'S3' : ['S1', 'S2'].includes(player.edition)));
-      const pool = allPositionCards.filter(player => player.rarityGamesPlayed >= 6)
-        .sort((a, b) => b.expectedWutFpPerMatch - a.expectedWutFpPerMatch || a.catalogKey.localeCompare(b.catalogKey));
-      if (seasonPool === 'historical') assert.deepEqual([...new Set(pool.map(player => player.edition))].sort(), ['S1', 'S2']);
-      let previousFp = null;
-      let previousTier = null;
-      pool.forEach((player, index) => {
-        const tied = previousFp != null && Math.abs(player.expectedWutFpPerMatch - previousFp) < 1e-9;
-        const expected = tied ? previousTier : tierForRank(index, pool.length);
-        assert.equal(player.tier, expected, `${player.catalogKey} should rank within its ${seasonPool} ${position} pool`);
-        previousFp = player.expectedWutFpPerMatch;
-        previousTier = expected;
-      });
-      const provisional = allPositionCards.filter(player => player.rarityGamesPlayed < 6);
-      provisional.forEach(player => {
-        const tied = pool.find(item => Math.abs(item.expectedWutFpPerMatch - player.expectedWutFpPerMatch) < 1e-9);
-        const playersAhead = pool.filter(item => item.expectedWutFpPerMatch > player.expectedWutFpPerMatch).length;
-        assert.equal(player.tier, tied?.tier || tierForRank(playersAhead, pool.length));
-        assert.equal(player.rarityEligible, false);
-        assert.equal(player.rarityProvisional, true);
-      });
-    }
+    const allPositionCards = catalog.filter(player => player.position === position);
+    assert.deepEqual([...new Set(allPositionCards.map(player => player.edition))].sort(), ['S1', 'S2', 'S3']);
+    allPositionCards.forEach(player => {
+      assert.equal(
+        player.tier,
+        cards.rarityForExpectedFp(player.expectedWutFpPerMatch, position, cards.DEFAULT_RARITY_THRESHOLDS),
+        `${player.catalogKey} should use ${position} FP/M thresholds`
+      );
+      assert.equal(player.rarityEligible, true);
+      assert.equal(player.rarityProvisional, undefined);
+    });
   }
-  assert.ok(catalog.some(player => player.edition === 'S3' && player.rarityGamesPlayed < 6), 'fixture must include sub-six-game S3 cards');
+  const custom = await cards.buildCardPlayerCatalog({ rarityThresholds: { F: { uncommon: 1, rare: 2, epic: 3, legendary: 4 } } });
+  assert.equal(custom.find(player => player.position === 'F' && player.expectedWutFpPerMatch >= 4)?.tier, 'legendary');
+  const distribution = cards.buildRarityDistribution(catalog);
+  assert.equal(distribution.F.total, catalog.filter(player => player.position === 'F').length);
+  assert.ok(distribution.F.rarities.legendary.total > 0, 'forward thresholds should create legendary cards');
   assert.ok(catalog.every(player => Math.abs(player.expectedWutFpPerMatch - player.weightedFpPerGame * 3) < 1e-9));
+});
+
+test('mythic cards expose expected FP/M from their scoring source', async () => {
+  const catalog = await cards.buildCardPlayerCatalog();
+  const mythics = catalog.filter(player => player.cardType === 'mythic');
+  const byName = new Map(mythics.map(player => [player.displayName, player]));
+  assert.ok(byName.has('Champ Milk'));
+  assert.ok(byName.has('Ruleset Sundin'));
+  assert.ok(byName.get('Champ Milk').expectedWutFpPerMatch > 0);
+  assert.ok(byName.get('Ruleset Sundin').expectedWutFpPerMatch > 0);
 });
 
 test('generated starter cards are unique Commons in a 2F / 2D / 1G lineup', async () => {
@@ -262,6 +256,13 @@ test('Premium and Prestige packs guarantee a Rare-or-better player', () => {
     config: { playerTierOdds: { standard: commonOnlyOdds, premium: rareOnlyOdds } }
   });
   assert.ok(fallbackPlayers.some(player => cards.CARD_STARS[player.rolledTier] >= cards.CARD_STARS.rare));
+});
+
+test('S3 player pack eligibility requires at least six games played', () => {
+  assert.equal(cards.isPlayerPackEligible({ edition: 'S3', position: 'F', tier: 'common', editionStats: { games: 5 } }), false);
+  assert.equal(cards.isPlayerPackEligible({ edition: 'S3', position: 'F', tier: 'common', editionStats: { games: 6 } }), true);
+  assert.equal(cards.isPlayerPackEligible({ edition: 'S2', position: 'F', tier: 'common', editionStats: { games: 1 } }), true);
+  assert.equal(cards.isPlayerPackEligible({ edition: 'MYTHIC', cardType: 'mythic', position: 'G', tier: 'mythic' }), true);
 });
 
 test('arena matchmaking globally minimizes ELO gaps and skips only the newest odd entrant', () => {
@@ -316,6 +317,77 @@ test('committed match cards are removed from that player’s available deck', ()
   assert.deepEqual(available.map(card => card.id), [11, 13], 'other owned copies of a committed identity must also be hidden');
 });
 
+function saveConstructedTestDeck(userId, prefix, catalogByIdentity = {}) {
+  const starterPositions = ['F', 'F', 'D', 'D', 'G'];
+  const starterIds = db.getWutMembershipState(userId).starterCardIds.map(Number);
+  const ownedBefore = new Map(db.getCardsOwnedState(userId).cards.map(card => [Number(card.id), card]));
+  const timestamp = Date.now();
+  const extraCards = ['F', 'D', 'G'].map((position, index) => db.grantCardsTestItem({
+    userId,
+    item: {
+      itemType: 'player', rolledTier: 'common', position,
+      cardIdentity: `S3|${prefix}|extra-${userId}-${index}-${timestamp}`,
+      catalogKey: `S3|${prefix}|extra-${userId}-${index}-${timestamp}`,
+      edition: 'S3', divisionId: prefix, playerKey: `extra-${userId}-${index}`
+    }
+  }));
+  const deckIds = [...starterIds, ...extraCards.map(card => Number(card.id))];
+  const owned = new Map([...ownedBefore.values(), ...extraCards].map(card => [Number(card.id), card]));
+  deckIds.forEach((id, index) => {
+    const card = owned.get(Number(id));
+    const position = index < starterPositions.length ? starterPositions[index] : extraCards[index - starterPositions.length].position;
+    catalogByIdentity[card.card_identity] = {
+      position, tier: 'common', teamId: `${prefix}-${position}-${index}`,
+      teamName: `${prefix} ${position} ${index}`, edition: 'S3', name: `${prefix} ${index}`
+    };
+  });
+  return db.saveWutDeck({ userId, name: `${prefix} Test Deck`, activeCardIds: deckIds, catalogByIdentity });
+}
+
+function chooseFirstForConstructedMatch(match, choice = 'self') {
+  if (match?.status !== 'choosing_first') return match;
+  return db.chooseArenaFirstPlayer({
+    userId: match.first_player_decider_user_id,
+    matchId: match.id,
+    choice
+  });
+}
+
+function playConstructedSeriesToReady(userId, catalogByIdentity, winnerUserId = userId) {
+  while (true) {
+    let match = db.getArenaStateForUser(userId).activeMatches[0];
+    match = chooseFirstForConstructedMatch(match) || match;
+    const matchId = match.id;
+    while (true) {
+      const arena = db.getArenaStateForUser(userId);
+      match = arena.activeMatches[0];
+      if (!match || match.status !== 'active') break;
+      const current = Number(match.current_player_id);
+      const snapshots = match.deck_snapshots[String(current)].active;
+      const usedCards = new Set(match.placements.filter(row => Number(row.user_id) === current).map(row => Number(row.card_id)));
+      const usedSlots = new Set(match.placements.filter(row => Number(row.user_id) === current).map(row => row.slot));
+      const openSlots = ['F1', 'F2', 'D1', 'D2', 'G'].filter(slot => !usedSlots.has(slot));
+      const placements = [];
+      for (const slot of openSlots) {
+        const position = slot === 'G' ? 'G' : slot[0];
+        const card = snapshots.find(item => item.position === position && !usedCards.has(Number(item.card_id)));
+        if (!card) continue;
+        placements.push({ slot, cardId: card.card_id });
+        usedCards.add(Number(card.card_id));
+        if (placements.length === Number(match.cards_required_this_turn)) break;
+      }
+      db.commitArenaTurn({ userId: current, matchId: match.id, placements, catalogByIdentity });
+    }
+    const scoring = db.getArenaMatchesNeedingScoring().find(item => Number(item.id) === Number(matchId));
+    assert.ok(scoring);
+    const completed = db.completeArenaMatch(scoring.id, scoring.placements.map(row => ({
+      ...row,
+      fp: Number(row.user_id) === Number(winnerUserId) ? 20 : 10
+    })));
+    if (completed.status === 'ready') return completed;
+  }
+}
+
 test('new WUT users receive the complete starter bundle', () => {
   db.initDb();
   db.joinWut(1);
@@ -324,6 +396,13 @@ test('new WUT users receive the complete starter bundle', () => {
   db.openWutStarterPack({ userId: 1, items });
   const state = db.getWutSystemsState(1);
   assert.deepEqual(db.getCardsConfig().playerPackPrices, { standard: 250, premium: 500, prestige: 1000 });
+  assert.deepEqual(db.getCardsConfig().boostPack, {
+    price: 250,
+    commonRareRolls: 4,
+    guaranteedHighRolls: 1,
+    commonRareOdds: { common: 55, uncommon: 30, rare: 15 },
+    guaranteedHighOdds: { epic: 85, legendary: 15 }
+  });
   assert.deepEqual(db.getCardsConfig().wut.trinketPrices, { common: 100, uncommon: 250, rare: 500, epic: 1000, legendary: 2000 });
   assert.deepEqual(db.getCardsConfig().wut.trinketRemovalWut, { common: 25, uncommon: 75, rare: 150, epic: 300, legendary: 500 });
   assert.deepEqual(db.getCardsConfig().wut.shopReroll, { wut: 200, mushy: 500 });
@@ -334,8 +413,7 @@ test('new WUT users receive the complete starter bundle', () => {
   });
   assert.deepEqual(db.getCardsAdminState().config.scoring.chemistryBonuses, { 2: 10, 3: 15, 4: 20, 5: 25 });
   assert.equal(state.deckSlots, 3);
-  assert.equal(state.decks.length, 1);
-  assert.deepEqual(state.decks[0].active_card_ids, state.decks[0].bench_card_ids);
+  assert.equal(state.decks.length, 0, 'starter packs grant cards, but Constructed decks are built explicitly');
   assert.equal(state.trinkets.length, 2);
   assert.ok(state.trinkets.every(trinket => trinket.rarity === 'common' && trinket.source === 'starter_pack'));
   assert.equal(new Set(state.trinkets.map(trinket => trinket.family)).size, 2);
@@ -356,6 +434,18 @@ test('new WUT users receive the complete starter bundle', () => {
   assert.equal(db.getWutMembershipState(1).wutCoins, 1000);
   const freeReroll = db.rerollWutTrinketShop({ userId: 1, currency: 'wut' });
   assert.equal(freeReroll.offers.length, 3);
+  assert.equal(db.getWutMembershipState(1).wutCoins, 1000);
+  const boostPurchase = db.createCardsPackPurchase({ userId: 1, week: 1, packKind: 'boost', packType: 'boost', price: 250, items: [
+    { itemType: 'boost', boostType: 'goal', rarity: 'common' },
+    { itemType: 'boost', boostType: 'assist', rarity: 'common' },
+    { itemType: 'boost', boostType: 'shot', rarity: 'uncommon' },
+    { itemType: 'boost', boostType: 'grit', rarity: 'rare' },
+    { itemType: 'boost', boostType: 'save', rarity: 'legendary' }
+  ] });
+  assert.equal(boostPurchase.pack_kind, 'boost');
+  assert.equal(boostPurchase.price, 0);
+  assert.equal(boostPurchase.free_purchase, true);
+  assert.equal(db.claimCardsPack(1, boostPurchase.id).filter(item => item.itemType === 'boost').length, 5);
   assert.equal(db.getWutMembershipState(1).wutCoins, 1000);
   const purchase = db.createCardsPackPurchase({ userId: 1, week: 1, packKind: 'player', packType: 'standard', price: 250, items: [
     ...items.slice(0, 3),
@@ -451,7 +541,7 @@ test('settled bet corrections apply only the payout delta and are idempotent', (
   assert.equal(db.getBalanceSummaryForUser(user.id).available_balance, before);
 });
 
-test('the same season player cannot be played from both Active Deck and Safety Bench', () => {
+test.skip('the same season player cannot be played from both Active Deck and Safety Bench', () => {
   const target = db.addUser({ username: 'cross-deck-duplicate-a', password: 'test-password', displayName: 'Cross Deck A' });
   const opponent = db.addUser({ username: 'cross-deck-duplicate-b', password: 'test-password', displayName: 'Cross Deck B' });
   const positions = ['F', 'F', 'D', 'D', 'G'];
@@ -519,10 +609,10 @@ function createDraftTournamentFixture({ name, entrantCount, tournament, match = 
     adminUserId: 1,
     config: {
       basic: { name, entryFee: { currency: 'free', amount: 0 }, minimumEntrants: entrantCount, maximumEntrants: entrantCount, allowOddEntrants: true, visibility: 'private' },
-      safetyBench: { mode: 'random_shared', rarityMin: 'common', rarityMax: 'common' },
+      safetyBench: { mode: 'disabled' },
       boosters: { countPerPlayer: 1, contents: { players: 1, boosts: 0, trinkets: 0 }, rarityOdds: { players: { common: 100 } }, pool: { allowDuplicateInBooster: false, allowDuplicateInEvent: true } },
       draft: { pickSeconds: 30, autopick: { enabled: true, priority: ['player', 'rarity', 'random'] } },
-      deckbuilding: { seconds: 300, activeMinimum: 1, activeMaximum: 1, ...deckbuilding },
+      deckbuilding: { seconds: 300, deckSize: 1, activeMinimum: 1, activeMaximum: 1, ...deckbuilding },
       tournament: { automaticNextRound: true, betweenRoundSeconds: 0, ...tournament },
       match: { turnSeconds: 300, openingTimeout: 'forfeit', laterTimeout: 'forfeit', boostLoadCap: 5, boostsMode: 'tournament_consumable', simultaneousMatches: true, ...match },
       prizes: { tiers: [] }
@@ -538,12 +628,12 @@ function createDraftTournamentFixture({ name, entrantCount, tournament, match = 
   ];
   const config = db.getCardsConfig();
   db.startWutDraftEvent({ eventId: event.id, environment: { cards: pool, rules: { scoring: config.scoring, boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues, slotPowerAllowance: config.wut.slotPowerAllowance } }, adminUserId: 1 });
-  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
+  db.beginWutDraftEvent({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
   while (db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase === 'draft') db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
   let current = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
   for (const userId of userIds) {
     const inventory = current.inventories[String(userId)];
-    const drafted = inventory.cards.find(card => !(inventory.safety_bench_card_ids || []).map(Number).includes(Number(card.id)));
+    const drafted = inventory.cards[0];
     db.saveWutDraftEventDeck({ eventId: event.id, userId, activeCardIds: [drafted.id] });
   }
   return { eventId: event.id, userIds };
@@ -619,7 +709,7 @@ test('admin can close signup and start a Draft Event early in one flow', () => {
   const starting = db.startWutDraftEvent({ eventId: event.id, environment: { cards: cardsPool, rules: {} }, adminUserId: 1, startNow: true });
   assert.equal(starting.phase, 'starting');
   assert.ok(starting.logs.some(row => row.type === 'phase_changed' && row.details?.to === 'signup_closed'));
-  const live = db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1 });
+  const live = db.beginWutDraftEvent({ eventId: event.id, adminUserId: 1 });
   assert.equal(live.phase, 'draft');
   db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'cancelled', adminUserId: 1, reason: 'Early-start test complete' });
 });
@@ -654,7 +744,7 @@ test('every seat receives the same per-round draft booster composition blueprint
   assert.deepEqual(templates.map(template => template.passDirection), ['left', 'right']);
 });
 
-test('Draft Event Safety Bench always uses Common cards from eligible seasons independently of booster rarities', () => {
+test.skip('Draft Event Safety Bench always uses Common cards from eligible seasons independently of booster rarities', () => {
   const config = draftEvents.normalizeWutDraftEventConfig({
     safetyBench: { rarityMin: 'legendary', rarityMax: 'legendary' },
     boosters: {
@@ -739,7 +829,7 @@ test('admin Draft Event match recovery can void or force a forfeit deterministic
   assert.throws(() => draftEvents.resolveWutDraftEventMatchRecord({ id: 12, status: 'completed', player_ids: [7, 8] }, { action: 'void' }), /Only unresolved/);
 });
 
-test('shared Safety Bench voting distributes identical temporary cards without touching permanent collections', () => {
+test.skip('shared Safety Bench voting distributes identical temporary cards without touching permanent collections', () => {
   const voter = db.addUser({ username: 'draft-bench-voter', password: 'test-password', displayName: 'Draft Bench Voter' });
   db.joinWut(voter.id);
   db.openWutStarterPack({
@@ -792,7 +882,7 @@ test('shared Safety Bench voting distributes identical temporary cards without t
   assert.equal(retried.inventories['1'].cards.length, 5, 'retrying completion cannot duplicate temporary cards');
 });
 
-test('expired Safety Bench voting resolves from its persisted deadline after a clock restart', () => {
+test.skip('expired Safety Bench voting resolves from its persisted deadline after a clock restart', () => {
   const event = db.createWutDraftEvent({
     adminUserId: 1,
     config: {
@@ -852,7 +942,7 @@ test('visual booster draft keeps every seat composition-identical while picks pa
   const cards = [0, 1].map(index => ({ cardIdentity: `S3|COMPACT|P${index}`, displayName: `Compact Player ${index}`, edition: 'S3', position: index ? 'D' : 'F', tier: 'common' }));
   const config = db.getCardsConfig();
   db.startWutDraftEvent({ eventId: event.id, environment: { cards, rules: { boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues } }, adminUserId: 1 });
-  const drafting = db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.25 });
+  const drafting = db.beginWutDraftEvent({ eventId: event.id, adminUserId: 1, random: () => 0.25 });
   assert.equal(drafting.phase, 'draft');
   assert.equal(db.getPendingWutDraftActionEventIds(1).includes(event.id), true, 'a pending booster pick requires attention');
   assert.equal(db.getPendingWutDraftActionEventIds(opponent.id).includes(event.id), true);
@@ -920,7 +1010,7 @@ test('Event Decks use only drafted cards, snapshot temporary trinkets, and lock 
   }));
   const config = db.getCardsConfig();
   db.startWutDraftEvent({ eventId: event.id, environment: { cards: playerPool, rules: { boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues } }, adminUserId: 1 });
-  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.1 });
+  db.beginWutDraftEvent({ eventId: event.id, adminUserId: 1, random: () => 0.1 });
   while (db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase === 'draft') {
     db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, random: () => 0.1 });
   }
@@ -929,24 +1019,31 @@ test('Event Decks use only drafted cards, snapshot temporary trinkets, and lock 
   assert.equal(inventory.cards.length, 5);
   assert.equal(inventory.trinkets.length, 1);
   const skater = inventory.cards.find(card => card.player_snapshot.position !== 'G');
-  db.attachWutDraftEventTrinket({ eventId: event.id, userId: 1, cardId: skater.id, trinketId: inventory.trinkets[0].id });
-  building = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
-  assert.equal(building.inventories['1'].cards.find(card => card.id === skater.id).power, 1);
-  assert.throws(() => db.saveWutDraftEventDeck({ eventId: event.id, userId: 1, activeCardIds: inventory.cards.slice(0, 4).map(card => card.id) }), /between 5 and 5/);
-  const saved = db.saveWutDraftEventDeck({ eventId: event.id, userId: 1, activeCardIds: inventory.cards.map(card => card.id) });
+  assert.throws(() => db.saveWutDraftEventDeck({ eventId: event.id, userId: 1, activeCardIds: inventory.cards.slice(0, 4).map(card => card.id) }), /exactly 5/);
+  const saved = db.saveWutDraftEventDeck({
+    eventId: event.id,
+    userId: 1,
+    activeCardIds: inventory.cards.map(card => card.id),
+    trinketAssignmentIds: { [skater.id]: inventory.trinkets[0].id }
+  });
   assert.equal(saved.event.phase, 'deckbuilding', 'the first submitted Event Deck waits for the other entrant');
   assert.equal(saved.deck.active_snapshots.find(card => card.event_item_id === skater.id).trinket.id, inventory.trinkets[0].id);
   assert.equal(saved.deck.active_snapshots.find(card => card.event_item_id === skater.id).power, 1);
-  db.detachWutDraftEventTrinket({ eventId: event.id, userId: 1, cardId: skater.id });
+  db.saveWutDraftEventDeck({ eventId: event.id, userId: 1, activeCardIds: inventory.cards.map(card => card.id) });
   let resaved = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
   assert.ok(resaved.decks['1'], 'editing a trinket must preserve an already-submitted Event Deck');
   assert.equal(resaved.decks['1'].active_snapshots.find(card => card.event_item_id === skater.id).trinket, null);
-  db.attachWutDraftEventTrinket({ eventId: event.id, userId: 1, cardId: skater.id, trinketId: inventory.trinkets[0].id });
+  db.saveWutDraftEventDeck({
+    eventId: event.id,
+    userId: 1,
+    activeCardIds: inventory.cards.map(card => card.id),
+    trinketAssignmentIds: { [skater.id]: inventory.trinkets[0].id }
+  });
   resaved = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
   assert.equal(resaved.decks['1'].active_snapshots.find(card => card.event_item_id === skater.id).trinket.id, inventory.trinkets[0].id, 'an active Event Deck card receives the temporary trinket snapshot');
   const opponentInventory = resaved.inventories[String(opponent.id)];
   db.saveWutDraftEventDeck({ eventId: event.id, userId: opponent.id, activeCardIds: opponentInventory.cards.map(card => card.id) });
-  assert.throws(() => db.detachWutDraftEventTrinket({ eventId: event.id, userId: 1, cardId: skater.id }), /locked/);
+  assert.throws(() => db.saveWutDraftEventDeck({ eventId: event.id, userId: 1, activeCardIds: inventory.cards.map(card => card.id) }), /not open/);
   assert.equal(db.getCardsOwnedState(1).cards.length, permanentBefore);
 });
 
@@ -958,7 +1055,7 @@ test('Draft Event tournament reuses real lineup turns, scores temporary cards, a
     adminUserId: 1,
     config: {
       basic: { name: 'Two Player Tournament', entryFee: { currency: 'free', amount: 0 }, minimumEntrants: 2, maximumEntrants: 2, allowOddEntrants: true, visibility: 'private' },
-      safetyBench: { mode: 'random_shared', rarityMin: 'common', rarityMax: 'common' },
+      safetyBench: { mode: 'disabled' },
       boosters: { countPerPlayer: 1, contents: { players: 1, boosts: 0, trinkets: 0 }, rarityOdds: { players: { common: 100 } }, pool: { allowDuplicateInBooster: false, allowDuplicateInEvent: true } },
       draft: { pickSeconds: 30, autopick: { enabled: true, priority: ['player', 'rarity', 'random'] } },
       deckbuilding: { seconds: 300, activeMinimum: 1, activeMaximum: 1 },
@@ -981,12 +1078,12 @@ test('Draft Event tournament reuses real lineup turns, scores temporary cards, a
   ];
   const config = db.getCardsConfig();
   db.startWutDraftEvent({ eventId: event.id, environment: { cards: pool, rules: { scoring: config.scoring, boostEffects: config.boostEffects, trinketEffects: config.wut.trinketEffects, rarityCosts: config.wut.rarityCosts, trinketPowerValues: config.wut.trinketPowerValues, slotPowerAllowance: config.wut.slotPowerAllowance } }, adminUserId: 1 });
-  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
+  db.beginWutDraftEvent({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
   while (db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase === 'draft') db.forceWutDraftAutopick({ eventId: event.id, adminUserId: 1, random: () => 0.2 });
   let state = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
   for (const userId of [1, opponent.id]) {
     const inventory = state.inventories[String(userId)];
-    const drafted = inventory.cards.find(card => !(inventory.safety_bench_card_ids || []).map(Number).includes(Number(card.id)));
+    const drafted = inventory.cards[0];
     db.saveWutDraftEventDeck({ eventId: event.id, userId, activeCardIds: [drafted.id] });
   }
   state = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
@@ -998,7 +1095,8 @@ test('Draft Event tournament reuses real lineup turns, scores temporary cards, a
   const waitingUserId = openingView.match.player_ids.map(Number).find(userId => userId !== Number(openingUserId));
   assert.equal(db.getPendingWutDraftActionEventIds(openingUserId).includes(event.id), true, 'the active tournament player receives attention');
   assert.equal(db.getPendingWutDraftActionEventIds(waitingUserId).includes(event.id), false, 'the waiting tournament player does not');
-  const openingCard = [...openingView.match.deck_snapshots[String(openingUserId)].active, ...openingView.match.deck_snapshots[String(openingUserId)].bench].find(card => card.position === 'F');
+  const openingSnapshot = openingView.match.deck_snapshots[String(openingUserId)];
+  const openingCard = [...openingSnapshot.active, ...(openingSnapshot.bench || [])].find(card => card.position === 'F');
   db.commitWutDraftEventTurn({ eventId: event.id, matchId, userId: openingUserId, placements: [{ slot: 'F1', cardId: openingCard.card_id }] });
   assert.equal(db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 }).match.placements.length, 1);
   assert.equal(db.getPendingWutDraftActionEventIds(openingUserId).includes(event.id), false);
@@ -1012,7 +1110,8 @@ test('Draft Event tournament reuses real lineup turns, scores temporary cards, a
     const view = db.getWutDraftEventMatch({ eventId: event.id, matchId, userId: 1 });
     if (view.match.status !== 'active') break;
     const userId = view.match.current_player_id; const required = view.match.cards_required_this_turn;
-    const snapshots = [...view.match.deck_snapshots[String(userId)].active, ...view.match.deck_snapshots[String(userId)].bench];
+    const deckSnapshot = view.match.deck_snapshots[String(userId)];
+    const snapshots = [...deckSnapshot.active, ...(deckSnapshot.bench || [])];
     const occupied = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
     const used = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
     const usedIdentities = new Set(view.match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => row.card_snapshot?.card_identity).filter(Boolean));
@@ -1169,7 +1268,7 @@ test('scheduled Draft Events open, close, and support a permission-safe automati
   assert.equal(db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase, 'signup_closed');
   const pool = [0, 1].map(index => ({ cardIdentity: `S3|SCHEDULEPOOL|${index}`, displayName: `Schedule ${index}`, edition: 'S3', position: index ? 'D' : 'F', tier: 'common' }));
   db.startWutDraftEvent({ eventId: event.id, environment: { cards: pool, rules: {} }, adminUserId: null, system: true, now: starts });
-  db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: null, system: true, now: starts, random: () => 0.2 });
+  db.beginWutDraftEvent({ eventId: event.id, adminUserId: null, system: true, now: starts, random: () => 0.2 });
   assert.equal(db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0].phase, 'draft');
 });
 
@@ -1226,7 +1325,7 @@ test('invalid booster rarity pools fail preflight without half-transitioning the
   db.joinWutDraftEvent({ eventId: event.id, userId: 1 });
   db.transitionWutDraftEvent({ eventId: event.id, nextPhase: 'signup_closed', adminUserId: 1 });
   db.startWutDraftEvent({ eventId: event.id, environment: { cards: [{ cardIdentity: 'S3|BAD|1', displayName: 'Only Common', edition: 'S3', position: 'F', tier: 'common' }], rules: {} }, adminUserId: 1 });
-  assert.throws(() => db.beginWutDraftSafetyBench({ eventId: event.id, adminUserId: 1, random: () => 0.5 }), /Not enough unique legendary/);
+  assert.throws(() => db.beginWutDraftEvent({ eventId: event.id, adminUserId: 1, random: () => 0.5 }), /Not enough unique legendary/);
   const unchanged = db.getWutDraftEventLobby({ eventId: event.id, includePrivate: true })[0];
   assert.equal(unchanged.phase, 'starting');
   assert.equal(unchanged.draft.boosters.length, 0);
@@ -1291,36 +1390,13 @@ test('completed missions award WUT Coins exactly once', () => {
     });
   }
 
-  const firstDeck = db.getWutSystemsState(1).decks[0];
-  const secondDeck = db.getWutSystemsState(userTwo.id).decks[0];
+  const firstDeck = saveConstructedTestDeck(1, 'MISSION-A', catalogByIdentity);
+  const secondDeck = saveConstructedTestDeck(userTwo.id, 'MISSION-B', catalogByIdentity);
   db.enterArenaQueue(1, firstDeck.id, catalogByIdentity);
   db.enterArenaQueue(userTwo.id, secondDeck.id, catalogByIdentity);
   db.assignArenaMatchups();
 
-  while (true) {
-    const arena = db.getArenaStateForUser(1);
-    const match = arena.activeMatches[0];
-    if (!match || match.status !== 'active') break;
-    const current = Number(match.current_player_id);
-    const snapshots = match.deck_snapshots[String(current)].active;
-    const usedCards = new Set(match.placements.filter(row => Number(row.user_id) === current).map(row => Number(row.card_id)));
-    const usedSlots = new Set(match.placements.filter(row => Number(row.user_id) === current).map(row => row.slot));
-    const openSlots = ['F1', 'F2', 'D1', 'D2', 'G'].filter(slot => !usedSlots.has(slot));
-    const placements = [];
-    for (const slot of openSlots) {
-      const position = slot === 'G' ? 'G' : slot[0];
-      const card = snapshots.find(item => item.position === position && !usedCards.has(Number(item.card_id)));
-      if (!card) continue;
-      placements.push({ slot, cardId: card.card_id });
-      usedCards.add(Number(card.card_id));
-      if (placements.length === Number(match.cards_required_this_turn)) break;
-    }
-    db.commitArenaTurn({ userId: current, matchId: match.id, placements, catalogByIdentity });
-  }
-
-  const scoring = db.getArenaMatchesNeedingScoring().find(match => !String(match.id).startsWith('debug-'));
-  assert.ok(scoring);
-  db.completeArenaMatch(scoring.id, scoring.placements.map(row => ({ ...row, fp: Number(row.user_id) === 1 ? 20 : 10 })));
+  playConstructedSeriesToReady(1, catalogByIdentity, 1);
   const missions = db.getWutMissionsForUser(1);
   const firstWin = missions.daily.find(mission => mission.id === 'first_win');
   assert.equal(firstWin.complete, true);
@@ -1345,11 +1421,13 @@ test('admin can inspect and safely void an active WUT match', () => {
     }));
     db.openWutStarterPack({ userId: user.id, items });
     for (const item of items) catalogByIdentity[item.cardIdentity] = { position: item.position, tier: 'common', teamId: `VOID-${user.id}` };
-    db.enterArenaQueue(user.id, db.getWutSystemsState(user.id).decks[0].id, catalogByIdentity);
+    const deck = saveConstructedTestDeck(user.id, `VOID-${user.id}`, catalogByIdentity);
+    db.enterArenaQueue(user.id, deck.id, catalogByIdentity);
   }
   db.assignArenaMatchups();
-  const match = db.getArenaStateForUser(first.id).activeMatches[0];
+  let match = db.getArenaStateForUser(first.id).activeMatches[0];
   assert.ok(match);
+  match = chooseFirstForConstructedMatch(match) || match;
   const currentUserId = Number(match.current_player_id);
   const currentDeck = match.deck_snapshots[String(currentUserId)].active;
   const forward = currentDeck.find(card => card.position === 'F');
@@ -1432,6 +1510,13 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
     playerPackPrices: current.playerPackPrices,
     playerTierOdds: current.playerTierOdds,
     boostRarityOdds: current.boostRarityOdds,
+    boostPack: {
+      price: 333,
+      commonRareRolls: 3,
+      guaranteedHighRolls: 2,
+      commonRareOdds: { common: 50, uncommon: 35, rare: 15 },
+      guaranteedHighOdds: { epic: 80, legendary: 20 }
+    },
     boostEffects: current.boostEffects,
     scoring: current.scoring,
     wut: {
@@ -1446,12 +1531,19 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
       shopReroll: { wut: 251, mushy: 751 },
       trinketShopOdds: { 1: { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 100 } },
       missionRewards: { daily_play_three: 41, daily_first_win: 21, daily_rotating: 31, weekly_profit_500: 101, weekly_category_coverage: 126, weekly_rotating: 127 },
-      trinketEffects: { safety_net: { rare: { value: 61.5 } } }
+      trinketEffects: { safety_net: { rare: { value: 61.5 } }, team_crest: { legendary: { value: 7 } } }
     },
     arena: { turnHours: 3, pauseStartHour: 1, pauseEndHour: 7, maxActiveMatches: 4 }
   });
   const saved = db.getCardsAdminState();
   assert.equal(saved.config.boostPackPrices, undefined);
+  assert.deepEqual(saved.config.boostPack, {
+    price: 333,
+    commonRareRolls: 3,
+    guaranteedHighRolls: 2,
+    commonRareOdds: { common: 50, uncommon: 35, rare: 15 },
+    guaranteedHighOdds: { epic: 80, legendary: 20 }
+  });
   assert.equal(saved.config.wut.slotPowerAllowance, 2);
   assert.equal(saved.config.wut.boostLoadCap, 6);
   assert.equal(saved.config.wut.trinketPrices.common, 111);
@@ -1459,6 +1551,7 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
   assert.equal(saved.config.wut.shopReroll.mushy, 751);
   assert.equal(saved.config.wut.missionRewards.daily_play_three, 41);
   assert.equal(saved.config.wut.trinketEffects.safety_net.rare, 0.615);
+  assert.equal(saved.config.wut.trinketEffects.team_crest.legendary, 0.07);
   assert.equal(saved.arenaConfig.turnHours, 3);
   assert.equal(saved.arenaConfig.maxActiveMatches, 4);
   assert.equal(db.getWutSystemsState(1).trinkets.find(item => item.id === existingTrinket.id).effect, 0.615, 'owned trinkets receive the saved live value');
@@ -1470,6 +1563,30 @@ test('admin WUT configuration persists trinket economy, odds, rewards, and numer
   assert.equal(shop.offers.find(offer => offer.slot === 1).rarity, 'legendary');
   assert.equal(shop.offers.find(offer => offer.slot === 1).price, 4001);
   assert.equal(db.getWutMissionsForUser(1).daily.find(mission => mission.id === 'play_three').reward, 41);
+});
+
+test('legacy trinket migration reset clears saved WUT decks', () => {
+  const user = db.addUser({ username: `legacy-trinket-reset-${Date.now()}`, password: 'test-password', displayName: 'Legacy Trinket Reset' });
+  db.joinWut(user.id);
+  db.openWutStarterPack({
+    userId: user.id,
+    items: ['F', 'F', 'D', 'D', 'G'].map((position, index) => ({
+      itemType: 'player',
+      rolledTier: 'common',
+      position,
+      cardIdentity: `S3|LEGACYRESET|${index}`,
+      catalogKey: `S3|LEGACYRESET|${index}`,
+      edition: 'S3',
+      divisionId: 'LEGACYRESET',
+      playerKey: String(index)
+    }))
+  });
+  const catalogByIdentity = {};
+  saveConstructedTestDeck(user.id, 'LEGACYRESET', catalogByIdentity);
+  assert.ok(db.getWutSystemsState(user.id).decks.length > 0);
+  const result = db.refundWutTrinketRemovalFees({ adminUserId: 1 });
+  assert.ok(result.clearedDecks > 0);
+  assert.equal(db.getWutSystemsState(user.id).decks.length, 0);
 });
 
 test('admin WUT Coin adjustments are signed, audited, and cannot overdraw', () => {
@@ -1506,9 +1623,9 @@ test('URL-encoded Admin numeric keys save without array-index shifting', () => {
     'wut[trinketShopOdds][slot3][epic]=80',
     'wut[trinketShopOdds][slot3][legendary]=20',
     'wut[deckSlotCosts][slot4]=444',
-    'wut[trinketEffects][generalist][common][value3]=9',
-    'wut[trinketEffects][generalist][common][value4]=12',
-    'wut[trinketEffects][generalist][common][value5]=15'
+    'wut[trinketEffects][team_crest][legendary][value]=7',
+    'wut[trinketEffects][generalist][common][minCategories]=4',
+    'wut[trinketEffects][generalist][common][maxBonus]=18'
   ].join('&'));
   db.saveCardsConfig({
     playerPackPrices: current.playerPackPrices,
@@ -1523,5 +1640,6 @@ test('URL-encoded Admin numeric keys save without array-index shifting', () => {
   assert.deepEqual(saved.trinketShopOdds['2'], { common: 0, uncommon: 64, rare: 36, epic: 0, legendary: 0 });
   assert.deepEqual(saved.trinketShopOdds['3'], { common: 0, uncommon: 0, rare: 0, epic: 80, legendary: 20 });
   assert.equal(saved.deckSlotCosts['4'], 444);
-  assert.deepEqual(saved.trinketEffects.generalist.common, { 3: .09, 4: .12, 5: .15 });
+  assert.equal(saved.trinketEffects.team_crest.legendary, .07);
+  assert.deepEqual(saved.trinketEffects.generalist.common, { minCategories: 4, maxBonus: .18 });
 });

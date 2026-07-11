@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Draft Arena Prep</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <%- include('partials_header') %>
+  <%
+    const loadout = match.draft_loadouts?.[String(currentUser.id)] || null;
+    const submitted = Boolean(loadout?.submitted_at);
+    const packItemCard = item => ({
+      id: item.id,
+      card_identity: item.player_snapshot.cardIdentity,
+      power: item.player_snapshot.power,
+      player: { ...item.player_snapshot, name: item.player_snapshot.name || item.player_snapshot.displayName, tier: item.rarity, position: item.player_snapshot.position },
+      trinket: null
+    });
+    const trinketLabel = item => `${String(item.rarity).replace(/\b\w/g, c => c.toUpperCase())} ${String(item.family).replace(/_/g, ' ')}`;
+    const boostLabel = item => `${String(item.rarity).replace(/\b\w/g, c => c.toUpperCase())} ${String(item.boost_type).replace(/_/g, ' ')} Boost`;
+    const packPlayers = pack => pack.players || (pack.player ? [pack.player] : []);
+    const packTrinkets = pack => pack.trinkets || (pack.trinket ? [pack.trinket] : []);
+    const packBoosts = pack => pack.boosts || (pack.boost ? [pack.boost] : []);
+    const deadlineText = match.turn_deadline ? new Date(match.turn_deadline).toLocaleString() : '';
+  %>
+  <main class="container cards-page arena-match-page draft-arena-page">
+    <section class="card page-title cards-title">
+      <div><p class="eyebrow">Draft Arena vs <%= match.opponent.displayName %></p><h1>Mini-Draft Prep</h1><p>Pick one item from each shared pack, assign any drafted trinkets, then lock in.</p></div>
+      <div class="cards-title-actions"><a class="button-link ghost" href="/cards">WUT Hub</a><span class="pill"><%= submitted ? 'Locked' : 'Drafting' %></span></div>
+    </section>
+
+    <section class="card arena-queue-card">
+      <div><p class="eyebrow">Identical pack list</p><h2><%= (match.mini_draft?.packs || []).length %> Packs</h2><p class="muted"><%= submitted ? 'Your choices are locked. Waiting for your opponent.' : `Prep deadline: ${deadlineText}` %></p></div>
+      <div class="draft-counts"><span class="pill">F <strong data-count="F"><%= loadout?.counts?.F || 0 %></strong></span><span class="pill">D <strong data-count="D"><%= loadout?.counts?.D || 0 %></strong></span><span class="pill">G <strong data-count="G"><%= loadout?.counts?.G || 0 %></strong></span></div>
+    </section>
+
+    <% if (submitted) { %>
+      <section class="card arena-ready-list"><h2>Picks locked.</h2><p class="muted">The match starts automatically once both players lock their Draft Arena prep.</p></section>
+    <% } else { %>
+      <form method="post" action="/cards/arena/matches/<%= match.id %>/draft" id="draftPrepForm">
+        <section class="draft-pack-grid">
+          <% (match.mini_draft?.packs || []).forEach(pack => { %>
+            <article class="card draft-pack" data-pack="<%= pack.index %>">
+              <div class="cards-section-head"><div><p class="eyebrow tier-text-<%= pack.rarity %>"><%= pack.rarity %></p><h2>Pack <%= Number(pack.index) + 1 %></h2></div></div>
+              <% packPlayers(pack).forEach(item => { %>
+                <label class="draft-choice" data-choice-type="player" data-position="<%= item.player_snapshot.position %>" data-player-id="<%= item.id %>">
+                  <input type="radio" name="pick_<%= pack.index %>" value="<%= item.id %>" required>
+                  <span class="arena-wut-card tier-<%= pack.rarity %>"><%- include('partials_wut_card', { card: packItemCard(item), statusText: 'Draft player' }) %></span>
+                </label>
+              <% }) %>
+              <% packTrinkets(pack).forEach(item => { %>
+                <label class="draft-choice draft-item-choice" data-choice-type="trinket" data-trinket-id="<%= item.id %>">
+                  <input type="radio" name="pick_<%= pack.index %>" value="<%= item.id %>" required>
+                  <strong><%= trinketLabel(item) %></strong><span class="muted">Trinket</span>
+                </label>
+              <% }) %>
+              <% packBoosts(pack).forEach(item => { %>
+                <label class="draft-choice draft-item-choice" data-choice-type="boost">
+                  <input type="radio" name="pick_<%= pack.index %>" value="<%= item.id %>" required>
+                  <strong><%= boostLabel(item) %></strong><span class="muted">Consumable boost</span>
+                </label>
+              <% }) %>
+            </article>
+          <% }) %>
+        </section>
+
+        <section class="card draft-attachments">
+          <div class="cards-section-head"><div><p class="eyebrow">Optional</p><h2>Trinket Assignments</h2></div></div>
+          <% (match.mini_draft?.packs || []).forEach(pack => { packTrinkets(pack).forEach(item => { %>
+            <label data-attachment-row="<%= item.id %>" hidden><span><%= trinketLabel(item) %></span><select name="attach_<%= item.id %>"><option value="">Unattached</option></select></label>
+          <% }) %>
+          <% }) %>
+          <p class="muted" data-no-trinkets>No selected trinkets yet.</p>
+        </section>
+        <div class="arena-visual-lock-form"><button>Lock Draft Arena Prep</button></div>
+      </form>
+    <% } %>
+  </main>
+  <script>
+    const form = document.getElementById('draftPrepForm');
+    const rows = [...document.querySelectorAll('[data-attachment-row]')];
+    const noTrinkets = document.querySelector('[data-no-trinkets]');
+    const selectedPlayers = () => [...document.querySelectorAll('[data-choice-type="player"] input:checked')].map(input => {
+      const label = input.closest('[data-choice-type="player"]');
+      return { id: label.dataset.playerId, name: label.querySelector('.wut-card-name')?.textContent?.trim() || 'Player', position: label.dataset.position };
+    });
+    const update = () => {
+      const players = selectedPlayers();
+      for (const pos of ['F','D','G']) document.querySelector(`[data-count="${pos}"]`).textContent = players.filter(player => player.position === pos).length;
+      let visible = 0;
+      rows.forEach(row => {
+        const selected = document.querySelector(`[data-trinket-id="${row.dataset.attachmentRow}"] input:checked`);
+        row.hidden = !selected;
+        if (selected) visible += 1;
+        const select = row.querySelector('select');
+        const current = select.value;
+        select.innerHTML = '<option value="">Unattached</option>' + players.map(player => `<option value="${player.id}">${player.name} (${player.position})</option>`).join('');
+        if ([...select.options].some(option => option.value === current)) select.value = current;
+      });
+      if (noTrinkets) noTrinkets.hidden = visible > 0;
+    };
+    form?.addEventListener('change', update);
+    update();
+  </script>
+</body>
+</html>

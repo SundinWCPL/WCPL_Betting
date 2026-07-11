@@ -1,5 +1,6 @@
 import { withTransaction } from '../postgres.js';
 import { appendWutDraftEventLog } from '../../services/wutDraftEvents.js';
+import { validateWutDeckSnapshots, wutDeckRules } from '../../services/arenaRuntime.js';
 import { trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
 import { lockAndLoadDraftEvent, saveDraftEvent } from './draftEventStore.js';
 import { finishWutDraftDeckbuildingWithClient } from './draftTournament.js';
@@ -27,18 +28,19 @@ function trinketPower(event, rarity) {
   return Number(event.environment_snapshot?.rules?.trinketPowerValues?.[rarity] ?? DEFAULT_TRINKET_POWER[rarity] ?? 0);
 }
 
-function cardSnapshot(event, inventory, card) {
-  const trinket = card.trinket_id == null
+function cardSnapshot(event, inventory, card, trinketOverride = undefined) {
+  const trinket = trinketOverride === undefined ? (card.trinket_id == null
     ? null
-    : inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id));
+    : inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id))) : trinketOverride;
   const rarity = card.rarity || card.player_snapshot?.tier;
+  const basePower = rarityPower(event, rarity);
   return {
     event_item_id: Number(card.id),
     card_identity: card.card_identity,
     position: card.player_snapshot?.position,
     rarity,
-    base_power: rarityPower(event, rarity),
-    power: Number(card.power ?? rarityPower(event, rarity)),
+    base_power: basePower,
+    power: basePower + (trinket ? trinketPower(event, trinket.rarity) : 0),
     player: clone(card.player_snapshot),
     trinket: trinket ? {
       id: Number(trinket.id), family: trinket.family, rarity: trinket.rarity,
@@ -47,39 +49,41 @@ function cardSnapshot(event, inventory, card) {
   };
 }
 
-function validateAndStoreDeck(event, userId, activeCardIds, now) {
+function validateAndStoreDeck(event, userId, activeCardIds, now, trinketAssignmentIds = {}) {
   const playerId = Number(userId);
   const inventory = inventoryFor(event, playerId);
   const requested = [...new Set((activeCardIds || []).map(Number).filter(Number.isFinite))];
-  const minimum = Number(event.config.deckbuilding.activeMinimum);
-  const maximum = Number(event.config.deckbuilding.activeMaximum);
-  if (requested.length < minimum || requested.length > maximum) {
-    throw new Error(`Event Active Deck must contain between ${minimum} and ${maximum} cards.`);
-  }
+  const deckRules = wutDeckRules(event.config.deckbuilding);
+  if (requested.length !== deckRules.deckSize) throw new Error(`Event Deck must contain exactly ${deckRules.deckSize} cards.`);
   const cardsById = new Map(inventory.cards.map(card => [Number(card.id), card]));
   const activeCards = requested.map(id => cardsById.get(id));
   if (activeCards.some(card => !card)) throw new Error('The Event Active Deck contains a card outside this temporary collection.');
   const identities = activeCards.map(card => String(card.card_identity || card.player_snapshot?.cardIdentity || ''));
   if (new Set(identities).size !== identities.length) throw new Error('An Event Active Deck cannot contain two copies of the same player card.');
-  const benchIds = new Set((inventory.safety_bench_card_ids || []).map(Number));
-  if (requested.some(id => benchIds.has(id))) throw new Error('Shared Safety Bench cards cannot be placed in the Event Active Deck.');
-  const activeSnapshots = activeCards.map(card => cardSnapshot(event, inventory, card));
-  if (activeSnapshots.filter(card => card.trinket?.family === 'team_crest').length > 1) {
-    throw new Error("Only one Captain's Patch can be active in an Event lineup.");
+  const activeSet = new Set(requested);
+  const assignments = {};
+  const usedTrinkets = new Set();
+  for (const [rawCardId, rawTrinketId] of Object.entries(trinketAssignmentIds || {})) {
+    const cardId = Number(rawCardId);
+    const trinketId = Number(rawTrinketId);
+    if (!activeSet.has(cardId) || !trinketId) continue;
+    const card = cardsById.get(cardId);
+    const trinket = inventory.trinkets.find(item => Number(item.id) === trinketId);
+    if (!trinket) throw new Error('Every Event Deck trinket must be in your temporary collection.');
+    if (usedTrinkets.has(trinketId)) throw new Error('A trinket can only be used once in an Event Deck.');
+    if (!trinketFitsWutPosition(trinket.family, card?.player_snapshot?.position)) throw new Error('That trinket is not legal for that card position.');
+    assignments[String(cardId)] = trinketId;
+    usedTrinkets.add(trinketId);
   }
-  const benchSnapshots = [...benchIds].map(id => cardsById.get(id)).filter(Boolean).map(card => cardSnapshot(event, inventory, card));
-  if (event.config.safetyBench.mode !== 'disabled') {
-    const positions = benchSnapshots.map(card => card.position).sort().join('');
-    if (benchSnapshots.length !== 5 || positions !== 'DDFFG') {
-      throw new Error('The shared Event Safety Bench must remain exactly 2F / 2D / 1G.');
-    }
-  }
+  const activeSnapshots = activeCards.map(card => cardSnapshot(event, inventory, card, inventory.trinkets.find(item => Number(item.id) === Number(assignments[String(card.id)])) || null));
+  validateWutDeckSnapshots(activeSnapshots, event.config.deckbuilding, 'Event Deck');
   const deck = {
     user_id: playerId,
     active_card_ids: requested,
-    safety_bench_card_ids: [...benchIds],
+    trinket_assignments: assignments,
+    safety_bench_card_ids: [],
     active_snapshots: activeSnapshots,
-    safety_bench_snapshots: benchSnapshots,
+    safety_bench_snapshots: [],
     submitted_at: now.toISOString(),
     automatic: false,
     locked: Boolean(event.config.deckbuilding.lockDeckForTournament)
@@ -106,7 +110,7 @@ function refreshDeck(event, userId, inventory, now) {
   deck.updated_at = now.toISOString();
 }
 
-export async function saveWutDraftEventDeckWithClient(client, { eventId, userId, activeCardIds, now = new Date() }) {
+export async function saveWutDraftEventDeckWithClient(client, { eventId, userId, activeCardIds, trinketAssignmentIds = {}, now = new Date() }) {
   const event = await lockAndLoadDraftEvent(client, eventId);
   if (event.paused_at) throw new Error('This Draft Event is paused.');
   const initialBuild = event.phase === 'deckbuilding';
@@ -114,7 +118,7 @@ export async function saveWutDraftEventDeckWithClient(client, { eventId, userId,
     !event.config.deckbuilding.lockDeckForTournament && Boolean(event.tournament?.pending_round_plan);
   if (!initialBuild && !sideboarding) throw new Error('Event deckbuilding is not open.');
   if (!activeEntrantIds(event).includes(Number(userId))) throw new Error('Only active Draft Event entrants can submit a deck.');
-  const deck = validateAndStoreDeck(event, userId, activeCardIds, now);
+  const deck = validateAndStoreDeck(event, userId, activeCardIds, now, trinketAssignmentIds);
   if (sideboarding) appendWutDraftEventLog(event, 'event_deck_sideboarded', {
     user_id: Number(userId), active_card_ids: deck.active_card_ids, round: Number(event.tournament.round)
   }, { actorUserId: userId, now });
@@ -130,32 +134,7 @@ export async function saveWutDraftEventDeckWithClient(client, { eventId, userId,
 export async function attachWutDraftEventTrinketWithClient(client, { eventId, userId, cardId, trinketId, now = new Date() }) {
   const event = await lockAndLoadDraftEvent(client, eventId);
   if (event.paused_at) throw new Error('This Draft Event is paused.');
-  if (!canEditTrinkets(event)) throw new Error('Event trinket attachments are locked.');
-  const inventory = inventoryFor(event, userId);
-  const card = inventory.cards.find(item => Number(item.id) === Number(cardId));
-  const trinket = inventory.trinkets.find(item => Number(item.id) === Number(trinketId));
-  if (!card || !trinket) throw new Error('That temporary card or trinket is not in your Event Collection.');
-  if ((inventory.safety_bench_card_ids || []).map(Number).includes(Number(card.id))) throw new Error('Shared Safety Bench cards cannot receive trinkets.');
-  if (card.trinket_id != null) throw new Error('That Event card already has a trinket.');
-  if (trinket.attached_card_id != null) throw new Error('That Event trinket is already attached.');
-  if (!trinketFitsWutPosition(trinket.family, card.player_snapshot?.position)) throw new Error('That trinket is not legal for this card position.');
-  const activeIds = new Set((event.decks?.[String(Number(userId))]?.active_card_ids || []).map(Number));
-  if (trinket.family === 'team_crest' && activeIds.has(Number(card.id))) {
-    const anotherPatch = inventory.cards.some(other => Number(other.id) !== Number(card.id) && activeIds.has(Number(other.id)) &&
-      inventory.trinkets.find(item => Number(item.id) === Number(other.trinket_id))?.family === 'team_crest');
-    if (anotherPatch) throw new Error("Only one Captain's Patch can be active in an Event lineup.");
-  }
-  card.trinket_id = Number(trinket.id);
-  trinket.attached_card_id = Number(card.id);
-  trinket.attached_at = now.toISOString();
-  card.power = rarityPower(event, card.rarity || card.player_snapshot?.tier) + trinketPower(event, trinket.rarity);
-  refreshDeck(event, userId, inventory, now);
-  appendWutDraftEventLog(event, 'event_trinket_attached', {
-    user_id: Number(userId), card_id: Number(card.id), trinket_id: Number(trinket.id)
-  }, { actorUserId: userId, now });
-  event.updated_at = now.toISOString();
-  await saveDraftEvent(client, event);
-  return event;
+  throw new Error('Event trinkets are assigned inside the Event Deck builder now.');
 }
 
 export async function detachWutDraftEventTrinketWithClient(client, { eventId, userId, cardId, now = new Date() }) {

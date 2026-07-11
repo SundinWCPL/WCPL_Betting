@@ -10,6 +10,7 @@ import {
 import fs from 'fs/promises';
 import path from 'path';
 import { readCsvFile } from './csv.js';
+import { wutCaptainPatchMultiplier } from './arenaRuntime.js';
 
 export const CARD_TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
 export const CARD_STARS = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
@@ -44,6 +45,19 @@ export const DEFAULT_SAVE_PCT_BONUSES = [
   { threshold: 0.975, multiplier: 1.5 }
 ];
 export const DEFAULT_CHEMISTRY_BONUSES = { 2: 10, 3: 15, 4: 20, 5: 25 };
+export const DEFAULT_BOOST_PACK_CONFIG = {
+  price: 250,
+  commonRareRolls: 4,
+  guaranteedHighRolls: 1,
+  commonRareOdds: { common: 55, uncommon: 30, rare: 15 },
+  guaranteedHighOdds: { epic: 85, legendary: 15 }
+};
+export const DEFAULT_RARITY_THRESHOLDS = {
+  F: { uncommon: 35, rare: 50, epic: 70, legendary: 90 },
+  D: { uncommon: 25, rare: 35, epic: 50, legendary: 70 },
+  G: { uncommon: 30, rare: 40, epic: 50, legendary: 60 }
+};
+const HEX_DEFAULT_CAP_MULTIPLIERS = { common: 1, uncommon: 1.25, rare: 1.5, epic: 1.75, legendary: 2 };
 export const PLAYER_CARD_SEASONS = ['S1', 'S2', 'S3'];
 export const HISTORICAL_SAMPLE_SIZE = 3;
 const S1_GOALIE_SAVE_PCT_MAX_DEVIATION = 0.05;
@@ -76,6 +90,8 @@ export const DEFAULT_CARDS_CONFIG = {
     premium: { common: 25, uncommon: 30, rare: 25, epic: 15, legendary: 5, mythic: 0 },
     prestige: { common: 5, uncommon: 15, rare: 30, epic: 30, legendary: 20, mythic: 0 }
   },
+  rarityThresholds: DEFAULT_RARITY_THRESHOLDS,
+  boostPack: DEFAULT_BOOST_PACK_CONFIG,
   boostEffects: DEFAULT_BOOST_EFFECTS,
   scoring: {
     statPoints: DEFAULT_STAT_POINTS,
@@ -236,12 +252,6 @@ export function chemistryMultiplierForCount(count, scoringConfig = {}) {
   return 1 + Math.max(0, percent) / 100;
 }
 
-export function captainPatchChemistry(baseMultiplier, patchEffects = []) {
-  const strongest = Math.max(0, ...(patchEffects || []).map(Number).filter(Number.isFinite));
-  const baseBonus = Math.max(0, Number(baseMultiplier || 1) - 1);
-  return { multiplier: 1 + baseBonus * (1 + strongest), effect: strongest };
-}
-
 export function wutChemistryKey(player = {}) {
   const teamId = clean(player.teamId || player.team_id).toUpperCase();
   if (!teamId) return '';
@@ -362,15 +372,42 @@ export function applyWutSelfTrinket({
     const pct = Math.min(Number(effect?.[1] || 0), gap * Number(effect?.[0] || 0));
     const gain = exact * pct; exact += gain;
     logs.push(`Underdog Patch +${gain.toFixed(1)} FP (${gap}-tier card-rarity gap).`);
-  } else if (family === 'generalist') {
-    const categories = ['goals', 'assists', 'shots', 'hits', 'blocks'];
-    const combo = categories.filter(key => Number(stats?.[key] || 0) > 0).length;
-    const rate = Number(effect?.[String(combo)] ?? effect?.[combo] ?? 0);
-    trinketLabel = `Generalist (${combo}-stat combo)`;
-    if (combo >= 3 && rate > 0) {
-      const gain = exact * rate;
+  } else if (family === 'team_crest') {
+    const teammates = Math.max(0, Number(teamCount || 0) - 1);
+    const rate = Math.max(0, Number(effect && typeof effect === 'object' ? effect.value : effect) || 0);
+    const roleMultiplier = wutCaptainPatchMultiplier(trinket);
+    const isAssistant = roleMultiplier < 1;
+    trinketLabel = `${isAssistant ? 'Assistant ' : ''}Captain's Patch (${teammates} teammate${teammates === 1 ? '' : 's'})`;
+    if (teammates > 0 && rate > 0) {
+      const gain = exact * rate * teammates * roleMultiplier;
       exact += gain;
-      logs.push(`Generalist ${combo}-stat combo +${gain.toFixed(1)} FP.`);
+      logs.push(`${isAssistant ? 'Assistant ' : ''}Captain's Patch +${gain.toFixed(1)} FP from ${teammates} same-team teammate${teammates === 1 ? '' : 's'}${isAssistant ? ' at 50% strength' : ''}.`);
+    }
+  } else if (family === 'generalist') {
+    const types = [
+      ['goal', 'goals', DEFAULT_STAT_POINTS.goal],
+      ['assist', 'assists', DEFAULT_STAT_POINTS.assist],
+      ['shot', 'shots', DEFAULT_STAT_POINTS.shot],
+      ['hit', 'hits', DEFAULT_STAT_POINTS.hit],
+      ['block', 'blocks', DEFAULT_STAT_POINTS.block]
+    ];
+    const rows = new Map((breakdown || []).filter(row => !row?.unavailable).map(row => [row.type, row]));
+    const points = types.map(([type, statKey, fallbackPoints]) => {
+      const row = rows.get(type);
+      if (row) return Math.max(0, Number(row.basePoints ?? row.points ?? 0) || 0);
+      return Math.max(0, Number(stats?.[statKey] || 0) * Number(fallbackPoints || 0));
+    });
+    const categories = points.filter(value => value > 0).length;
+    const peak = Math.max(...points, 0);
+    const total = points.reduce((sum, value) => sum + value, 0);
+    const minCategories = Math.max(1, Math.round(Number(effect?.minCategories ?? 3)));
+    const maxBonus = Math.max(0, Number(effect?.maxBonus ?? effect?.[5] ?? effect?.['5'] ?? 0) || 0);
+    const balance = peak > 0 ? total / (points.length * peak) : 0;
+    trinketLabel = `Generalist (${categories}-category balance)`;
+    if (categories >= minCategories && maxBonus > 0 && balance > 0) {
+      const gain = exact * maxBonus * balance;
+      exact += gain;
+      logs.push(`Generalist balanced ${categories} categories for +${gain.toFixed(1)} FP.`);
     }
   }
   return { exactFp: exact, logs, trinketGain: exact - startingExact, trinketLabel, luckyCharm };
@@ -428,9 +465,9 @@ export function applyWutPositiveScoring({
   };
 }
 
-// Hostile trinkets always read wouldBeFp, which already includes the owner's
-// self trinket, boost, and chemistry. They never read another hostile result,
-// preventing circular Hex/Siphon resolution. Warding reduces incoming strength.
+// Hostile trigger checks read wouldBeFp, which already includes the owner's
+// self trinket, boost, and chemistry. Warding protection uses current finalFp
+// after any hostile effects aimed at the Ward bearer have resolved.
 export function resolveWutMatchingTrinkets(entries = []) {
   const resolved = entries.map(entry => ({
     ...entry,
@@ -438,38 +475,102 @@ export function resolveWutMatchingTrinkets(entries = []) {
     logs: [...(entry.logs || [])],
     scoringEffects: [...(entry.scoringEffects || [])]
   }));
-  for (const source of resolved) {
+  const applyLoss = (entry, amount) => {
+    const loss = Math.min(Math.max(0, Number(amount) || 0), Math.max(0, Number(entry.finalFp || 0)));
+    entry.finalFp = Math.max(0, Number(entry.finalFp || 0) - loss);
+    return loss;
+  };
+  const entryKey = entry => `${Number(entry.placement?.user_id)}|${String(entry.placement?.slot || '').toUpperCase()}`;
+  const wardForTarget = target => resolved.find(candidate =>
+    candidate !== target &&
+    Number(candidate.placement?.user_id) === Number(target.placement?.user_id) &&
+    candidate.trinket?.family === 'warding_charm' &&
+    String(candidate.placement?.ward_target_slot || '').toUpperCase() === String(target.placement?.slot || '').toUpperCase()
+  );
+  const wardProtection = (target, source, rawLoss) => {
+    const ward = wardForTarget(target);
+    if (!ward) return { ward: null, prevented: 0, preventionRate: 0, lead: 0, requiredLead: 0 };
+    const requiredLead = Math.max(1, Number(ward.trinket?.effect || 0));
+    const lead = Math.max(0, Number(ward.finalFp || 0) - Number(source.finalFp ?? source.wouldBeFp ?? 0));
+    const preventionRate = Math.max(0, Math.min(1, lead / requiredLead));
+    return { ward, prevented: Math.max(0, Number(rawLoss || 0)) * preventionRate, preventionRate, lead, requiredLead };
+  };
+  const effects = resolved.map((source, index) => {
     const target = resolved.find(other => Number(other.placement?.user_id) !== Number(source.placement?.user_id) && other.placement?.slot === source.placement?.slot);
-    if (!target) continue;
-    const ward = target.trinket?.family === 'warding_charm' ? Number(target.trinket.effect || 0) : 0;
+    return target && ['hex_bag', 'siphon_stone'].includes(source.trinket?.family)
+      ? { id: `${index}:${source.trinket.family}`, source, target, family: source.trinket.family }
+      : null;
+  }).filter(Boolean);
+  const effectsByTarget = new Map();
+  for (const effect of effects) {
+    const key = entryKey(effect.target);
+    if (!effectsByTarget.has(key)) effectsByTarget.set(key, []);
+    effectsByTarget.get(key).push(effect);
+  }
+  const completed = new Set();
+  const resolving = new Set();
+  const resolveEffect = effect => {
+    if (!effect || completed.has(effect.id)) return;
+    if (resolving.has(effect.id)) return;
+    resolving.add(effect.id);
+    const initialWard = wardForTarget(effect.target);
+    if (initialWard) {
+      for (const dependent of effectsByTarget.get(entryKey(initialWard)) || []) resolveEffect(dependent);
+    }
+    const { source, target } = effect;
     if (source.trinket?.family === 'hex_bag') {
-      const [threshold, reduction] = source.trinket.effect || [];
-      if (Number(target.wouldBeFp) >= Number(threshold) * Math.max(Number(source.wouldBeFp), 10)) {
-        const rawLoss = Number(target.wouldBeFp) * Number(reduction);
-        const blocked = rawLoss * ward;
-        const loss = rawLoss - blocked;
-        target.finalFp -= loss;
-        source.logs.push(`Hex Charm reduced opposing ${source.placement.slot} by ${loss.toFixed(1)} FP${ward ? ' after Warding' : ''}.`);
-        target.logs.push(`Incoming Hex Charm -${loss.toFixed(1)} FP.`);
-        source.scoringEffects.push({ type: 'trinket', family: 'hex_bag', direction: 'outgoing', triggered: true, label: 'Hex Charm triggered', points: 0, rarity: source.trinket?.rarity || 'common' });
-        target.scoringEffects.push({ type: 'trinket', family: 'hex_bag', direction: 'incoming', triggered: true, label: 'Incoming Hex Charm', points: -rawLoss, rarity: source.trinket?.rarity || 'common' });
-        if (blocked) target.scoringEffects.push({ type: 'trinket', family: 'warding_charm', direction: 'defense', triggered: true, label: 'Warding Charm blocked Hex', points: blocked, rarity: target.trinket?.rarity || 'common' });
+      const [threshold, reduction, capMultiplier] = source.trinket.effect || [];
+      const sourceFp = Math.max(0, Number(source.wouldBeFp) || 0);
+      if (Number(target.wouldBeFp) >= Number(threshold) * Math.max(sourceFp, 10)) {
+        const uncappedLoss = Number(target.wouldBeFp) * Number(reduction);
+        const fallbackCap = HEX_DEFAULT_CAP_MULTIPLIERS[String(source.trinket?.rarity || 'common').toLowerCase()];
+        const resolvedCapMultiplier = Number.isFinite(Number(capMultiplier)) ? Number(capMultiplier) : fallbackCap;
+        const cap = Number.isFinite(Number(resolvedCapMultiplier)) ? sourceFp * Math.max(0, Number(resolvedCapMultiplier)) : uncappedLoss;
+        const rawLoss = Math.min(uncappedLoss, cap);
+        const { ward, prevented, preventionRate, lead, requiredLead } = wardProtection(target, source, rawLoss);
+        const targetLoss = applyLoss(target, rawLoss - prevented);
+        if (targetLoss > 0 || prevented > 0) {
+          const capped = rawLoss < uncappedLoss ? ' (capped)' : '';
+          const wardText = ward ? `; Warding Charm prevented ${prevented.toFixed(1)} FP (${Math.round(preventionRate * 100)}%, ${lead.toFixed(1)}/${requiredLead.toFixed(1)} FP lead)` : '';
+          source.logs.push(`Hex Charm reduced opposing ${source.placement.slot} by ${targetLoss.toFixed(1)} FP${capped}${wardText}.`);
+          source.scoringEffects.push({ type: 'trinket', family: 'hex_bag', direction: 'outgoing', triggered: true, label: 'Hex Charm triggered', points: 0, rarity: source.trinket?.rarity || 'common' });
+          if (prevented) target.scoringEffects.push({ type: 'trinket', family: 'warding_charm', direction: 'defense', triggered: true, label: `Warding Charm prevented ${prevented.toFixed(1)} FP (${Math.round(preventionRate * 100)}%)`, points: 0, rarity: ward?.trinket?.rarity || 'common' });
+          if (targetLoss) target.logs.push(`Incoming Hex Charm -${targetLoss.toFixed(1)} FP${capped}.`);
+          if (targetLoss) target.scoringEffects.push({ type: 'trinket', family: 'hex_bag', direction: 'incoming', triggered: true, label: 'Incoming Hex Charm', points: -targetLoss, rarity: source.trinket?.rarity || 'common' });
+          if (ward) ward.logs.push(`Warding Charm protected ${target.placement?.slot || 'a card'} from ${prevented.toFixed(1)} Hex FP.`);
+        }
       }
     }
-    if (source.trinket?.family === 'siphon_stone' && Number(target.wouldBeFp) > Number(source.wouldBeFp)) {
-      const rawSteal = (Number(target.wouldBeFp) - Number(source.wouldBeFp)) * Number(source.trinket.effect || 0);
-      const blocked = rawSteal * ward;
-      const steal = rawSteal - blocked;
+    if (source.trinket?.family === 'siphon_stone') {
+      const siphonEffect = source.trinket.effect && typeof source.trinket.effect === 'object'
+        ? source.trinket.effect
+        : { threshold: 0, steal: Number(source.trinket.effect || 0) };
+      const sourceFp = Math.max(0, Number(source.wouldBeFp) || 0);
+      const targetFp = Math.max(0, Number(target.wouldBeFp) || 0);
+      const threshold = Math.max(0, Number(siphonEffect.threshold || 0));
+      if (!(targetFp > 0 && sourceFp >= targetFp * (1 + threshold))) {
+        completed.add(effect.id);
+        resolving.delete(effect.id);
+        return;
+      }
+      const rawSteal = targetFp * Math.max(0, Number(siphonEffect.steal || 0));
+      const { ward, prevented, preventionRate, lead, requiredLead } = wardProtection(target, source, rawSteal);
+      const targetLoss = applyLoss(target, rawSteal - prevented);
+      const steal = targetLoss;
       source.finalFp += steal;
-      target.finalFp -= steal;
-      source.logs.push(`Siphon Stone stole ${steal.toFixed(1)} FP${ward ? ' after Warding' : ''}.`);
-      target.logs.push(`Incoming Siphon -${steal.toFixed(1)} FP.`);
-      source.scoringEffects.push({ type: 'trinket', family: 'siphon_stone', direction: 'outgoing', triggered: true, label: 'Siphon Stone', points: steal, rarity: source.trinket?.rarity || 'common' });
-      target.scoringEffects.push({ type: 'trinket', family: 'siphon_stone', direction: 'incoming', triggered: true, label: 'Incoming Siphon Stone', points: -rawSteal, rarity: source.trinket?.rarity || 'common' });
-      if (blocked) target.scoringEffects.push({ type: 'trinket', family: 'warding_charm', direction: 'defense', triggered: true, label: 'Warding Charm blocked Siphon', points: blocked, rarity: target.trinket?.rarity || 'common' });
+      const wardText = ward ? `; Warding Charm prevented ${prevented.toFixed(1)} FP (${Math.round(preventionRate * 100)}%, ${lead.toFixed(1)}/${requiredLead.toFixed(1)} FP lead)` : '';
+      source.logs.push(`Siphon Stone stole ${steal.toFixed(1)} FP after winning by ${Math.round(threshold * 100)}%${wardText}.`);
+      if (steal || prevented) source.scoringEffects.push({ type: 'trinket', family: 'siphon_stone', direction: 'outgoing', triggered: true, label: 'Siphon Stone', points: steal, rarity: source.trinket?.rarity || 'common' });
+      if (prevented) target.scoringEffects.push({ type: 'trinket', family: 'warding_charm', direction: 'defense', triggered: true, label: `Warding Charm prevented ${prevented.toFixed(1)} FP (${Math.round(preventionRate * 100)}%)`, points: 0, rarity: ward?.trinket?.rarity || 'common' });
+      if (targetLoss) target.logs.push(`Incoming Siphon -${targetLoss.toFixed(1)} FP.`);
+      if (targetLoss) target.scoringEffects.push({ type: 'trinket', family: 'siphon_stone', direction: 'incoming', triggered: true, label: 'Incoming Siphon Stone', points: -targetLoss, rarity: source.trinket?.rarity || 'common' });
+      if (ward) ward.logs.push(`Warding Charm protected ${target.placement?.slot || 'a card'} from ${prevented.toFixed(1)} Siphon FP.`);
     }
-  }
-  return resolved;
+    completed.add(effect.id);
+    resolving.delete(effect.id);
+  };
+  for (const effect of effects) resolveEffect(effect);
+  return resolved.map(entry => ({ ...entry, finalFp: Math.max(0, Number(entry.finalFp || 0)) }));
 }
 
 function saveMultiplier(savePct, scoringConfig = {}) {
@@ -678,6 +779,32 @@ function aggregatePlayerRateFromSeasonRow(player, position, scoringConfig = {}) 
   return { games: displayStats.games, fp: exact, fpPerGame: exact / displayStats.games };
 }
 
+function manualMythicFpPerGame(rates = {}, position, scoringConfig = {}) {
+  const scoring = normalizeFantasyScoringConfig(scoringConfig);
+  if (position === 'G') {
+    const savePct = clamp(rates.savePct, 0, 1);
+    return n(rates.saves) * scoring.statPoints.save * saveMultiplier(savePct, scoring) +
+      n(rates.shutouts) * scoring.statPoints.shutout;
+  }
+  return n(rates.goals) * scoring.statPoints.goal +
+    n(rates.assists) * scoring.statPoints.assist +
+    n(rates.shots) * scoring.statPoints.shot +
+    n(rates.hits) * scoring.statPoints.hit +
+    n(rates.blocks) * scoring.statPoints.block;
+}
+
+async function automaticMythicFpPerGame(card, scoringConfig = {}) {
+  try {
+    const boxscores = await getBoxscores(card.sourceDivisionId || card.divisionId, card.sourceSeason || card.season);
+    const allowedMatchIds = await stageMatchIdsFor(card.sourceDivisionId || card.divisionId, card.sourceSeason || card.season, card.sourceStage);
+    const rows = playerRowsFromBoxscores(boxscores, card, card.position, card.sourceStage, allowedMatchIds);
+    if (!rows.length) return 0;
+    return fantasyPointsForRows(rows, card.position, scoringConfig).exact / rows.length;
+  } catch {
+    return 0;
+  }
+}
+
 function skaterHitBlockRateFromPlayer(player) {
   const games = n(player.gp_s);
   if (games <= 0) return null;
@@ -779,19 +906,68 @@ function seasonDisplayStats(row, position) {
   };
 }
 
-function tierForRank(index, total) {
-  const percentile = total ? index / total : 1;
-  if (percentile < 0.05) return 'legendary';
-  if (percentile < 0.15) return 'epic';
-  if (percentile < 0.35) return 'rare';
-  if (percentile < 0.70) return 'uncommon';
+export function normalizeRarityThresholds(thresholds = {}) {
+  const normalized = {};
+  for (const position of ['F', 'D', 'G']) {
+    const defaults = DEFAULT_RARITY_THRESHOLDS[position];
+    const source = thresholds?.[position] || {};
+    let previous = 0;
+    normalized[position] = {};
+    for (const rarity of ['uncommon', 'rare', 'epic', 'legendary']) {
+      const value = Number(source[rarity] ?? defaults[rarity]);
+      const cleanValue = Number.isFinite(value) && value >= 0 ? value : defaults[rarity];
+      normalized[position][rarity] = Math.max(previous, cleanValue);
+      previous = normalized[position][rarity];
+    }
+  }
+  return normalized;
+}
+
+export function rarityForExpectedFp(expectedFpPerMatch, position, thresholds = {}) {
+  const positionThresholds = normalizeRarityThresholds(thresholds)[positionGroup(position) || 'F'];
+  const value = Number(expectedFpPerMatch || 0);
+  if (value >= Number(positionThresholds.legendary || 0)) return 'legendary';
+  if (value >= Number(positionThresholds.epic || 0)) return 'epic';
+  if (value >= Number(positionThresholds.rare || 0)) return 'rare';
+  if (value >= Number(positionThresholds.uncommon || 0)) return 'uncommon';
   return 'common';
+}
+
+export function buildRarityDistribution(catalog = []) {
+  const rarities = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+  const seasons = ['S1', 'S2', 'S3'];
+  const result = {};
+  for (const position of ['F', 'D', 'G']) {
+    const positionCards = (catalog || []).filter(player => player.cardType !== 'mythic' && player.position === position);
+    const total = positionCards.length;
+    result[position] = {
+      total,
+      rarities: Object.fromEntries(rarities.map(rarity => {
+        const cards = positionCards.filter(player => player.tier === rarity);
+        return [rarity, {
+          total: cards.length,
+          percent: total ? cards.length / total * 100 : 0,
+          seasons: Object.fromEntries(seasons.map(season => {
+            const seasonTotal = positionCards.filter(player => player.edition === season).length;
+            const count = cards.filter(player => player.edition === season).length;
+            return [season, {
+              count,
+              percentOfPosition: total ? count / total * 100 : 0,
+              percentOfSeasonPosition: seasonTotal ? count / seasonTotal * 100 : 0
+            }];
+          }))
+        }];
+      }))
+    };
+  }
+  return result;
 }
 
 export async function buildCardPlayerCatalog({
   seasonId = 'S3',
   positionOverrides = {},
   tierOverrides = {},
+  rarityThresholds = DEFAULT_RARITY_THRESHOLDS,
   scoringConfig = {}
 } = {}) {
   const s3Divisions = await getBettingDivisions(seasonId);
@@ -960,50 +1136,24 @@ export async function buildCardPlayerCatalog({
     }
   }
 
-  catalog.push(...await loadManualMythicCards());
+  catalog.push(...await loadManualMythicCards(scoringConfig));
 
   for (const player of catalog) {
     const rollCount = Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE);
     player.expectedWutFpPerMatch = Number(player.weightedFpPerGame || 0) * rollCount;
   }
 
-  const pools = new Map();
+  const normalizedThresholds = normalizeRarityThresholds(rarityThresholds);
   for (const player of catalog) {
     if (!player.position || player.cardType === 'mythic') continue;
-    // Mature historical seasons share a pool; the live season stays isolated
-    // so its small, volatile sample cannot displace established S1/S2 cards.
-    // Every cohort remains position-specific.
-    const seasonPool = normalizeSeason(player.edition) === 'S3' ? 'S3' : 'HISTORICAL';
-    const poolKey = `${seasonPool}|${player.position}`;
-    if (!pools.has(poolKey)) pools.set(poolKey, []);
-    pools.get(poolKey).push(player);
-  }
-  for (const pool of pools.values()) {
-    const eligible = pool
-      .filter(player => Number(player.rarityGamesPlayed || 0) >= 6)
-      .sort((a, b) => b.expectedWutFpPerMatch - a.expectedWutFpPerMatch || a.catalogKey.localeCompare(b.catalogKey));
-    let previousFp = null;
-    let previousCalculatedTier = null;
-    const calculatedTiers = new Map();
-    eligible.forEach((player, index) => {
-      const tiedWithPrevious = previousFp != null && Math.abs(player.expectedWutFpPerMatch - previousFp) < 1e-9;
-      const calculatedTier = tiedWithPrevious ? previousCalculatedTier : tierForRank(index, eligible.length);
-      calculatedTiers.set(player.catalogKey, calculatedTier);
-      if (!tierOverrides[player.catalogKey]) player.tier = calculatedTier;
-      previousFp = player.expectedWutFpPerMatch;
-      previousCalculatedTier = calculatedTier;
-    });
-    for (const player of pool.filter(item => Number(item.rarityGamesPlayed || 0) < 6)) {
-      player.rarityProvisional = true;
-      const tied = eligible.find(item => Math.abs(item.expectedWutFpPerMatch - player.expectedWutFpPerMatch) < 1e-9);
-      const playersAhead = eligible.filter(item => item.expectedWutFpPerMatch > player.expectedWutFpPerMatch).length;
-      const provisionalTier = (tied && calculatedTiers.get(tied.catalogKey)) || tierForRank(playersAhead, eligible.length);
-      if (!tierOverrides[player.catalogKey]) player.tier = provisionalTier;
+    if (!tierOverrides[player.catalogKey]) {
+      player.tier = rarityForExpectedFp(player.expectedWutFpPerMatch, player.position, normalizedThresholds);
     }
+    player.rarityThresholds = normalizedThresholds[player.position] || normalizedThresholds.F;
   }
   for (const player of catalog) {
     if (player.cardType === 'mythic') player.tier = 'mythic';
-    player.rarityEligible = player.cardType === 'mythic' || Number(player.rarityGamesPlayed || 0) >= 6;
+    player.rarityEligible = true;
     player.stars = CARD_STARS[player.tier] || 1;
   }
   return catalog.sort((a, b) =>
@@ -1013,7 +1163,7 @@ export async function buildCardPlayerCatalog({
   );
 }
 
-async function loadManualMythicCards() {
+async function loadManualMythicCards(scoringConfig = {}) {
   let raw;
   try {
     raw = await fs.readFile(MYTHIC_CARDS_PATH, 'utf8');
@@ -1053,6 +1203,7 @@ async function loadManualMythicCards() {
       shutouts: clamp(entry.manual_shutoutrate ?? entry.manualShutoutRate, 0, 1),
       savePct: clamp(entry.manual_savep ?? entry.manualSavePct, 0, 1)
     };
+    const explicitWeightedFpPerGame = Number(entry.rating_fp_per_game ?? entry.ratingFpPerGame);
     const card = {
       catalogKey: cardCatalogKey({ cardType: 'mythic', mythicId: id }),
       cardIdentity: cardCatalogKey({ cardType: 'mythic', mythicId: id }),
@@ -1096,7 +1247,11 @@ async function loadManualMythicCards() {
       s3: { games: 0, fp: 0, fpPerGame: 0 },
       seasonStats: {},
       editionStats: null,
-      weightedFpPerGame: Number(entry.rating_fp_per_game || entry.ratingFpPerGame || 0),
+      weightedFpPerGame: Number.isFinite(explicitWeightedFpPerGame)
+        ? explicitWeightedFpPerGame
+        : sourceType === 'manual'
+          ? manualMythicFpPerGame(manualRates, positionGroup(entry.position) || 'F', scoringConfig)
+          : 0,
       tier: 'mythic',
       stars: CARD_STARS.mythic,
       teamLogo: clean(entry.team_logo || entry.teamLogo) ||
@@ -1113,6 +1268,9 @@ async function loadManualMythicCards() {
         sampleSize: HISTORICAL_SAMPLE_SIZE
       }
     };
+    if (!Number.isFinite(explicitWeightedFpPerGame) && sourceType === 'automatic') {
+      card.weightedFpPerGame = await automaticMythicFpPerGame(card, scoringConfig);
+    }
     return card;
   }));
 }
@@ -1204,13 +1362,30 @@ export function generatePlayerPack({ packType, catalog, config }) {
   return players;
 }
 
-// Every WUT 2.0 player pack is a single five-item product: three players and
-// two boosts. Keeping generation here makes the economy route impossible to
-// accidentally split back into Mushybux-powered boost packs.
+// WUT player packs are a single five-item product: three players and two boosts.
 export function generateWutPlayerPack({ packType, catalog, config }) {
   const players = generatePlayerPack({ packType, catalog, config });
   const boosts = generateBoostPack({ packType, config }).slice(0, 2);
   return [...players, ...boosts];
+}
+
+export function generateWutBoostPack({ config }) {
+  const pack = { ...DEFAULT_BOOST_PACK_CONFIG, ...(config?.boostPack || {}) };
+  const commonRareOdds = { ...DEFAULT_BOOST_PACK_CONFIG.commonRareOdds, ...(pack.commonRareOdds || {}) };
+  const guaranteedHighOdds = { ...DEFAULT_BOOST_PACK_CONFIG.guaranteedHighOdds, ...(pack.guaranteedHighOdds || {}) };
+  const rarities = [
+    ...Array.from({ length: Math.max(0, Math.round(Number(pack.commonRareRolls || 0))) }, () => rollWeighted(commonRareOdds, ['common', 'uncommon', 'rare'])),
+    ...Array.from({ length: Math.max(0, Math.round(Number(pack.guaranteedHighRolls || 0))) }, () => rollWeighted(guaranteedHighOdds, ['epic', 'legendary']))
+  ];
+  return rarities.map(rarity => {
+    const boostType = BOOST_TYPES[Math.floor(Math.random() * BOOST_TYPES.length)];
+    return {
+      itemType: 'boost',
+      boostType,
+      rarity,
+      effect: config?.boostEffects?.[boostType]?.[rarity] || DEFAULT_BOOST_EFFECTS[boostType]?.[rarity]
+    };
+  });
 }
 
 export function availableWutMatchCards(cards, placements, userId) {

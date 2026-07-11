@@ -1,6 +1,8 @@
-import { ARENA_DEFAULT_ELO, ARENA_TURN_SEQUENCE } from '../../services/arenaRuntime.js';
+import { ARENA_DEFAULT_ELO, arenaCurrentPlayerId, arenaTurnCap, maxWutLegalPlacements } from '../../services/arenaRuntime.js';
+import { trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
 
 const asNumber = value => Number(value || 0);
+const firstPlayerDeciderId = match => Number(match?.first_player_decider_user_id ?? match?.coin_flip_winner_user_id);
 
 export async function getArenaRatingPostgres(pool, userId) {
   const row = (await pool.query('SELECT rating FROM arena_ratings WHERE user_id=$1', [Number(userId)])).rows[0];
@@ -12,7 +14,7 @@ export async function getArenaAdminSummaryPostgres(pool, now = new Date()) {
     pool.query("SELECT data FROM app_documents WHERE document_key='arena_meta'"),
     pool.query(`SELECT
       (SELECT count(*)::int FROM arena_entries WHERE status='queued') AS queued,
-      (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status='active') AS active,
+      (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active')) AS active,
       (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status='ready') AS ready`)
   ]);
   const data = structuredClone(meta.rows[0]?.data || {});
@@ -33,11 +35,7 @@ export async function getArenaAdminSummaryPostgres(pool, now = new Date()) {
   };
 }
 
-function currentPlayer(match) {
-  const first = Number(match.first_player_id);
-  const second = Number((match.player_ids || []).find(id => Number(id) !== first));
-  return Number(match.turn_index || 0) % 2 === 0 ? first : second;
-}
+const currentPlayer = arenaCurrentPlayerId;
 
 function timerPaused(now, config) {
   const hour = Number(new Intl.DateTimeFormat('en-CA', {
@@ -58,14 +56,26 @@ function publicMatch(match, userId, names, config, wutConfig, now) {
   const loadBonus = Math.max(0, ...ownPlacements.filter(row => row.card_snapshot?.trinket?.family === 'booster_cable')
     .map(row => asNumber(row.card_snapshot?.trinket?.effect?.loadBonus)));
   const current = match.status === 'active' ? currentPlayer(match) : null;
+  const cardsRequired = current == null ? 0 : maxWutLegalPlacements({
+    cards: match.deck_snapshots?.[String(current)]?.active || [],
+    placements: match.placements || [],
+    userId: current,
+    slotPowerAllowance: wutConfig.slotPowerAllowance || 1,
+    trinketFits: trinketFitsWutPosition
+  }, arenaTurnCap(match));
   return {
     ...match,
     players,
     opponent: players.find(player => player.id !== Number(userId)) || null,
+    mode: match.mode || 'constructed',
+    is_draft_prep_turn: match.status === 'drafting' && !(match.draft_loadouts?.[String(userId)]?.submitted_at),
+    is_first_player_choice_turn: match.status === 'choosing_first' && firstPlayerDeciderId(match) === Number(userId),
     current_player_id: current,
-    cards_required_this_turn: match.status === 'active' ? ARENA_TURN_SEQUENCE[Number(match.turn_index)] : 0,
-    is_your_turn: current === Number(userId),
-    timer_paused: match.status === 'active' && timerPaused(now, config),
+    cards_required_this_turn: match.status === 'active' ? cardsRequired : 0,
+    is_your_turn: match.status === 'drafting' ? !(match.draft_loadouts?.[String(userId)]?.submitted_at)
+      : match.status === 'choosing_first' ? firstPlayerDeciderId(match) === Number(userId)
+      : current === Number(userId),
+    timer_paused: ['drafting', 'choosing_first', 'active'].includes(match.status) && timerPaused(now, config),
     boost_load_cap: asNumber(wutConfig.boostLoadCap || 5) + loadBonus,
     boost_load_used: ownPlacements.reduce((sum, row) => sum + asNumber(row.boost_load), 0)
   };
@@ -128,7 +138,7 @@ export async function getArenaStateForUserPostgres(pool, userId, now = new Date(
       draws: resolved.filter(match => match.winner_user_id == null).length
     },
     leaderboard,
-    activeMatches: matches.filter(match => match.status === 'active'),
+    activeMatches: matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status)),
     readyMatches: matches.filter(match => match.status === 'ready' && !(match.revealed_by || []).map(Number).includes(playerId)),
     history: matches.filter(match => match.status === 'completed' ||
       (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(playerId))),
@@ -159,6 +169,6 @@ export async function getArenaAdminMatchStatePostgres(pool, { userId = null } = 
       currentPlayerName: players.find(player => player.id === currentPlayerId)?.displayName || '', placementCount: match.placements.length };
   });
   const users = userRows.rows.map(row => ({ id:Number(row.id), displayName:names.get(Number(row.id)), matchCount:matches.filter(match => match.player_ids.map(Number).includes(Number(row.id))).length })).filter(row => row.matchCount);
-  return { selectedUserId, activeMatches: matches.filter(match => ['active','scoring'].includes(match.status)),
+  return { selectedUserId, activeMatches: matches.filter(match => ['drafting','choosing_first','active','scoring'].includes(match.status)),
     history: matches.filter(match => ['ready','completed','cancelled'].includes(match.status) && (!selectedUserId || match.player_ids.map(Number).includes(selectedUserId))), users };
 }

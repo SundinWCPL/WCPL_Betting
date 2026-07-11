@@ -82,6 +82,7 @@ export async function getWutMissionsForUserWithClient(client, { userId, now = ne
   const weekKey = `${String(settings.seasonId || 'S3')}|${week}`;
   const userRow = await client.query('SELECT balance FROM users WHERE id=$1', [Number(userId)]);
   const cardsRows = await client.query('SELECT data FROM owned_cards WHERE user_id=$1', [Number(userId)]);
+  const trinketRows = await client.query('SELECT data FROM owned_trinkets WHERE user_id=$1', [Number(userId)]);
   const boostRows = await client.query('SELECT consumed,data FROM owned_boosts WHERE user_id=$1', [Number(userId)]);
   const matchRows = await client.query(`SELECT m.data,COALESCE((SELECT jsonb_agg(p.data ORDER BY p.placement_index) FROM arena_placements p WHERE p.match_key=m.match_key),'[]'::jsonb) placements
     FROM arena_matches m WHERE m.match_kind='arena' AND m.status IN ('ready','completed') AND m.data->'player_ids' @> $1::jsonb`, [JSON.stringify([Number(userId)])]);
@@ -91,6 +92,7 @@ export async function getWutMissionsForUserWithClient(client, { userId, now = ne
   const opportunityRows = await client.query("SELECT data FROM card_records WHERE collection='mission_opportunities' AND data->>'key'=$1 LIMIT 1", [weekKey]);
   const horseRows = await client.query("SELECT entity_type,data FROM horse_entities WHERE entity_type IN ('race','bet')");
   const cards = cardsRows.rows.map(row => row.data || {});
+  const trinkets = trinketRows.rows.map(row => row.data || {});
   const boosts = boostRows.rows.map(row => ({ ...(row.data || {}), consumed: row.consumed }));
   const matches = matchRows.rows.map(row => ({ ...(row.data || {}), placements: row.placements || [] }))
     .filter(match => match.wut_rewards_awarded_at && zonedDateKey(new Date(match.resolved_at || match.completed_at), zone) === dayKey);
@@ -104,7 +106,7 @@ export async function getWutMissionsForUserWithClient(client, { userId, now = ne
   if (boosts.some(boost => !boost.consumed)) dailyEligible.push('use_boost');
   if (new Set(cards.map(card => String(card.source_season || card.edition || 'S3'))).size >= 3) dailyEligible.push('three_seasons');
   if (new Set(cards.map(card => String(card.source_team_id || '')).filter(Boolean)).size >= 5) dailyEligible.push('five_teams');
-  if (cards.some(card => card.trinket_id != null)) dailyEligible.push('trigger_trinket');
+  if (trinkets.length) dailyEligible.push('trigger_trinket');
   if (settings.casinoOpen !== false && Number(userRow.rows[0]?.balance || 0) >= 50) dailyEligible.push('slots_five', 'slots_win', 'puckiq_complete');
   if (settings.casinoOpen !== false && Number(userRow.rows[0]?.balance || 0) >= 1 && horseRaces.filter(race => race.race_date === dayKey).length >= 2) dailyEligible.push('horse_two', 'horse_win');
   const weeklyEligible = opportunities.length ? ['wager_500', 'five_winners', 'three_x_winner'] : [];

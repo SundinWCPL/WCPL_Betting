@@ -165,7 +165,8 @@
     const usedCardsBySide = <%- JSON.stringify(usedCardIdsBySide) %>;
     const usedBoostsBySide = <%- JSON.stringify(usedBoostIdsBySide) %>;
     const loadBySide = <%- JSON.stringify(loadBySide) %>;
-    const captainPatchBySide = <%- JSON.stringify(Object.fromEntries(['A', 'B'].map(side => [side, placementsFor(side).some(row => row.card_snapshot?.trinket?.family === 'team_crest')]))) %>;
+    const captainPatchBySide = <%- JSON.stringify(Object.fromEntries(['A', 'B'].map(side => [side, placementsFor(side).filter(row => row.card_snapshot?.trinket?.family === 'team_crest').length]))) %>;
+    const captainPatchLimit = 2;
     const boostCapBySide = <%- JSON.stringify(boostCapBySide) %>;
     let selectedSlot = null;
     let selectedCard = null;
@@ -201,7 +202,7 @@
       showCollectionPanel('players');
       let available = 0;
       matchCollection.querySelectorAll('[data-card-id]').forEach(card => {
-        const patchAvailable = card.dataset.trinketFamily !== 'team_crest' || !captainPatchBySide[slot.dataset.side];
+        const patchAvailable = card.dataset.trinketFamily !== 'team_crest' || Number(captainPatchBySide[slot.dataset.side] || 0) < captainPatchLimit;
         const show = card.dataset.position === slot.dataset.position && cardFitsSlot(slot, card) && cardAvailableForSide(card, slot.dataset.side) && patchAvailable;
         card.hidden = !show;
         if (show) available += 1;
@@ -260,7 +261,7 @@
       if (!slot || !card || slot.dataset.cardId) return;
       if (document.querySelector('[data-debug-slot][data-card-id]')) return showStatus('Commit or remove the currently staged card first.', true);
       if (slot.dataset.position !== card.dataset.position) return showStatus(`That card is not eligible for ${slot.dataset.debugSlot}.`, true);
-      if (card.dataset.trinketFamily === 'team_crest' && captainPatchBySide[slot.dataset.side]) return showStatus("Only one Captain's Patch can be active on each side.", true);
+      if (card.dataset.trinketFamily === 'team_crest' && Number(captainPatchBySide[slot.dataset.side] || 0) >= captainPatchLimit) return showStatus(`Only ${captainPatchLimit} Captain's Patches can be active on each side.`, true);
       if (!cardAvailableForSide(card, slot.dataset.side)) return showStatus('That card is already committed on this side.', true);
       if (!cardFitsSlot(slot, card)) return showStatus(`${slot.dataset.debugSlot} exceeds the opposing Power allowance.`, true);
       slot.dataset.cardId = card.dataset.cardId;
@@ -378,60 +379,7 @@
     placementForm?.addEventListener('submit', event => { if (!confirm('Commit this placement? It cannot be changed unless you reset the debug game.')) event.preventDefault(); });
     refreshPlacement();
 
-    const revealBoard = document.querySelector('[data-reveal-board]');
-    if (revealBoard) {
-      const entries = [...revealBoard.querySelectorAll('[data-reveal-entry]')];
-      const outcome = revealBoard.querySelector('[data-arena-outcome]');
-      const running = {};
-      const updateScore = () => {
-        revealBoard.querySelectorAll('[data-total-for]').forEach(total => { total.textContent = Math.round(running[total.dataset.totalFor] || 0); });
-      };
-      const runReveal = async () => {
-        entries.forEach(entry => {
-          entry.classList.remove('is-revealed');
-          entry.querySelectorAll('.arena-reveal-step').forEach(step => { step.hidden = true; });
-          const playerTotal = entry.querySelector('.arena-player-fp');
-          if (playerTotal) playerTotal.hidden = true;
-        });
-        outcome.hidden = true;
-        updateScore();
-        for (const entry of entries) {
-          entry.classList.add('is-revealed');
-          for (const step of entry.querySelectorAll('.arena-reveal-step')) {
-            step.hidden = false;
-            const family = step.dataset.trinketFamily;
-            if (family) {
-              entry.dataset.triggerFamily = family;
-              entry.dataset.triggerDirection = step.dataset.effectDirection || 'self';
-              entry.classList.add('is-trinket-firing');
-              step.classList.add('is-triggering');
-              const targetLabel = family === 'specialist_tape' ? step.textContent.match(/Specialist \(([^)]+)\)/)?.[1] : '';
-              const targetStep = targetLabel
-                ? [...entry.querySelectorAll('.arena-reveal-step:not(.is-trinket)')].find(candidate => candidate.querySelector('span')?.textContent.trim().startsWith(targetLabel))
-                : family === 'booster_cable' ? entry.querySelector('.arena-reveal-step.is-boost') : null;
-              targetStep?.classList.add('is-trinket-targeted');
-              step._trinketTarget = targetStep;
-            }
-            const user = step.dataset.user;
-            running[user] = (running[user] || 0) + Number(step.dataset.points || 0);
-            updateScore();
-            await new Promise(resolve => setTimeout(resolve, family ? 800 : step.classList.contains('is-boost') ? 650 : 350));
-            step.classList.remove('is-triggering');
-            step._trinketTarget?.classList.remove('is-trinket-targeted');
-            delete step._trinketTarget;
-            entry.classList.remove('is-trinket-firing');
-            delete entry.dataset.triggerFamily;
-            delete entry.dataset.triggerDirection;
-          }
-          const playerTotal = entry.querySelector('.arena-player-fp');
-          if (playerTotal) playerTotal.hidden = false;
-          await new Promise(resolve => setTimeout(resolve, 250));
-        }
-        revealBoard.querySelectorAll('[data-final-total]').forEach(total => { total.textContent = total.dataset.finalTotal; });
-        outcome.hidden = false;
-      };
-      runReveal();
-    }
   </script>
+  <%- include('partials_arena_reveal_script') %>
 </body>
 </html>

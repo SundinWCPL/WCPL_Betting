@@ -257,10 +257,27 @@
         <% if (cardsAdmin.recentWutAdjustments.length) { %>
           <details><summary>Recent WUT Coin adjustments</summary><div class="table-scroll"><table><thead><tr><th>User</th><th>Change</th><th>Balance After</th><th>Reason</th><th>Time</th></tr></thead><tbody><% cardsAdmin.recentWutAdjustments.forEach(row => { %><tr><td><%= row.displayName %></td><td><strong><%= row.amount > 0 ? '+' : '' %><%= row.amount %></strong></td><td><%= row.balance_after %></td><td><%= row.note %></td><td><%= new Date(row.created_at).toLocaleString() %></td></tr><% }) %></tbody></table></div></details>
         <% } %>
+        <% const trinketRefunds = cardsAdmin.trinketRemovalRefunds || { wutCount: 0, wutAmount: 0, mushyCount: 0, mushyAmount: 0, attachedCardCount: 0, attachedTrinketCount: 0, savedDeckCount: 0, pending: 0 }; %>
+        <% if (Number(trinketRefunds.pending || 0) > 0) { %>
+          <form method="post" action="/admin/cards/refund-trinket-removals" class="admin-action-row" onsubmit="return confirm('Refund historical trinket removal fees, clear every legacy permanent trinket attachment, and reset all saved WUT decks?');">
+            <p class="muted small-note">Pending trinket migration: <strong><%= trinketRefunds.wutAmount %></strong> WUT Coins across <%= trinketRefunds.wutCount %> transaction(s), <strong><%= trinketRefunds.mushyAmount %></strong> Mushybux across <%= trinketRefunds.mushyCount %> transaction(s), <%= trinketRefunds.attachedCardCount %> legacy card attachment(s), and <%= trinketRefunds.savedDeckCount ?? cardsAdmin.totals.savedDecks %> saved deck(s) to reset.</p>
+            <button type="submit">Refund, Clear Trinkets & Reset Decks</button>
+          </form>
+        <% } %>
+        <% const rulesVoid = cardsAdmin.rulesUpdateVoid || { completedAt: null, pendingMatchCount: 0, rewardAmount: 30, result: null }; %>
+        <% if (!rulesVoid.completedAt) { %>
+          <form method="post" action="/admin/cards/void-ongoing-rules-update" class="admin-action-row admin-danger-zone" onsubmit="return confirm('Void every ongoing WUT match and grant 30 WUT Coins to each participant per voided match? This can only be run once.');">
+            <p class="muted small-note">Rules update rollout: <strong><%= rulesVoid.pendingMatchCount %></strong> ongoing WUT match(es) eligible to void. Each participant will receive <strong><%= rulesVoid.rewardAmount %></strong> WUT Coins per voided match.</p>
+            <button type="submit">Void Ongoing WUT Matches</button>
+          </form>
+        <% } else { %>
+          <p class="muted small-note">Rules update rollout void completed <%= new Date(rulesVoid.completedAt).toLocaleString() %>: <%= Number(rulesVoid.result?.arena_matches_voided || 0) + Number(rulesVoid.result?.draft_event_matches_voided || 0) %> match(es) voided, <%= rulesVoid.result?.reward_transactions || 0 %> compensation transaction(s).</p>
+        <% } %>
       </section>
 
       <form method="post" action="/admin/cards/config" class="cards-admin-config">
         <% const wutRarities = ['common','uncommon','rare','epic','legendary']; %>
+        <% const boostPack = { price: 250, commonRareRolls: 4, guaranteedHighRolls: 1, commonRareOdds: { common: 55, uncommon: 30, rare: 15 }, guaranteedHighOdds: { epic: 85, legendary: 15 }, ...(cardsAdmin.config.boostPack || {}) }; %>
         <fieldset>
           <legend>Player + Boost Pack Prices</legend>
           <p class="muted">Each pack contains three players and two boosts.</p>
@@ -269,15 +286,33 @@
           <% }) %>
         </fieldset>
         <fieldset class="cards-rarity-fieldset">
-          <legend>Trinket Purchase & Removal Costs</legend>
-          <p class="muted">Purchase and WUT removal costs use WUT Coins. Mushybux removal is the convenience alternative.</p>
+          <legend>Boost Pack</legend>
+          <p class="muted">Boost-only packs use separate roll counts and weights. Defaults are four common-rare rolls plus one epic-legendary guarantee.</p>
+          <div class="cards-scoring-config-grid">
+            <label>Boost Pack price<input type="number" min="0" step="1" name="boostPack[price]" value="<%= boostPack.price %>"></label>
+            <label>Common-Rare rolls<input type="number" min="0" step="1" name="boostPack[commonRareRolls]" value="<%= boostPack.commonRareRolls %>"></label>
+            <label>Epic-Legendary guarantees<input type="number" min="0" step="1" name="boostPack[guaranteedHighRolls]" value="<%= boostPack.guaranteedHighRolls %>"></label>
+          </div>
+          <div class="cards-odds-table cards-odds-table-five">
+            <span></span><strong class="tier-text-common">common</strong><strong class="tier-text-uncommon">uncommon</strong><strong class="tier-text-rare">rare</strong><strong class="tier-text-epic">epic</strong><strong class="tier-text-legendary">legendary</strong>
+            <b>Common-Rare</b>
+            <% ['common','uncommon','rare'].forEach(rarity => { %><input aria-label="<%= `Boost Pack common-rare ${rarity}` %>" type="number" min="0" step="0.01" name="boostPack[commonRareOdds][<%= rarity %>]" value="<%= boostPack.commonRareOdds?.[rarity] ?? { common: 55, uncommon: 30, rare: 15 }[rarity] %>"><% }) %>
+            <span></span><span></span>
+            <b>Guaranteed</b>
+            <span></span><span></span><span></span>
+            <% ['epic','legendary'].forEach(rarity => { %><input aria-label="<%= `Boost Pack guaranteed ${rarity}` %>" type="number" min="0" step="0.01" name="boostPack[guaranteedHighOdds][<%= rarity %>]" value="<%= boostPack.guaranteedHighOdds?.[rarity] ?? { epic: 85, legendary: 15 }[rarity] %>"><% }) %>
+          </div>
+        </fieldset>
+        <fieldset class="cards-rarity-fieldset">
+          <legend>Trinket Purchase Costs</legend>
+          <p class="muted">Trinkets are assigned per deck and can be changed freely. Only purchase prices are used.</p>
           <div class="cards-admin-trinket-economy">
-            <strong>Rarity</strong><strong>Purchase</strong><strong>Remove: WUT</strong><strong>Remove: Mushybux</strong>
+            <strong>Rarity</strong><strong>Purchase</strong>
             <% wutRarities.forEach(rarity => { %>
               <b class="tier-text-<%= rarity %>"><%= rarity %></b>
               <input aria-label="<%= `${rarity} trinket price` %>" type="number" min="0" step="1" name="wut[trinketPrices][<%= rarity %>]" value="<%= cardsAdmin.config.wut.trinketPrices[rarity] %>">
-              <input aria-label="<%= `${rarity} trinket WUT removal cost` %>" type="number" min="0" step="1" name="wut[trinketRemovalWut][<%= rarity %>]" value="<%= cardsAdmin.config.wut.trinketRemovalWut[rarity] %>">
-              <input aria-label="<%= `${rarity} trinket Mushybux removal cost` %>" type="number" min="0" step="1" name="wut[trinketRemovalMushy][<%= rarity %>]" value="<%= cardsAdmin.config.wut.trinketRemovalMushy[rarity] %>">
+              <input type="hidden" name="wut[trinketRemovalWut][<%= rarity %>]" value="<%= cardsAdmin.config.wut.trinketRemovalWut[rarity] %>">
+              <input type="hidden" name="wut[trinketRemovalMushy][<%= rarity %>]" value="<%= cardsAdmin.config.wut.trinketRemovalMushy[rarity] %>">
             <% }) %>
           </div>
         </fieldset>
@@ -298,6 +333,8 @@
           <legend>Match Rules & Rewards</legend>
           <p class="muted">Trinket Power is added to the card's own rarity Power. Decimals are supported.</p>
           <div class="cards-scoring-config-grid">
+            <label>Deck size<input type="number" min="1" step="1" name="wut[deckSize]" value="<%= cardsAdmin.config.wut.deckSize %>"></label>
+            <label>Top lineup Power cap<input type="number" min="1" step="0.5" name="wut[topLineupMaxPower]" value="<%= cardsAdmin.config.wut.topLineupMaxPower %>"></label>
             <label>Matching-slot Power allowance<input type="number" min="0" step="1" name="wut[slotPowerAllowance]" value="<%= cardsAdmin.config.wut.slotPowerAllowance %>"></label>
             <label>Base lineup Boost Load<input type="number" min="0" step="1" name="wut[boostLoadCap]" value="<%= cardsAdmin.config.wut.boostLoadCap %>"></label>
             <label>Winner WUT Coins<input type="number" min="0" step="1" name="wut[rewards][winner]" value="<%= cardsAdmin.config.wut.rewards.winner %>"></label>
@@ -307,7 +344,24 @@
             <label>Paused clock starts (0–23)<input type="number" min="0" max="23" step="1" name="arena[pauseStartHour]" value="<%= cardsAdmin.arenaConfig.pauseStartHour %>"></label>
             <label>Paused clock ends (0–23)<input type="number" min="0" max="23" step="1" name="arena[pauseEndHour]" value="<%= cardsAdmin.arenaConfig.pauseEndHour %>"></label>
             <label>Maximum active matches/user<input type="number" min="1" step="1" name="arena[maxActiveMatches]" value="<%= cardsAdmin.arenaConfig.maxActiveMatches %>"></label>
+            <label>Recent arena rematch window<input type="number" min="0" step="1" name="arena[recentOpponentMatchCount]" value="<%= cardsAdmin.arenaConfig.recentOpponentMatchCount || 2 %>"></label>
+            <label>Draft Arena packs<input type="number" min="1" step="1" name="arena[draftArena][packCount]" value="<%= cardsAdmin.arenaConfig.draftArena?.packCount || 10 %>"></label>
+            <label>Players per Draft pack<input type="number" min="0" step="1" name="arena[draftArena][playersPerPack]" value="<%= cardsAdmin.arenaConfig.draftArena?.playersPerPack ?? 1 %>"></label>
+            <label>Trinkets per Draft pack<input type="number" min="0" step="1" name="arena[draftArena][trinketsPerPack]" value="<%= cardsAdmin.arenaConfig.draftArena?.trinketsPerPack ?? 1 %>"></label>
+            <label>Boosts per Draft pack<input type="number" min="0" step="1" name="arena[draftArena][boostsPerPack]" value="<%= cardsAdmin.arenaConfig.draftArena?.boostsPerPack ?? 1 %>"></label>
+            <label>Draft winner WUT Coins<input type="number" min="0" step="1" name="arena[draftRewards][winner]" value="<%= cardsAdmin.arenaConfig.draftRewards?.winner ?? cardsAdmin.config.wut.rewards.winner %>"></label>
+            <label>Draft loser WUT Coins<input type="number" min="0" step="1" name="arena[draftRewards][loser]" value="<%= cardsAdmin.arenaConfig.draftRewards?.loser ?? cardsAdmin.config.wut.rewards.loser %>"></label>
+            <label>Draft timeout loser WUT Coins<input type="number" min="0" step="1" name="arena[draftRewards][forfeitLoser]" value="<%= cardsAdmin.arenaConfig.draftRewards?.forfeitLoser ?? cardsAdmin.config.wut.rewards.forfeitLoser %>"></label>
+            <label>Constructed winner WUT Coins<input type="number" min="0" step="1" name="arena[constructedRewards][winner]" value="<%= cardsAdmin.arenaConfig.constructedRewards?.winner ?? cardsAdmin.config.wut.rewards.winner %>"></label>
+            <label>Constructed loser WUT Coins<input type="number" min="0" step="1" name="arena[constructedRewards][loser]" value="<%= cardsAdmin.arenaConfig.constructedRewards?.loser ?? cardsAdmin.config.wut.rewards.loser %>"></label>
+            <label>Constructed timeout loser WUT Coins<input type="number" min="0" step="1" name="arena[constructedRewards][forfeitLoser]" value="<%= cardsAdmin.arenaConfig.constructedRewards?.forfeitLoser ?? cardsAdmin.config.wut.rewards.forfeitLoser %>"></label>
             <% wutRarities.forEach(rarity => { %><label><span class="tier-text-<%= rarity %>"><%= wutTitleCase(rarity) %> trinket Power</span><input type="number" min="0" step="0.5" name="wut[trinketPowerValues][<%= rarity %>]" value="<%= cardsAdmin.config.wut.trinketPowerValues[rarity] %>"></label><% }) %>
+          </div>
+          <p class="muted">Draft Arena rarity settings use relative weights and per-rarity caps.</p>
+          <div class="cards-odds-table cards-odds-table-five">
+            <span></span><% wutRarities.forEach(rarity => { %><strong class="tier-text-<%= rarity %>"><%= rarity %></strong><% }) %>
+            <b>Weight</b><% wutRarities.forEach(rarity => { %><input aria-label="<%= `Draft Arena ${rarity} weight` %>" type="number" min="0" step="0.01" name="arena[draftArena][rarityWeights][<%= rarity %>]" value="<%= cardsAdmin.arenaConfig.draftArena?.rarityWeights?.[rarity] ?? { common: 30, uncommon: 30, rare: 25, epic: 10, legendary: 5 }[rarity] %>"><% }) %>
+            <b>Max packs</b><% wutRarities.forEach(rarity => { %><input aria-label="<%= `Draft Arena ${rarity} max packs` %>" type="number" min="0" step="1" name="arena[draftArena][maxPacks][<%= rarity %>]" value="<%= cardsAdmin.arenaConfig.draftArena?.maxPacks?.[rarity] ?? { common: 4, uncommon: 4, rare: 3, epic: 2, legendary: 2 }[rarity] %>"><% }) %>
           </div>
         </fieldset>
         <fieldset class="cards-rarity-fieldset">
@@ -318,6 +372,45 @@
           <legend>Mission WUT Coin Rewards</legend>
           <div class="cards-scoring-config-grid">
             <% [['daily_play_three','Daily: play three'],['daily_first_win','Daily: first win'],['daily_rotating','Daily: rotating'],['weekly_profit_500','Weekly: 500 profit'],['weekly_category_coverage','Weekly: cover board'],['weekly_rotating','Weekly: rotating']].forEach(([key,label]) => { %><label><%= label %><input type="number" min="0" step="1" name="wut[missionRewards][<%= key %>]" value="<%= cardsAdmin.config.wut.missionRewards[key] %>"></label><% }) %>
+          </div>
+        </fieldset>
+        <fieldset class="cards-rarity-fieldset">
+          <legend>Player Rarity FP/M Thresholds</legend>
+          <p class="muted">Auto rarity uses Expected FP per Match across S1, S2, and S3 together, split by position. Manual player rarity overrides still win.</p>
+          <% const rarityThresholdDefaults = { F: { uncommon: 35, rare: 50, epic: 70, legendary: 90 }, D: { uncommon: 25, rare: 35, epic: 50, legendary: 70 }, G: { uncommon: 30, rare: 40, epic: 50, legendary: 60 } }; %>
+          <% const rarityThresholds = cardsAdmin.config.rarityThresholds || rarityThresholdDefaults; %>
+          <div class="cards-odds-table cards-odds-table-five">
+            <span></span><strong class="tier-text-uncommon">uncommon</strong><strong class="tier-text-rare">rare</strong><strong class="tier-text-epic">epic</strong><strong class="tier-text-legendary">legendary</strong><span></span>
+            <% ['F','D','G'].forEach(position => { %>
+              <b><%= position %> starts at</b>
+              <% ['uncommon','rare','epic','legendary'].forEach(rarity => { %>
+                <input aria-label="<%= `${position} ${rarity} rarity threshold` %>" type="number" min="0" step="0.1" name="rarityThresholds[<%= position %>][<%= rarity %>]" value="<%= rarityThresholds[position]?.[rarity] ?? rarityThresholdDefaults[position][rarity] %>">
+              <% }) %>
+              <span class="muted">FP/M</span>
+            <% }) %>
+          </div>
+          <% const rarityDistributionData = rarityDistribution || {}; %>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Position</th><th>Rarity</th><th>Total</th><th>% of position</th><th>S1</th><th>S2</th><th>S3</th></tr>
+              </thead>
+              <tbody>
+                <% ['F','D','G'].forEach(position => { const positionRows = rarityDistributionData[position] || { total: 0, rarities: {} }; %>
+                  <% wutRarities.forEach(rarity => { const row = positionRows.rarities?.[rarity] || { total: 0, percent: 0, seasons: {} }; %>
+                    <tr>
+                      <td><strong><%= position %></strong></td>
+                      <td><strong class="tier-text-<%= rarity %>"><%= rarity %></strong></td>
+                      <td><%= row.total %> / <%= positionRows.total %></td>
+                      <td><%= Number(row.percent || 0).toFixed(1) %>%</td>
+                      <% ['S1','S2','S3'].forEach(season => { const seasonRow = row.seasons?.[season] || { count: 0, percentOfSeasonPosition: 0 }; %>
+                        <td><%= seasonRow.count %> <span class="muted">(<%= Number(seasonRow.percentOfSeasonPosition || 0).toFixed(1) %>%)</span></td>
+                      <% }) %>
+                    </tr>
+                  <% }) %>
+                <% }) %>
+              </tbody>
+            </table>
           </div>
         </fieldset>
         <% [
@@ -392,8 +485,8 @@
         </fieldset>
         <fieldset class="cards-rarity-fieldset wut-trinket-effect-editor">
           <legend>Trinket Effect Balance</legend>
-          <p class="muted">Choose a trinket and rarity. Percentages are entered as human percentages; mode-only effects remain read-only.</p>
-          <% const trinketFamilies = Object.keys(trinketAdminFields); const trinketEffectValue = (effect, field) => { const raw = field.key === 'value' ? effect : effect?.[field.key]; return field.kind === 'percent' ? Number((Number(raw || 0) * 100).toFixed(3)) : raw; }; %>
+          <p class="muted">Choose a trinket and rarity. Percentage fields are entered as human percentages; mode-only effects remain read-only.</p>
+          <% const trinketFamilies = Object.keys(trinketAdminFields); const trinketEffectValue = (effect, field) => { const raw = field.key === 'value' ? (effect && typeof effect === 'object' && Object.prototype.hasOwnProperty.call(effect, 'value') ? effect.value : effect) : effect?.[field.key]; return field.kind === 'percent' ? Number((Number(raw || 0) * 100).toFixed(3)) : raw; }; %>
           <div class="admin-action-row wut-trinket-effect-selectors">
             <label>Trinket<select id="adminTrinketEffectFamily"><% trinketFamilies.forEach(family => { %><option value="<%= family %>"><%= wutTrinketName(family) %></option><% }) %></select></label>
             <label>Rarity<select id="adminTrinketEffectRarity"><% wutRarities.forEach(rarity => { %><option value="<%= rarity %>"><%= wutTitleCase(rarity) %></option><% }) %></select></label>
@@ -458,8 +551,11 @@
 
     <section class="card admin-card" id="cards-player-pools">
       <div class="admin-section-head">
-        <div><p class="eyebrow">S1+S2 historical pools and isolated S3 pools, split by position and ranked by expected FP/M</p><h2>Cards Player Pools</h2></div>
+        <div><p class="eyebrow">S1, S2, S3, and Mythic cards with threshold-based rarity</p><h2>Cards Player Pools</h2></div>
         <div class="admin-action-row">
+          <% const nextFpSort = cardPoolSort === 'fpm_desc' ? 'fpm_asc' : 'fpm_desc'; %>
+          <a class="button-link ghost" href="/admin?card_pool_sort=season#cards-player-pools">Season Sort<%= cardPoolSort === 'season' ? ' ✓' : '' %></a>
+          <a class="button-link ghost" href="/admin?card_pool_sort=<%= nextFpSort %>#cards-player-pools">FP/M Sort<%= cardPoolSort === 'fpm_desc' ? ' ↓' : cardPoolSort === 'fpm_asc' ? ' ↑' : '' %></a>
           <span class="pill"><%= cardsCatalog.length %> players</span>
           <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminCardsPlayerPoolsBody">Show</button>
         </div>
@@ -468,16 +564,16 @@
       <form method="post" action="/admin/cards/player-overrides" class="admin-bulk-card-overrides">
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Player</th><th>Rarity</th><th>S3 Position Counts</th><th>S2 Tie-break</th><th>GP</th><th>Expected FP/M</th><th>Position Override</th><th>Tier Override</th></tr></thead>
+          <thead><tr><th>Player</th><th>Rarity</th><th>S3 Position Counts</th><th>S2 Tie-break</th><th>GP</th><th><a href="/admin?card_pool_sort=<%= nextFpSort %>#cards-player-pools">Expected FP/M<%= cardPoolSort === 'fpm_desc' ? ' ↓' : cardPoolSort === 'fpm_asc' ? ' ↑' : '' %></a></th><th>Position Override</th><th>Tier Override</th></tr></thead>
           <tbody>
             <% cardsCatalog.forEach(player => { %>
               <tr>
                 <td><strong><%= player.name %></strong><br><span class="muted"><%= player.edition %> · <%= player.divisionId %> · <%= player.teamId %></span></td>
-                <td><strong class="tier-text-<%= player.tier %>"><%= player.tier %></strong><% if (player.rarityProvisional) { %><br><small class="muted">Provisional; excluded from cutoffs</small><% } %></td>
-                <td>F <%= player.positionCountsS3.F %> · D <%= player.positionCountsS3.D %> · G <%= player.positionCountsS3.G %></td>
-                <td>F <%= player.positionCountsS2.F %> · D <%= player.positionCountsS2.D %> · G <%= player.positionCountsS2.G %></td>
+                <td><strong class="tier-text-<%= player.tier %>"><%= player.tier %></strong><% if (cardsAdmin.tierOverrides[player.catalogKey]) { %><br><small class="muted">Manual override</small><% } %></td>
+                <td>F <%= player.positionCountsS3?.F || 0 %> · D <%= player.positionCountsS3?.D || 0 %> · G <%= player.positionCountsS3?.G || 0 %></td>
+                <td>F <%= player.positionCountsS2?.F || 0 %> · D <%= player.positionCountsS2?.D || 0 %> · G <%= player.positionCountsS2?.G || 0 %></td>
                 <td><%= player.rarityGamesPlayed || 0 %></td>
-                <td><%= player.expectedWutFpPerMatch.toFixed(1) %></td>
+                <td><%= Number(player.expectedWutFpPerMatch || 0).toFixed(1) %></td>
                 <td>
                     <select name="positions[<%= player.catalogKey %>]">
                       <option value="">Auto (<%= player.position || 'Review' %>)</option>

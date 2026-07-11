@@ -46,7 +46,7 @@ export const WUT_DRAFT_TRANSITIONS = Object.freeze({
   scheduled: ['signup_open', 'signup_closed', 'cancelled'],
   signup_open: ['signup_closed', 'cancelled'],
   signup_closed: ['signup_open', 'starting', 'cancelled'],
-  starting: ['bench_vote', 'draft', 'cancelled'],
+  starting: ['draft', 'cancelled'],
   bench_vote: ['draft', 'cancelled'],
   draft: ['deckbuilding', 'cancelled'],
   deckbuilding: ['tournament', 'cancelled'],
@@ -75,7 +75,7 @@ export const NIGHTLY_WUT_DRAFT_PRESET = Object.freeze({
     },
     signup: { allowWithdrawal: true, allowLateSignup: false, automaticClose: true },
     safetyBench: {
-      mode: 'shared_vote', votingSeconds: 60, rarityMin: 'common', rarityMax: 'common',
+      mode: 'disabled', votingSeconds: 60, rarityMin: 'common', rarityMax: 'common',
       positions: DEFAULT_BENCH_POSITIONS, presetCards: []
     },
     boosters: {
@@ -97,7 +97,7 @@ export const NIGHTLY_WUT_DRAFT_PRESET = Object.freeze({
       autopick: { enabled: true, priority: ['rarity', 'player', 'trinket', 'boost', 'random'] }
     },
     deckbuilding: {
-      seconds: 600, activeMinimum: 5, activeMaximum: 8, lockDeckForTournament: true,
+      seconds: 600, activeMinimum: 8, activeMaximum: 8, deckSize: 8, topLineupMaxPower: 15, requirePositions: false, lockDeckForTournament: true,
       sideboardingBetweenRounds: false, lockTrinketAttachments: true, allowTrinketReassignment: false
     },
     tournament: {
@@ -275,8 +275,12 @@ export function normalizeWutDraftEventConfig(input = {}) {
   const guaranteedTrinketRarity = boosters.guarantees?.trinketRarity == null ? null : choice(boosters.guarantees.trinketRarity, RARITIES, null);
   const requestedDirections = Array.isArray(draft.passDirections) ? draft.passDirections : defaults.draft.passDirections;
   const passDirections = Array.from({ length: boosterCount }, (_, index) => choice(requestedDirections[index % requestedDirections.length], ['left', 'right'], index % 2 ? 'right' : 'left'));
-  const activeMinimum = integer(deckbuilding.activeMinimum, defaults.deckbuilding.activeMinimum, 1, 30);
-  const activeMaximum = integer(deckbuilding.activeMaximum, defaults.deckbuilding.activeMaximum, 1, 30);
+  const deckSize = integer(deckbuilding.deckSize ?? deckbuilding.activeMaximum, defaults.deckbuilding.deckSize, 1, 30);
+  const activeMinimum = deckSize;
+  const activeMaximum = deckSize;
+  const topLineupMaxPower = Number(deckbuilding.topLineupMaxPower ?? defaults.deckbuilding.topLineupMaxPower);
+  const requirePositions = boolean(deckbuilding.requirePositions, defaults.deckbuilding.requirePositions);
+  if (!Number.isFinite(topLineupMaxPower) || topLineupMaxPower <= 0) throw new Error('Event top lineup Power cap must be greater than 0.');
   if (activeMinimum > activeMaximum) throw new Error('Event Active Deck minimum cannot exceed its maximum.');
 
   const benchPositions = Object.fromEntries(POSITIONS.map(position => {
@@ -361,6 +365,7 @@ export function normalizeWutDraftEventConfig(input = {}) {
     },
     deckbuilding: {
       seconds: integer(deckbuilding.seconds, defaults.deckbuilding.seconds, 30, 604800), activeMinimum, activeMaximum,
+      deckSize, topLineupMaxPower, requirePositions,
       lockDeckForTournament: boolean(deckbuilding.lockDeckForTournament, defaults.deckbuilding.lockDeckForTournament),
       sideboardingBetweenRounds: boolean(deckbuilding.sideboardingBetweenRounds, defaults.deckbuilding.sideboardingBetweenRounds),
       lockTrinketAttachments: boolean(deckbuilding.lockTrinketAttachments, defaults.deckbuilding.lockTrinketAttachments),

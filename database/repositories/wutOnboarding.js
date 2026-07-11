@@ -1,11 +1,17 @@
 import { withTransaction } from '../postgres.js';
-import { WUT_LAUNCH_TRINKET_EFFECTS } from '../../services/wutBalanceRules.js';
+import { WUT_LAUNCH_TRINKET_EFFECTS, normalizeWutTrinketEffect } from '../../services/wutBalanceRules.js';
 import { buildOwnedCardData } from './wutPacks.js';
 import { changeWutCoins, lockWutMembership } from './wutWallet.js';
 
 const FAMILIES = Object.keys(WUT_LAUNCH_TRINKET_EFFECTS);
 const STARTER_COINS = 1000;
 const asNumber = value => Number(value || 0);
+const clone = value => JSON.parse(JSON.stringify(value));
+const starterTrinketEffect = (cardsConfig, family) => clone(normalizeWutTrinketEffect(
+  family,
+  'common',
+  cardsConfig.wut?.trinketEffects?.[family]?.common ?? WUT_LAUNCH_TRINKET_EFFECTS[family]?.common ?? null
+));
 
 async function documents(client) {
   const result = await client.query(`
@@ -63,8 +69,8 @@ export async function openWutStarterPackWithClient(client, {
   const createdAt = now.toISOString();
   const freeItems = Array.isArray(bonusPackItems) && bonusPackItems.length ? bonusPackItems : [
     ...items.slice(0, 3),
-    { itemType: 'boost', boostType: 'goal', rarity: 'common', effect: JSON.parse(JSON.stringify(cardsConfig.boostEffects?.goal?.common || null)) },
-    { itemType: 'boost', boostType: 'grit', rarity: 'common', effect: JSON.parse(JSON.stringify(cardsConfig.boostEffects?.grit?.common || null)) }
+    { itemType: 'boost', boostType: 'goal', rarity: 'common', effect: clone(cardsConfig.boostEffects?.goal?.common || null) },
+    { itemType: 'boost', boostType: 'grit', rarity: 'common', effect: clone(cardsConfig.boostEffects?.grit?.common || null) }
   ];
   if (freeItems.length !== 5 || freeItems.filter(item => item.itemType === 'player').length !== 3 || freeItems.filter(item => item.itemType === 'boost').length !== 2) {
     throw new Error('The free Starter Standard pack must contain exactly three players and two boosts.');
@@ -89,7 +95,7 @@ export async function openWutStarterPackWithClient(client, {
     const id = asNumber((await client.query("SELECT nextval('owned_trinkets_id_seq') AS id")).rows[0].id);
     const trinket = {
       id, user_id: Number(userId), family, rarity: 'common',
-      effect: JSON.parse(JSON.stringify(cardsConfig.wut?.trinketEffects?.[family]?.common ?? WUT_LAUNCH_TRINKET_EFFECTS[family]?.common ?? null)),
+      effect: starterTrinketEffect(cardsConfig, family),
       attached_card_id: null, source: 'starter_pack', created_at: createdAt
     };
     await client.query(`
@@ -102,7 +108,7 @@ export async function openWutStarterPackWithClient(client, {
   const freePack = {
     id: packId, user_id: Number(userId), week, pack_kind: 'player', pack_type: 'standard',
     price: 0, list_price: asNumber(cardsConfig.playerPackPrices?.standard), free_purchase: true,
-    source: 'starter_bonus', items: JSON.parse(JSON.stringify(freeItems)), status: 'pending',
+    source: 'starter_bonus', items: clone(freeItems), status: 'pending',
     created_at: createdAt, claimed_at: null
   };
   await client.query(`
@@ -118,21 +124,11 @@ export async function openWutStarterPackWithClient(client, {
     starter_wut_coin_bonus: STARTER_COINS
   };
   const { balance } = await changeWutCoins(client, membership, STARTER_COINS, 'starter_pack_bonus', { pack_purchase_id: packId }, now);
-  const deckId = asNumber((await client.query("SELECT nextval('wut_decks_id_seq') AS id")).rows[0].id);
-  const deck = {
-    id: deckId, user_id: Number(userId), name: 'Starter Deck',
-    active_card_ids: cards.map(card => card.id), bench_card_ids: cards.map(card => card.id),
-    created_at: createdAt, updated_at: createdAt
-  };
-  await client.query(`
-    INSERT INTO wut_decks(id,user_id,name,source_order,data)
-    VALUES($1,$2,'Starter Deck',$3,$4::jsonb)
-  `, [deckId, Number(userId), deckId, JSON.stringify(deck)]);
   return {
     cards: cards.map(card => ({ ...card, itemType: 'player' })),
     trinkets,
     freePack,
-    deck,
+    deck: null,
     wutCoins: balance
   };
 }

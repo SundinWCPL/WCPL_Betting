@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyWutPositiveScoring, applyWutSelfTrinket } from '../services/cards.js';
+import { applyWutPositiveScoring, applyWutSelfTrinket, generateWutBoostPack } from '../services/cards.js';
 import {
   WUT_LAUNCH_TRINKET_EFFECTS,
   WUT_RARITIES,
@@ -22,6 +22,23 @@ test('launch balance table contains all fifteen five-rarity trinkets', () => {
   }
 });
 
+test('WUT boost pack generator uses common-rare rolls plus high-rarity guarantees', () => {
+  const items = generateWutBoostPack({
+    config: {
+      boostPack: {
+        commonRareRolls: 4,
+        guaranteedHighRolls: 1,
+        commonRareOdds: { common: 1, uncommon: 0, rare: 0 },
+        guaranteedHighOdds: { epic: 0, legendary: 1 }
+      }
+    }
+  });
+  assert.equal(items.length, 5);
+  assert.ok(items.every(item => item.itemType === 'boost'));
+  assert.equal(items.filter(item => item.rarity === 'common').length, 4);
+  assert.equal(items.filter(item => item.rarity === 'legendary').length, 1);
+});
+
 test('only Specialist and Generalist exclude goalies', () => {
   const families = Object.keys(WUT_LAUNCH_TRINKET_EFFECTS);
   assert.deepEqual(families.filter(family => !trinketFitsWutPosition(family, 'G')).sort(), ['generalist', 'specialist_tape']);
@@ -32,6 +49,15 @@ test('only Specialist and Generalist exclude goalies', () => {
 test('Underdog and Booster Cable use the post-simulation launch ladders', () => {
   assert.deepEqual(WUT_RARITIES.map(rarity => WUT_LAUNCH_TRINKET_EFFECTS.underdog_patch[rarity]), [
     [.05, .15], [.07, .22], [.09, .3], [.12, .4], [.15, .5]
+  ]);
+  assert.deepEqual(WUT_RARITIES.map(rarity => WUT_LAUNCH_TRINKET_EFFECTS.hex_bag[rarity][2]), [1, 1.25, 1.5, 1.75, 2]);
+  assert.deepEqual(WUT_RARITIES.map(rarity => WUT_LAUNCH_TRINKET_EFFECTS.warding_charm[rarity]), [80, 65, 50, 38, 28]);
+  assert.deepEqual(WUT_RARITIES.map(rarity => WUT_LAUNCH_TRINKET_EFFECTS.siphon_stone[rarity]), [
+    { threshold: .5, steal: .04 },
+    { threshold: .4, steal: .06 },
+    { threshold: .3, steal: .08 },
+    { threshold: .25, steal: .11 },
+    { threshold: .2, steal: .14 }
   ]);
   assert.deepEqual(WUT_RARITIES.map(rarity => WUT_LAUNCH_TRINKET_EFFECTS.booster_cable[rarity].loadBonus), [0, 0, 0, 1, 1]);
   assert.deepEqual(WUT_RARITIES.map(rarity => WUT_LAUNCH_TRINKET_EFFECTS.booster_cable[rarity].own), [.15, .22, .3, .32, .42]);
@@ -47,16 +73,34 @@ test('new Glass Skates rewards a cleared spike and penalizes a miss', () => {
   assert.match(bust.trinketLabel, /bust/);
 });
 
-test('Generalist counts the five skater categories and scales by combo size', () => {
-  const effect = { 3: .1, 4: .2, 5: .3 };
-  const four = applyWutSelfTrinket({
+test('Generalist rewards balanced skater-category FP instead of raw combo size', () => {
+  const effect = { minCategories: 3, maxBonus: .3 };
+  const balanced = applyWutSelfTrinket({
     exactFp: 100,
-    stats: { goals: 1, assists: 2, shots: 8, hits: 0, blocks: 3, saves: 99 },
+    breakdown: [
+      { type: 'goal', basePoints: 10 },
+      { type: 'assist', basePoints: 10 },
+      { type: 'shot', basePoints: 10 },
+      { type: 'hit', basePoints: 10 },
+      { type: 'block', basePoints: 10 }
+    ],
     trinket: { family: 'generalist', effect }
   });
-  assert.equal(four.exactFp, 120, 'goalie-only categories must not count');
+  assert.equal(balanced.exactFp, 130);
+  const spiky = applyWutSelfTrinket({
+    exactFp: 100,
+    breakdown: [
+      { type: 'goal', basePoints: 30 },
+      { type: 'assist', basePoints: 10 },
+      { type: 'shot', basePoints: 5 },
+      { type: 'hit', basePoints: 0 },
+      { type: 'block', basePoints: 0 }
+    ],
+    trinket: { family: 'generalist', effect }
+  });
+  assert.equal(spiky.exactFp, 109);
   const two = applyWutSelfTrinket({ exactFp: 100, stats: { shots: 8, hits: 2 }, trinket: { family: 'generalist', effect } });
-  assert.equal(two.exactFp, 100);
+  assert.equal(two.exactFp, 100, 'goalie-only categories and two-category skaters do not qualify');
 });
 
 test('Booster Cable amplifies only committed boost FP and eligible neighbours', () => {

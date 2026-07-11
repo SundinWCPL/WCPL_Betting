@@ -60,7 +60,10 @@ export async function hasPendingArenaTurnPostgres(pool, userId) {
   const row = (await pool.query(`
     SELECT EXISTS(
       SELECT 1 FROM arena_matches
-      WHERE match_kind='arena' AND status='active' AND current_player_id=$1
+      WHERE match_kind='arena' AND (
+        (status='active' AND current_player_id=$1)
+        OR (status='choosing_first' AND COALESCE((data->>'first_player_decider_user_id')::bigint,(data->>'coin_flip_winner_user_id')::bigint)=$1)
+      )
     ) AS pending
   `, [Number(userId)])).rows[0];
   return Boolean(row?.pending);

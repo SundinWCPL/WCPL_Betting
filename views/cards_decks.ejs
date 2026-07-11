@@ -11,8 +11,8 @@
   <%- include('partials_header') %>
   <main class="container cards-page arena-page">
     <section class="card page-title cards-title">
-      <div><p class="eyebrow">Queue templates</p><h1>Deck Builder</h1><p>Choose a deck, then click collection cards to fill its slots. Card Power is 1–6 by rarity; trinkets add 0 / 0.5 / 1 / 1.5 / 2.5.</p></div>
-      <div class="cards-title-actions"><span class="cards-balance"><%= wut.decks.length %>/<%= wut.deckSlots %> saved</span><a class="button-link ghost" href="/cards/collection">← Collection</a></div>
+      <div><p class="eyebrow">Queue templates</p><h1>Deck Builder</h1><p>Build an exact <%= wut.config.deckSize || 8 %>-card deck with at least 2F / 2D / 1G. Your strongest possible 2F / 2D / 1G lineup must stay at or below Power <%= wut.config.topLineupMaxPower || 15 %>.</p></div>
+      <div class="cards-title-actions"><span class="cards-balance"><%= wut.decks.length %>/<%= wut.deckSlots %> saved</span><a class="button-link ghost" href="/cards/collection">Collection</a></div>
     </section>
 
     <form method="post" action="/cards/decks/save" class="card wut-visual-deck-builder" id="wutDeckForm">
@@ -25,129 +25,195 @@
         </label>
         <label>Deck name<input id="deckName" name="name" maxlength="40" required></label>
         <input type="hidden" name="deck_id" id="deckId">
-        <div class="collection-tabs"><button type="button" class="collection-tab is-active" data-edit-mode="active">Edit Active Deck</button><button type="button" class="collection-tab" data-edit-mode="bench">Edit Safety Bench</button></div>
-        <button type="submit">Rename & Save Deck</button>
+        <button type="submit">Save Deck</button>
       </div>
-      <section id="activeDeckEditor"><div class="cards-section-head"><div><p class="eyebrow">5 cards minimum · 8 maximum</p><h2>Active Deck</h2></div><span class="pill" id="activeCount">0/8 cards</span></div><div class="wut-active-deck-slots" id="activeDeckSlots"></div></section>
-      <section id="benchDeckEditor" hidden><div class="cards-section-head"><div><p class="eyebrow">Emergency legal lineup · every slot required · Power 2 maximum</p><h2>Safety Bench</h2></div><span class="pill" id="benchCount">0/5 cards</span></div><div class="wut-bench-slots cards-lineup arena-card-lineup" id="benchDeckSlots"></div></section>
+      <section>
+        <div class="cards-section-head wut-deck-section-head">
+          <div><p class="eyebrow">Exact size: <%= wut.config.deckSize || 8 %> cards</p><h2>Deck</h2></div>
+          <div class="admin-action-row wut-deck-status-row">
+            <p class="muted wut-deck-header-message" id="deckHeaderMessage">Choose exactly <%= wut.config.deckSize || 8 %> unique cards.</p>
+            <span class="pill" id="topLineupPowerBadge">Top line Power 0/<%= wut.config.topLineupMaxPower || 15 %></span>
+            <span class="pill" id="activeCount">0/<%= wut.config.deckSize || 8 %> cards</span>
+          </div>
+        </div>
+        <div class="wut-active-deck-slots" id="activeDeckSlots"></div>
+        <% if (wut.trinkets.length) { %>
+          <div class="wut-trinket-inventory event-attach-trinkets" id="deckTrinketInventory">
+            <% wut.trinkets.forEach(item => { %><button type="button" class="wut-trinket-inventory-item tier-<%= item.rarity %>" data-deck-trinket="<%= item.id %>" data-family="<%= item.family %>" data-rarity="<%= item.rarity %>" data-power="<%= wutTrinketPower(item.rarity) %>" title="<%= wutTrinketDescription(item) %>"><span class="wut-trinket-icon"><%= WUT_TRINKET_ICONS[item.family] || '◆' %></span><small><%= wutTrinketName(item.family) %></small><em><%= wutTitleCase(item.rarity) %></em></button><% }) %>
+          </div>
+        <% } %>
+      </section>
 
       <div id="deckHiddenInputs"></div>
 
       <section class="cards-collection wut-deck-collection">
         <div class="cards-section-head"><div><p class="eyebrow">Click a card to add it</p><h2>Your Collection</h2></div></div>
-        <p class="muted" id="deckBuilderHelp">Adding to Active Deck · any position and any Power are allowed.</p>
+        <p class="muted" id="deckBuilderHelp">Choose exactly <%= wut.config.deckSize || 8 %> unique cards.</p>
         <label class="collection-search">Search collection<input type="search" placeholder="Player, team, position, or rarity" id="deckCardSearch"></label>
         <div class="collection-grid" id="deckCardCollection">
-          <% cards.forEach(card => { %>
+          <% cards.filter(card => !card.tradeListed).forEach(card => { %>
             <button type="button" class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" data-deck-card data-deck-hover-flip data-card-id="<%= card.id %>" data-card-identity="<%= card.card_identity %>" data-position="<%= card.player.position %>" data-power="<%= card.power %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''} ${card.player.position} ${card.player.tier}`.toLowerCase() %>">
-              <%- include('partials_wut_card', { card, statusText: `Power ${card.power} · Click to add` }) %>
+              <%- include('partials_wut_card', { card, statusText: `Power ${card.power} - Click to add` }) %>
             </button>
           <% }) %>
         </div>
       </section>
     </form>
 
-    <% if (wut.nextDeckSlotCost) { %><section class="card arena-queue-card"><div><h2>Need another saved deck?</h2><p class="muted">Extra slots are convenience only.</p></div><form method="post" action="/cards/decks/slot"><button>Buy slot <%= wut.deckSlots + 1 %> · <%= wut.nextDeckSlotCost %> Mushybux</button></form></section><% } %>
+    <% if (wut.nextDeckSlotCost) { %><section class="card arena-queue-card"><div><h2>Need another saved deck?</h2><p class="muted">Extra slots are convenience only.</p></div><form method="post" action="/cards/decks/slot"><button>Buy slot <%= wut.deckSlots + 1 %> - <%= wut.nextDeckSlotCost %> Mushybux</button></form></section><% } %>
   </main>
   <script>
     const decks = <%- JSON.stringify(wut.decks).replace(/</g, '\\u003c') %>;
+    const deckSize = <%= Number(wut.config.deckSize || 8) %>;
+    const topLineupMaxPower = <%= Number(wut.config.topLineupMaxPower || 15) %>;
     const selector = document.getElementById('deckSelector');
     const deckId = document.getElementById('deckId');
     const deckName = document.getElementById('deckName');
     const activeSlots = document.getElementById('activeDeckSlots');
-    const benchSlots = document.getElementById('benchDeckSlots');
     const hiddenInputs = document.getElementById('deckHiddenInputs');
     const help = document.getElementById('deckBuilderHelp');
+    const headerMessage = document.getElementById('deckHeaderMessage');
+    const saveDeckButton = document.querySelector('#wutDeckForm button[type="submit"]');
+    const topLineupPowerBadge = document.getElementById('topLineupPowerBadge');
     const collectionCards = [...document.querySelectorAll('[data-deck-card]')];
     const cardsById = new Map(collectionCards.map(card => [Number(card.dataset.cardId), card]));
+    const trinketButtons = [...document.querySelectorAll('[data-deck-trinket]')];
+    const trinketsById = new Map(trinketButtons.map(button => [Number(button.dataset.deckTrinket), button]));
     const identityFor = id => cardsById.get(Number(id))?.dataset.cardIdentity || '';
-    const benchPositions = ['F', 'F', 'D', 'D', 'G'];
-    const benchLabels = ['F1', 'F2', 'D1', 'D2', 'G'];
-    let mode = 'active';
     let active = [];
-    let bench = [];
+    let trinketAssignments = {};
+    let selectedTrinket = null;
+    const trinketIcon = button => button?.querySelector('.wut-trinket-icon')?.textContent?.trim() || '◆';
+    const trinketPower = trinketId => Number(trinketsById.get(Number(trinketId))?.dataset.power || 0);
+    const cardPower = id => Number(cardsById.get(Number(id))?.dataset.power || 0) + trinketPower(trinketAssignments[String(id)]);
 
-    const refreshCollection = () => {
-      const query = document.getElementById('deckCardSearch').value.trim().toLowerCase();
-      collectionCards.forEach(card => {
-        const legalForMode = mode === 'active' || Number(card.dataset.power) <= 2;
-        const currentCards = mode === 'active' ? active : bench;
-        const assignedToCurrentEditor = currentCards.includes(Number(card.dataset.cardId)) || currentCards.some(id => identityFor(id) === card.dataset.cardIdentity);
-        card.hidden = assignedToCurrentEditor || !legalForMode || (Boolean(query) && !card.dataset.search.includes(query));
+    const topLineupPower = () => ['F', 'D', 'G'].reduce((sum, position) => {
+      const needed = position === 'G' ? 1 : 2;
+      return sum + active
+        .map(id => cardsById.get(Number(id)))
+        .filter(card => card?.dataset.position === position)
+        .map(card => cardPower(card.dataset.cardId))
+        .sort((a, b) => b - a)
+        .slice(0, needed)
+        .reduce((part, power) => part + power, 0);
+    }, 0);
+    const positionCounts = () => active.reduce((counts, id) => {
+      const position = cardsById.get(Number(id))?.dataset.position;
+      counts[position] = (counts[position] || 0) + 1;
+      return counts;
+    }, {});
+    const isTrinketUsed = trinketId => Object.values(trinketAssignments).map(Number).includes(Number(trinketId));
+    const canAttachTrinket = (cardId, trinketId) => {
+      const card = cardsById.get(Number(cardId));
+      const trinket = trinketsById.get(Number(trinketId));
+      if (!card || !trinket) return false;
+      if (isTrinketUsed(trinketId) && Number(trinketAssignments[String(cardId)]) !== Number(trinketId)) return false;
+      const family = trinket.dataset.family;
+      return !['specialist_tape','generalist'].includes(family) || card.dataset.position !== 'G';
+    };
+    const refreshTrinketButtons = () => {
+      trinketButtons.forEach(button => {
+        const selected = selectedTrinket === button.dataset.deckTrinket;
+        const used = isTrinketUsed(button.dataset.deckTrinket);
+        button.classList.toggle('is-selected', selected);
+        button.disabled = used && !selected;
       });
     };
-
+    const refreshCollection = () => {
+      const query = document.getElementById('deckCardSearch').value.trim().toLowerCase();
+      const identities = new Set(active.map(identityFor).filter(Boolean));
+      collectionCards.forEach(card => {
+        card.hidden = active.includes(Number(card.dataset.cardId)) || identities.has(card.dataset.cardIdentity) || (Boolean(query) && !card.dataset.search.includes(query));
+      });
+    };
+    const refreshDeckRulesStatus = () => {
+      const power = topLineupPower();
+      const overCap = power > topLineupMaxPower;
+      topLineupPowerBadge.textContent = `Top line Power ${power}/${topLineupMaxPower}`;
+      topLineupPowerBadge.classList.toggle('negative', overCap);
+      topLineupPowerBadge.title = overCap ? `Top line Power must be ${topLineupMaxPower} or lower before saving.` : '';
+      if (saveDeckButton) saveDeckButton.title = overCap ? `Top line Power is above the ${topLineupMaxPower} cap.` : '';
+      return { power, overCap };
+    };
     const cardMarkup = id => {
       const source = cardsById.get(Number(id));
       if (!source) return '<span>Missing card</span>';
       const tier = [...source.classList].find(name => name.startsWith('tier-')) || 'tier-common';
-      return `<span class="arena-wut-card ${tier}" data-deck-hover-flip>${source.querySelector('.arena-wut-card-inner').outerHTML}</span>`;
+      const trinket = trinketsById.get(Number(trinketAssignments[String(id)]));
+      const markup = source.querySelector('.arena-wut-card-inner').outerHTML;
+      return `<span class="arena-wut-card ${tier}" data-deck-hover-flip data-rendered-deck-card="${id}" data-rendered-power="${cardPower(id)}" data-rendered-trinket="${trinket?.dataset.deckTrinket || ''}" data-rendered-trinket-family="${trinket?.dataset.family || ''}" data-rendered-trinket-rarity="${trinket?.dataset.rarity || ''}" data-rendered-trinket-icon="${trinketIcon(trinket)}">${markup}</span>`;
+    };
+    const applyRenderedTrinkets = () => {
+      document.querySelectorAll('[data-rendered-deck-card]').forEach(card => {
+        const badge = card.querySelector('.wut-power-badge');
+        if (badge) badge.textContent = `P${card.dataset.renderedPower}`;
+        card.querySelector('.wut-trinket-badge')?.remove();
+        if (!card.dataset.renderedTrinket) return;
+        card.querySelector('.wut-card-front')?.insertAdjacentHTML('beforeend', `<span class="wut-trinket-badge tier-${card.dataset.renderedTrinketRarity}" data-trinket-family="${card.dataset.renderedTrinketFamily}">${card.dataset.renderedTrinketIcon}</span>`);
+      });
     };
     const renderSlots = () => {
-      activeSlots.innerHTML = Array.from({ length: 8 }, (_, index) => {
+      activeSlots.innerHTML = Array.from({ length: deckSize }, (_, index) => {
         const id = active[index];
-        return id ? `<button type="button" class="wut-deck-slot has-card" data-remove-active="${index}" title="Remove this card">${cardMarkup(id)}</button>` : `<div class="wut-deck-slot"><strong>${index + 1}</strong><small>Open slot</small></div>`;
+        const attachTarget = id && selectedTrinket && canAttachTrinket(id, selectedTrinket) ? ' is-attach-target' : '';
+        return id ? `<button type="button" class="wut-deck-slot has-card${attachTarget}" data-remove-active="${index}" title="${selectedTrinket ? 'Attach selected trinket' : 'Remove this card'}">${cardMarkup(id)}</button>` : `<div class="wut-deck-slot"><strong>${index + 1}</strong><small>Open slot</small></div>`;
       }).join('');
-      const usedBenchIndexes = new Set();
-      benchSlots.innerHTML = benchPositions.map((position, slotIndex) => {
-        const benchIndex = bench.findIndex((id, index) => !usedBenchIndexes.has(index) && cardsById.get(Number(id))?.dataset.position === position);
-        if (benchIndex >= 0) usedBenchIndexes.add(benchIndex);
-        const id = benchIndex >= 0 ? bench[benchIndex] : null;
-        return id ? `<button type="button" class="wut-deck-slot has-card lineup-slot" data-remove-bench="${benchIndex}" title="Remove this card"><span class="arena-lineup-slot-name">${benchLabels[slotIndex]}</span>${cardMarkup(id)}</button>` : `<div class="wut-deck-slot lineup-slot"><span class="arena-lineup-slot-name">${benchLabels[slotIndex]}</span><strong>${position}</strong><small>Power 2 max</small></div>`;
-      }).join('');
-      hiddenInputs.innerHTML = [...active.map(id => `<input type="hidden" name="active_card_ids" value="${id}">`), ...bench.map(id => `<input type="hidden" name="bench_card_ids" value="${id}">`)].join('');
-      document.getElementById('activeCount').textContent = `${active.length}/8 cards`;
-      document.getElementById('benchCount').textContent = `${bench.length}/5 cards`;
+      hiddenInputs.innerHTML = active.map(id => `<input type="hidden" name="active_card_ids" value="${id}">${trinketAssignments[String(id)] ? `<input type="hidden" name="trinket_assignments[${id}]" value="${trinketAssignments[String(id)]}">` : ''}`).join('');
+      document.getElementById('activeCount').textContent = `${active.length}/${deckSize} cards`;
+      applyRenderedTrinkets();
+      refreshTrinketButtons();
       refreshCollection();
+      refreshDeckRulesStatus();
       window.fitWutCardNames?.();
     };
     const loadDeck = value => {
       const deck = decks.find(item => String(item.id) === String(value));
       deckId.value = deck?.id || '';
       deckName.value = deck?.name || `Deck ${decks.length + 1}`;
-      active = [...(deck?.active_card_ids || [])].map(Number);
-      bench = [...(deck?.bench_card_ids || [])].map(Number);
+      active = [...(deck?.active_card_ids || [])].map(Number).slice(0, deckSize);
+      trinketAssignments = { ...(deck?.trinket_assignments || {}) };
+      selectedTrinket = null;
       renderSlots();
     };
-    const showMessage = (message, error = false) => { help.textContent = message; help.classList.toggle('error', error); };
+    const showMessage = (message, error = false) => {
+      help.textContent = message;
+      help.classList.toggle('error', error);
+      headerMessage.textContent = message;
+      headerMessage.classList.toggle('error', error);
+    };
 
     selector.addEventListener('change', () => loadDeck(selector.value));
-    document.querySelectorAll('[data-edit-mode]').forEach(button => button.addEventListener('click', () => {
-      mode = button.dataset.editMode;
-      document.querySelectorAll('[data-edit-mode]').forEach(item => item.classList.toggle('is-active', item === button));
-      document.getElementById('activeDeckEditor').hidden = mode !== 'active';
-      document.getElementById('benchDeckEditor').hidden = mode !== 'bench';
-      showMessage(mode === 'active' ? 'Adding to Active Deck · any position and any Power are allowed.' : 'Adding to Safety Bench · exactly 2F / 2D / 1G and Power 2 maximum.');
-      renderSlots();
-    }));
     collectionCards.forEach(card => card.addEventListener('click', () => {
       const id = Number(card.dataset.cardId);
-      if (mode === 'active') {
-        if (active.includes(id)) return showMessage('That card is already in the Active Deck. Click it in a deck slot to remove it.', true);
-        if (active.some(activeId => identityFor(activeId) === card.dataset.cardIdentity)) return showMessage('Only one copy of a player card can be in the Active Deck.', true);
-        if (active.length >= 8) return showMessage('The Active Deck already has eight cards.', true);
-        active.push(id);
-      } else {
-        const position = card.dataset.position;
-        if (Number(card.dataset.power) > 2) return showMessage('Safety Bench cards must be Power 2 or lower.', true);
-        if (bench.includes(id)) return showMessage('That card is already on the Safety Bench.', true);
-        if (bench.some(benchId => identityFor(benchId) === card.dataset.cardIdentity)) return showMessage('Only one copy of a player card can be on the Safety Bench.', true);
-        const limit = position === 'G' ? 1 : 2;
-        if (bench.filter(existingId => cardsById.get(existingId)?.dataset.position === position).length >= limit) return showMessage(`The Safety Bench already has its ${limit} ${position} slot${limit === 1 ? '' : 's'}.`, true);
-        bench.push(id);
-        bench.sort((a, b) => benchPositions.indexOf(cardsById.get(a)?.dataset.position) - benchPositions.indexOf(cardsById.get(b)?.dataset.position));
-      }
-      showMessage(`${card.dataset.position} card added to the ${mode === 'active' ? 'Active Deck' : 'Safety Bench'}.`);
+      if (active.includes(id)) return showMessage('That card is already in the deck. Click it in a deck slot to remove it.', true);
+      if (active.some(activeId => identityFor(activeId) === card.dataset.cardIdentity)) return showMessage('Only one copy of a player card can be in the deck.', true);
+      if (active.length >= deckSize) return showMessage(`The deck already has ${deckSize} cards.`, true);
+      active.push(id);
+      showMessage(`${card.dataset.position} card added. Top lineup Power is ${topLineupPower()}/${topLineupMaxPower}.`);
       renderSlots();
     }));
-    activeSlots.addEventListener('click', event => { const button = event.target.closest('[data-remove-active]'); if (!button) return; active.splice(Number(button.dataset.removeActive), 1); renderSlots(); });
-    benchSlots.addEventListener('click', event => { const button = event.target.closest('[data-remove-bench]'); if (!button) return; bench.splice(Number(button.dataset.removeBench), 1); renderSlots(); });
+    trinketButtons.forEach(button => button.addEventListener('click', () => {
+      selectedTrinket = selectedTrinket === button.dataset.deckTrinket ? null : button.dataset.deckTrinket;
+      showMessage(selectedTrinket ? 'Trinket selected. Click a deck slot to attach it.' : 'Trinket selection cleared.');
+      renderSlots();
+    }));
+    activeSlots.addEventListener('click', event => {
+      const button = event.target.closest('[data-remove-active]'); if (!button) return;
+      const id = active[Number(button.dataset.removeActive)];
+      if (event.target.closest('.wut-trinket-badge') && trinketAssignments[String(id)]) { delete trinketAssignments[String(id)]; showMessage('Trinket cleared from that deck slot.'); return renderSlots(); }
+      if (selectedTrinket) {
+        if (!canAttachTrinket(id, selectedTrinket)) return showMessage('That trinket cannot be used there, or is already used in this deck.', true);
+        trinketAssignments[String(id)] = Number(selectedTrinket); selectedTrinket = null; showMessage(`Trinket assigned. Top lineup Power is ${topLineupPower()}/${topLineupMaxPower}.`); return renderSlots();
+      }
+      delete trinketAssignments[String(id)];
+      active.splice(Number(button.dataset.removeActive), 1); renderSlots();
+      showMessage(`Card removed. Top lineup Power is ${topLineupPower()}/${topLineupMaxPower}.`);
+    });
     document.getElementById('wutDeckForm').addEventListener('pointermove', event => {
       const card = event.target.closest('[data-deck-hover-flip]');
       if (!card) return;
       const bounds = card.getBoundingClientRect();
-      const inFlipCorner = event.clientX - bounds.left <= bounds.width * .3 && event.clientY - bounds.top <= bounds.height * .25;
-      card.classList.toggle('is-flipped', inFlipCorner);
+      card.classList.toggle('is-flipped', event.clientX - bounds.left <= bounds.width * .3 && event.clientY - bounds.top <= bounds.height * .25);
     });
     document.getElementById('wutDeckForm').addEventListener('pointerout', event => {
       const card = event.target.closest('[data-deck-hover-flip]');
@@ -155,9 +221,11 @@
     });
     document.getElementById('deckCardSearch').addEventListener('input', refreshCollection);
     document.getElementById('wutDeckForm').addEventListener('submit', event => {
-      const positions = bench.map(id => cardsById.get(id)?.dataset.position).sort().join('');
-      if (active.length < 5 || active.length > 8) { event.preventDefault(); return showMessage('Active Deck must contain between five and eight cards.', true); }
-      if (bench.length !== 5 || positions !== 'DDFFG') { event.preventDefault(); return showMessage('Safety Bench must be exactly 2F / 2D / 1G.', true); }
+      const counts = positionCounts();
+      const power = topLineupPower();
+      if (active.length !== deckSize) { event.preventDefault(); return showMessage(`Deck must contain exactly ${deckSize} cards.`, true); }
+      if ((counts.F || 0) < 2 || (counts.D || 0) < 2 || (counts.G || 0) < 1) { event.preventDefault(); return showMessage('Deck must include at least 2F / 2D / 1G.', true); }
+      if (power > topLineupMaxPower) { event.preventDefault(); return showMessage(`Top lineup Power is ${power}, above the ${topLineupMaxPower} cap.`, true); }
     });
     loadDeck(selector.value);
   </script>

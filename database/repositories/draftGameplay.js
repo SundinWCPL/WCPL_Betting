@@ -4,7 +4,6 @@ import {
   buildWutDraftBoosterRoundTemplates,
   chooseWutDraftAutopick,
   materializeWutDraftBoosterRound,
-  selectWutDraftBenchPool,
   transitionWutDraftEventRecord
 } from '../../services/wutDraftEvents.js';
 import { lockAndLoadDraftEvent, saveDraftEvent } from './draftEventStore.js';
@@ -42,10 +41,6 @@ export async function startWutDraftEventWithClient(client, {
   if (!event.config.basic.allowOddEntrants && entrants.length % 2) throw new Error('This event requires an even number of entrants.');
   if (!environment || !Array.isArray(environment.cards)) throw new Error('A valid frozen WUT environment is required.');
   const frozen = clone(environment);
-  if (event.config.safetyBench.mode !== 'disabled') {
-    frozen.bench_cards = Array.isArray(frozen.bench_cards) ? frozen.bench_cards : frozen.cards.filter(card => card.tier === 'common');
-    if (event.config.safetyBench.mode !== 'preset_shared') selectWutDraftBenchPool(event.config, frozen.bench_cards, () => 0.5);
-  }
   if (closeNow) transitionWutDraftEventRecord(event, 'signup_closed', {
     actorUserId: adminUserId, reason: 'Signup closed for an early admin start', now
   });

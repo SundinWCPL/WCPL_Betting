@@ -14,9 +14,13 @@
     const trinketName = wutTrinketName;
     const trinketIcons = WUT_TRINKET_ICONS;
     const trinketEffectText = wutTrinketDescription;
-    const trinketTooltip = item => `${trinketName(item.family)} · ${titleCase(item.rarity)} · +${wut.config.trinketPowerValues[item.rarity]} Power\n${trinketEffectText(item)}\nRemoval: ${wut.config.trinketRemovalWut[item.rarity]} WUT Coins or ${wut.config.trinketRemovalMushy[item.rarity]} Mushybux`;
-    const statusForCard = card => `Available for WUT · Power ${card.power || 1}`;
+    const trinketTooltip = item => `${trinketName(item.family)} · ${titleCase(item.rarity)} · +${wut.config.trinketPowerValues[item.rarity]} Power\n${trinketEffectText(item)}`;
+    const statusForCard = card => card.duplicateCopy && card.duplicateSellValue
+      ? `Duplicate copy - sell for ${card.duplicateSellValue} WUT Coins`
+      : `Available for WUT · Power ${card.power || 1}`;
     const availableCollectionBoosts = boosts.filter(boost => !boost.arenaLocked);
+    const tradingState = trading || { ownListings: [], marketListings: [], incomingOffers: [], outgoingOffers: [] };
+    const tradeableCards = cards.filter(card => !card.tradeListed && !card.arenaLocked);
   %>
   <main class="container cards-page arena-page">
     <section class="card page-title cards-title">
@@ -24,15 +28,16 @@
       <div class="cards-title-actions"><span class="cards-balance"><%= wutCoins %> WUT Coins</span><a class="button-link ghost" href="/cards">← WUT</a><a class="button-link ghost" href="/cards/decks">Decks</a><a class="button-link" href="/cards/store">WUT Shop</a></div>
     </section>
 
-    <section class="card"><div class="cards-section-head"><div><p class="eyebrow">Semi-permanent attachments</p><h2>Trinket Inventory</h2><p class="muted" id="trinketAttachHelp">Hover for details. Click an available trinket, then click a card to attach it.</p></div><span class="pill"><%= wut.trinkets.length %> owned</span></div><div class="wut-trinket-inventory"><% wut.trinkets.forEach(item => { const attachedCard = cards.find(card => Number(card.id) === Number(item.attached_card_id)); %><button type="button" class="wut-trinket-inventory-item tier-<%= item.rarity %> <%= item.attached_card_id ? 'is-attached' : '' %>" data-trinket-pick data-trinket-family="<%= item.family %>" data-trinket-id="<%= item.id %>" data-trinket-name="<%= trinketName(item.family) %>" data-skater-only="<%= ['specialist_tape','generalist'].includes(item.family) ? '1' : '0' %>" data-removal-wut="<%= wut.config.trinketRemovalWut[item.rarity] %>" data-removal-mushy="<%= wut.config.trinketRemovalMushy[item.rarity] %>" title="<%= trinketTooltip(item) %>" <%= item.attached_card_id ? 'disabled' : '' %>><span class="wut-trinket-icon"><%= trinketIcons[item.family] || '◆' %></span><small><%= trinketName(item.family) %></small><em><%= item.attached_card_id ? `On ${attachedCard?.player?.name || `card #${item.attached_card_id}`}` : 'Available' %></em></button><% }) %><% if (!wut.trinkets.length) { %><p class="muted">No trinkets yet. The WUT Shop rotates three offers daily.</p><% } %></div></section>
+    <section class="card"><div class="cards-section-head"><div><p class="eyebrow">Deck-building inventory</p><h2>Trinket Inventory</h2><p class="muted" id="trinketAttachHelp">Hover for details. Assign trinkets inside a saved deck or Draft Event deck.</p></div><span class="pill"><%= wut.trinkets.length %> owned</span></div><div class="wut-trinket-inventory"><% wut.trinkets.forEach(item => { %><button type="button" class="wut-trinket-inventory-item tier-<%= item.rarity %>" data-trinket-family="<%= item.family %>" data-trinket-id="<%= item.id %>" data-trinket-name="<%= trinketName(item.family) %>" title="<%= trinketTooltip(item) %>"><span class="wut-trinket-icon"><%= trinketIcons[item.family] || '◆' %></span><small><%= trinketName(item.family) %></small><em><%= titleCase(item.rarity) %></em></button><% }) %><% if (!wut.trinkets.length) { %><p class="muted">No trinkets yet. The WUT Shop rotates three offers daily.</p><% } %></div></section>
 
     <section class="card cards-collection full-collection-page">
       <div class="cards-section-head"><div><p class="eyebrow">Collection browser</p><h2>Cards & Boosts</h2><p class="muted">Card Power: Common 1 · Uncommon 2 · Rare 3 · Epic 4 · Legendary 5 · Mythic 6. Trinkets add 0 / 0.5 / 1 / 1.5 / 2.5 by rarity.</p></div><span class="pill"><%= cards.length %> cards · <%= availableCollectionBoosts.length %> boosts</span></div>
       <div class="collection-progress"><% collectionProgress.forEach(pool => { %><span><strong><%= pool.owned %>/<%= pool.total %></strong> <%= pool.label %></span><% }) %></div>
-      <div class="collection-tabs"><button type="button" class="collection-tab is-active" data-collection-tab="players">Player Cards</button><button type="button" class="collection-tab" data-collection-tab="boosts">Boosts</button></div>
+      <div class="collection-tabs"><button type="button" class="collection-tab is-active" data-collection-tab="players">Player Cards</button><button type="button" class="collection-tab" data-collection-tab="boosts">Boosts</button><button type="button" class="collection-tab" data-collection-tab="trading">Trading</button></div>
 
       <div class="full-collection-filters" data-filter-panel="players">
         <label class="collection-search">Search<input type="search" placeholder="Player or team" data-card-search></label>
+        <label class="check"><input type="checkbox" data-duplicate-filter> Duplicates only</label>
         <fieldset><legend>Season</legend><% ['S1','S2','S3','MYTHIC'].forEach(edition => { %><label><input type="checkbox" data-edition-filter value="<%= edition %>" checked> <%= edition === 'MYTHIC' ? 'Mythic' : edition %></label><% }) %></fieldset>
         <fieldset><legend>Position</legend><% [['F','Forwards'],['D','Defense'],['G','Goalies']].forEach(([position,label]) => { %><label><input type="checkbox" data-position-filter value="<%= position %>" checked> <%= label %></label><% }) %></fieldset>
         <label>Rarity<select data-rarity-filter><option value="">All rarities</option><% ['common','uncommon','rare','epic','legendary','mythic'].forEach(rarity => { %><option value="<%= rarity %>"><%= titleCase(rarity) %></option><% }) %></select></label>
@@ -43,11 +48,16 @@
         <label>Rarity<select data-boost-rarity-filter><option value="">All rarities</option><% ['common','uncommon','rare','epic','legendary'].forEach(rarity => { %><option value="<%= rarity %>"><%= titleCase(rarity) %></option><% }) %></select></label>
         <label>Type<select data-boost-type-filter><option value="">All boost types</option><% ['goal','assist','shot','grit','save','shutout'].forEach(type => { %><option value="<%= type %>"><%= titleCase(type) %></option><% }) %></select></label>
       </div>
+      <div class="full-collection-filters" data-filter-panel="trading" hidden>
+        <label class="collection-search">Search trades<input type="search" placeholder="Player, team, or owner" data-trade-search></label>
+        <fieldset><legend>Position</legend><% [['F','Forwards'],['D','Defense'],['G','Goalies']].forEach(([position,label]) => { %><label><input type="checkbox" data-trade-position-filter value="<%= position %>" checked> <%= label %></label><% }) %></fieldset>
+        <label>Rarity<select data-trade-rarity-filter><option value="">All rarities</option><% ['common','uncommon','rare','epic','legendary','mythic'].forEach(rarity => { %><option value="<%= rarity %>"><%= titleCase(rarity) %></option><% }) %></select></label>
+      </div>
 
       <p class="muted collection-result-count" data-result-count></p>
       <div class="collection-grid" data-collection-panel="players">
         <% cards.forEach(card => { const status = 'available'; %>
-          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0" data-card-id="<%= card.id %>" data-card-name="<%= card.player.name %>" data-has-trinket="<%= card.trinket ? '1' : '0' %>" data-trinket-name="<%= card.trinket ? trinketName(card.trinket.family) : '' %>" data-removal-wut="<%= card.trinket ? wut.config.trinketRemovalWut[card.trinket.rarity] : '' %>" data-removal-mushy="<%= card.trinket ? wut.config.trinketRemovalMushy[card.trinket.rarity] : '' %>" data-position="<%= card.player.position %>" data-edition="<%= card.player.cardType === 'mythic' ? 'MYTHIC' : card.player.edition %>" data-rarity="<%= card.player.tier %>" data-status="available" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''}`.toLowerCase() %>">
+          <article class="collection-player arena-wut-card arena-collection-card tier-<%= card.player.tier %>" tabindex="0" data-card-id="<%= card.id %>" data-card-name="<%= card.player.name %>" data-position="<%= card.player.position %>" data-edition="<%= card.player.cardType === 'mythic' ? 'MYTHIC' : card.player.edition %>" data-rarity="<%= card.player.tier %>" data-status="available" data-duplicate="<%= card.duplicateCopy ? '1' : '0' %>" data-sell-value="<%= card.duplicateSellValue || 0 %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''}`.toLowerCase() %>">
             <%- include('partials_wut_card', { card, statusText: statusForCard(card) }) %>
           </article>
         <% }) %>
@@ -59,61 +69,192 @@
           </article>
         <% }) %>
       </div>
+      <div class="wut-trading-panel" data-collection-panel="trading" hidden id="trading">
+        <div class="collection-tabs wut-trade-tabs"><button type="button" class="collection-tab is-active" data-trade-tab="mine">My Listings</button><button type="button" class="collection-tab" data-trade-tab="market">Trade Market</button><button type="button" class="collection-tab" data-trade-tab="offers">Offers</button></div>
+        <section data-trade-panel="mine">
+          <div class="cards-section-head"><div><h3>Your Listed Cards</h3><p class="muted">These player cards can be offered in 1-for-1 same-rarity trades.</p></div><span class="pill" data-own-listing-count><%= tradingState.ownListings.length %> listed</span></div>
+          <div class="collection-grid wut-trade-grid" data-own-trade-grid>
+            <% tradingState.ownListings.forEach(listing => { const card = listing.card; %><article class="wut-trade-card tier-<%= card.player.tier %>" data-own-trade-card="listed" data-card-id="<%= card.id %>" data-listing-id="<%= listing.id %>" data-rarity="<%= listing.rarity %>" data-card-name="<%= card.player.name %>"><div class="arena-wut-card arena-collection-card tier-<%= card.player.tier %>"><%- include('partials_wut_card', { card, statusText: `Listed for ${titleCase(listing.rarity)} trades` }) %></div><form method="post" action="/cards/trading/unlist" data-trade-unlist-form><input type="hidden" name="listing_id" value="<%= listing.id %>"><button class="ghost">Unlist</button></form></article><% }) %>
+            <p class="muted" data-trade-empty="listed" <%= tradingState.ownListings.length ? 'hidden' : '' %>>You have not listed any cards yet.</p>
+          </div>
+          <div class="cards-section-head"><div><h3>Available for Trading</h3><p class="muted">List an unused player card without leaving this page.</p></div><span class="pill" data-available-trade-count><%= tradeableCards.length %> available</span></div>
+          <div class="collection-grid wut-trade-grid" data-available-trade-grid>
+            <% tradeableCards.forEach(card => { %><article class="wut-trade-card tier-<%= card.player.tier %>" data-own-trade-card="available" data-card-id="<%= card.id %>" data-rarity="<%= card.player.tier %>" data-card-name="<%= card.player.name %>"><div class="arena-wut-card arena-collection-card tier-<%= card.player.tier %>"><%- include('partials_wut_card', { card, statusText: `List for ${titleCase(card.player.tier)} trades` }) %></div><form method="post" action="/cards/trading/list" data-trade-list-form><input type="hidden" name="card_id" value="<%= card.id %>"><button>List for Trade</button></form></article><% }) %>
+            <p class="muted" data-trade-empty="available" <%= tradeableCards.length ? 'hidden' : '' %>>No unlisted player cards available.</p>
+          </div>
+        </section>
+        <section data-trade-panel="market" hidden>
+          <div class="cards-section-head"><div><h3>Trade Market</h3><p class="muted">Click a card to offer one of your listed cards of the same rarity.</p></div><span class="pill"><%= tradingState.marketListings.length %> cards</span></div>
+          <div class="collection-grid wut-trade-grid" data-trade-market-grid>
+            <% tradingState.marketListings.forEach(listing => { const card = listing.card; %><article class="wut-trade-card tier-<%= card.player.tier %>" tabindex="0" title="Offered by <%= listing.owner_display_name %>" data-trade-market-card data-listing-id="<%= listing.id %>" data-rarity="<%= listing.rarity %>" data-card-name="<%= card.player.name %>" data-owner="<%= listing.owner_display_name %>" data-position="<%= card.player.position %>" data-search="<%= `${card.player.name} ${card.player.teamDisplayName || card.player.teamName || card.player.teamId || ''} ${listing.owner_display_name}`.toLowerCase() %>"><div class="arena-wut-card arena-collection-card tier-<%= card.player.tier %>"><%- include('partials_wut_card', { card, statusText: `Offered by ${listing.owner_display_name}` }) %></div></article><% }) %>
+            <% if (!tradingState.marketListings.length) { %><p class="muted">No cards are listed by other users yet.</p><% } %>
+          </div>
+        </section>
+        <section data-trade-panel="offers" hidden>
+          <div class="wut-trade-offers">
+            <div><h3>Incoming Offers</h3><% tradingState.incomingOffers.forEach(offer => { %><article class="wut-trade-offer"><span><strong><%= offer.offered_listing.card.player.name %></strong> for <strong><%= offer.target_listing.card.player.name %></strong></span><small><%= offer.offered_listing.owner_display_name %> offers a <%= titleCase(offer.rarity) %></small><form method="post" action="/cards/trading/respond"><input type="hidden" name="offer_id" value="<%= offer.id %>"><button name="action" value="accept">Accept</button><button class="ghost" name="action" value="decline">Decline</button></form></article><% }) %><% if (!tradingState.incomingOffers.length) { %><p class="muted">No incoming offers.</p><% } %></div>
+            <div><h3>Outgoing Offers</h3><% tradingState.outgoingOffers.forEach(offer => { %><article class="wut-trade-offer"><span><strong><%= offer.offered_listing.card.player.name %></strong> for <strong><%= offer.target_listing.card.player.name %></strong></span><small>Waiting on <%= offer.target_listing.owner_display_name %></small><form method="post" action="/cards/trading/respond"><input type="hidden" name="offer_id" value="<%= offer.id %>"><button class="ghost" name="action" value="cancel">Cancel</button></form></article><% }) %><% if (!tradingState.outgoingOffers.length) { %><p class="muted">No outgoing offers.</p><% } %></div>
+          </div>
+        </section>
+      </div>
     </section>
-    <dialog id="removeTrinketDialog" class="wut-trinket-dialog"><form method="post" action="/cards/trinkets/remove"><input type="hidden" name="card_id" id="removeTrinketCardId"><h2>Remove trinket?</h2><p id="removeTrinketMessage"></p><div class="admin-action-row"><button name="currency" value="wut" id="removeWithWut">Pay with WUT Coins</button><button name="currency" value="mushy" id="removeWithMushy">Pay with Mushybux</button><button type="button" class="ghost" id="cancelTrinketRemoval">Cancel</button></div></form></dialog>
+    <dialog id="sellDuplicateDialog" class="wut-trinket-dialog">
+      <h2>Sell duplicate?</h2>
+      <p><strong data-sell-card-name></strong></p>
+      <p class="muted">This permanently removes this extra copy and awards <strong data-sell-card-value></strong> WUT Coins.</p>
+      <form method="post" action="/cards/collection/sell-duplicate" class="admin-action-row">
+        <input type="hidden" name="card_id" data-sell-card-id>
+        <button type="submit">Sell Duplicate</button>
+        <button type="button" class="ghost" data-cancel-duplicate-sale>Cancel</button>
+      </form>
+    </dialog>
+    <dialog id="tradeOfferDialog" class="wut-trinket-dialog">
+      <h2>Offer trade?</h2>
+      <p><strong data-trade-target-name></strong> from <span data-trade-target-owner></span></p>
+      <p class="muted">Trades must be 1-for-1 player cards of the same rarity.</p>
+      <form method="post" action="/cards/trading/offer" class="wut-trade-offer-form" data-trade-offer-form>
+        <input type="hidden" name="target_listing_id" data-trade-target-listing>
+        <label>Your listed card
+          <select name="offered_listing_id" data-trade-offered-listing required>
+            <% tradingState.ownListings.forEach(listing => { %>
+              <option value="<%= listing.id %>" data-rarity="<%= listing.rarity %>"><%= titleCase(listing.rarity) %> - <%= listing.card.player.name %></option>
+            <% }) %>
+          </select>
+        </label>
+        <div class="admin-action-row">
+          <button type="submit">Send Offer</button>
+          <button type="button" class="ghost" data-cancel-trade-offer>Cancel</button>
+        </div>
+      </form>
+      <p class="muted" data-no-trade-card hidden>You do not have a listed card of this rarity yet.</p>
+    </dialog>
   </main>
   <script>
     const playerCards = [...document.querySelectorAll('[data-collection-panel="players"] .arena-collection-card')];
     const boostCards = [...document.querySelectorAll('[data-collection-panel="boosts"] .collection-boost')];
+    const tradeCards = [...document.querySelectorAll('[data-trade-market-card]')];
+    const ownTradePanel = document.querySelector('[data-trade-panel="mine"]');
+    const ownTradeGrid = document.querySelector('[data-own-trade-grid]');
+    const availableTradeGrid = document.querySelector('[data-available-trade-grid]');
+    const ownListingCount = document.querySelector('[data-own-listing-count]');
+    const availableTradeCount = document.querySelector('[data-available-trade-count]');
     const resultCount = document.querySelector('[data-result-count]');
-    const trinketButtons = [...document.querySelectorAll('[data-trinket-pick]')];
-    const trinketHelp = document.getElementById('trinketAttachHelp');
-    const removeDialog = document.getElementById('removeTrinketDialog');
-    let selectedTrinket = null;
-    const setSelectedTrinket = button => {
-      selectedTrinket = selectedTrinket === button ? null : button;
-      trinketButtons.forEach(item => item.classList.toggle('is-selected', item === selectedTrinket));
-      playerCards.forEach(card => card.classList.toggle('is-attach-target', Boolean(selectedTrinket) && card.dataset.hasTrinket === '0' && !(selectedTrinket.dataset.skaterOnly === '1' && card.dataset.position === 'G')));
-      trinketHelp.textContent = selectedTrinket
-        ? `${selectedTrinket.dataset.trinketName} selected. Click a glowing card to attach it, or click the trinket again to cancel.`
-        : 'Hover for details. Click an available trinket, then click a card to attach it.';
-      if (selectedTrinket) {
-        const playersTab = document.querySelector('[data-collection-tab="players"]');
-        if (!playersTab.classList.contains('is-active')) playersTab.click();
-        document.querySelector('[data-collection-panel="players"]').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const duplicateFilter = document.querySelector('[data-duplicate-filter]');
+    const sellDialog = document.getElementById('sellDuplicateDialog');
+    const sellCardId = sellDialog?.querySelector('[data-sell-card-id]');
+    const sellCardName = sellDialog?.querySelector('[data-sell-card-name]');
+    const sellCardValue = sellDialog?.querySelector('[data-sell-card-value]');
+    const tradeDialog = document.getElementById('tradeOfferDialog');
+    const tradeForm = tradeDialog?.querySelector('[data-trade-offer-form]');
+    const tradeTargetListing = tradeDialog?.querySelector('[data-trade-target-listing]');
+    const tradeTargetName = tradeDialog?.querySelector('[data-trade-target-name]');
+    const tradeTargetOwner = tradeDialog?.querySelector('[data-trade-target-owner]');
+    const tradeOfferSelect = tradeDialog?.querySelector('[data-trade-offered-listing]');
+    const noTradeCardMessage = tradeDialog?.querySelector('[data-no-trade-card]');
+    document.querySelector('[data-cancel-duplicate-sale]')?.addEventListener('click', () => sellDialog.close());
+    document.querySelector('[data-cancel-trade-offer]')?.addEventListener('click', () => tradeDialog.close());
+    const tradeCountText = (count, label) => `${count} ${label}`;
+    const refreshOwnTradeCounts = () => {
+      const listed = ownTradeGrid ? ownTradeGrid.querySelectorAll('[data-own-trade-card="listed"]').length : 0;
+      const available = availableTradeGrid ? availableTradeGrid.querySelectorAll('[data-own-trade-card="available"]').length : 0;
+      if (ownListingCount) ownListingCount.textContent = tradeCountText(listed, 'listed');
+      if (availableTradeCount) availableTradeCount.textContent = tradeCountText(available, 'available');
+      document.querySelector('[data-trade-empty="listed"]')?.toggleAttribute('hidden', listed > 0);
+      document.querySelector('[data-trade-empty="available"]')?.toggleAttribute('hidden', available > 0);
+    };
+    const insertBeforeEmpty = (grid, card) => {
+      const empty = grid?.querySelector('[data-trade-empty]');
+      if (empty) grid.insertBefore(card, empty);
+      else grid?.appendChild(card);
+    };
+    const setTradeNotice = (message, error = false) => {
+      resultCount.textContent = message;
+      resultCount.classList.toggle('error', error);
+    };
+    const addOwnListingOption = card => {
+      if (!tradeOfferSelect || !card.dataset.listingId) return;
+      if ([...tradeOfferSelect.options].some(option => option.value === card.dataset.listingId)) return;
+      const option = document.createElement('option');
+      option.value = card.dataset.listingId;
+      option.dataset.rarity = card.dataset.rarity;
+      option.textContent = `${card.dataset.rarity.charAt(0).toUpperCase()}${card.dataset.rarity.slice(1)} - ${card.dataset.cardName}`;
+      tradeOfferSelect.appendChild(option);
+    };
+    const removeOwnListingOption = listingId => {
+      const option = tradeOfferSelect ? [...tradeOfferSelect.options].find(item => item.value === String(listingId)) : null;
+      option?.remove();
+    };
+    const moveTradeCardToListed = (card, listing) => {
+      card.dataset.ownTradeCard = 'listed';
+      card.dataset.listingId = listing.id;
+      const form = card.querySelector('form');
+      form.action = '/cards/trading/unlist';
+      form.dataset.tradeUnlistForm = '';
+      delete form.dataset.tradeListForm;
+      form.innerHTML = `<input type="hidden" name="listing_id" value="${listing.id}"><button class="ghost">Unlist</button>`;
+      insertBeforeEmpty(ownTradeGrid, card);
+      addOwnListingOption(card);
+      refreshOwnTradeCounts();
+    };
+    const moveTradeCardToAvailable = (card, listingId) => {
+      removeOwnListingOption(listingId);
+      card.dataset.ownTradeCard = 'available';
+      delete card.dataset.listingId;
+      const form = card.querySelector('form');
+      form.action = '/cards/trading/list';
+      form.dataset.tradeListForm = '';
+      delete form.dataset.tradeUnlistForm;
+      form.innerHTML = `<input type="hidden" name="card_id" value="${card.dataset.cardId}"><button>List for Trade</button>`;
+      insertBeforeEmpty(availableTradeGrid, card);
+      refreshOwnTradeCounts();
+    };
+    ownTradePanel?.addEventListener('submit', async event => {
+      const form = event.target.closest('form');
+      if (!form?.matches('[data-trade-list-form], [data-trade-unlist-form]')) return;
+      event.preventDefault();
+      const card = form.closest('[data-own-trade-card]');
+      const submitButton = form.querySelector('button');
+      submitButton.disabled = true;
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams(new FormData(form))
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.error || 'Trade update failed.');
+        if (form.matches('[data-trade-list-form]')) {
+          moveTradeCardToListed(card, payload.listing);
+          setTradeNotice(`${card.dataset.cardName} listed for trading.`);
+        } else {
+          const listingId = form.querySelector('[name="listing_id"]')?.value;
+          moveTradeCardToAvailable(card, listingId);
+          setTradeNotice(`${card.dataset.cardName} removed from trading.`);
+        }
+      } catch (err) {
+        setTradeNotice(err.message, true);
+        submitButton.disabled = false;
       }
+    });
+    const openDuplicateSale = card => {
+      const value = Number(card.dataset.sellValue || 0);
+      if (!value) return false;
+      sellCardId.value = card.dataset.cardId;
+      sellCardName.textContent = card.dataset.cardName;
+      sellCardValue.textContent = value;
+      sellDialog.showModal();
+      return true;
     };
-    trinketButtons.filter(button => !button.disabled).forEach(button => button.addEventListener('click', () => setSelectedTrinket(button)));
-    const attachSelectedTrinket = card => {
-      if (!selectedTrinket || card.dataset.hasTrinket === '1') return;
-      if (selectedTrinket.dataset.skaterOnly === '1' && card.dataset.position === 'G') return window.alert(`${selectedTrinket.dataset.trinketName} can only be attached to skaters.`);
-      const warning = `${selectedTrinket.dataset.trinketName} will be attached to ${card.dataset.cardName}.\n\nThis is a semi-permanent choice. Removing it later costs ${selectedTrinket.dataset.removalWut} WUT Coins or ${selectedTrinket.dataset.removalMushy} Mushybux.\n\nAttach this trinket?`;
-      if (!window.confirm(warning)) return;
-      const form = document.createElement('form');
-      form.method = 'post'; form.action = '/cards/trinkets/attach';
-      form.innerHTML = `<input type="hidden" name="card_id" value="${card.dataset.cardId}"><input type="hidden" name="trinket_id" value="${selectedTrinket.dataset.trinketId}">`;
-      document.body.appendChild(form); form.submit();
-    };
-    const openRemoveDialog = card => {
-      document.getElementById('removeTrinketCardId').value = card.dataset.cardId;
-      document.getElementById('removeTrinketMessage').textContent = `Remove ${card.dataset.trinketName} from ${card.dataset.cardName}? Choose how to pay the removal cost.`;
-      document.getElementById('removeWithWut').textContent = `${card.dataset.removalWut} WUT Coins`;
-      document.getElementById('removeWithMushy').textContent = `${card.dataset.removalMushy} Mushybux`;
-      removeDialog.showModal();
-    };
-    document.getElementById('cancelTrinketRemoval').addEventListener('click', () => removeDialog.close());
     playerCards.forEach(card => {
-      const badge = card.querySelector('.wut-trinket-badge');
-      if (badge) {
-        badge.setAttribute('role', 'button'); badge.setAttribute('tabindex', '0'); badge.setAttribute('aria-label', `Remove ${card.dataset.trinketName} from ${card.dataset.cardName}`);
-        badge.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); event.stopPropagation(); openRemoveDialog(card); } });
-      }
-      card.addEventListener('click', event => {
-        if (event.target.closest('.wut-trinket-badge') && card.dataset.hasTrinket === '1') { event.stopPropagation(); return openRemoveDialog(card); }
-        if (selectedTrinket && card.dataset.hasTrinket === '0') return attachSelectedTrinket(card);
+      card.addEventListener('click', () => {
+        if (duplicateFilter?.checked && card.dataset.duplicate === '1' && openDuplicateSale(card)) return;
         card.classList.toggle('is-flipped');
       });
-      card.addEventListener('keydown', event => { if (event.key === 'Enter' && event.target === card) { selectedTrinket && card.dataset.hasTrinket === '0' ? attachSelectedTrinket(card) : card.classList.toggle('is-flipped'); } });
+      card.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.target !== card) return;
+        if (duplicateFilter?.checked && card.dataset.duplicate === '1' && openDuplicateSale(card)) return;
+        card.classList.toggle('is-flipped');
+      });
     });
     const checkedValues = selector => new Set([...document.querySelectorAll(`${selector}:checked`)].map(input => input.value));
     const filterPlayers = () => {
@@ -121,13 +262,15 @@
       const positions = checkedValues('[data-position-filter]');
       const rarity = document.querySelector('[data-rarity-filter]').value;
       const status = document.querySelector('[data-status-filter]')?.value || '';
+      const duplicatesOnly = duplicateFilter?.checked || false;
       const search = document.querySelector('[data-card-search]').value.trim().toLowerCase();
       let visible = 0;
       playerCards.forEach(card => {
-        const show = editions.has(card.dataset.edition) && positions.has(card.dataset.position) && (!rarity || card.dataset.rarity === rarity) && (!status || card.dataset.status === status) && (!search || card.dataset.search.includes(search));
+        const show = editions.has(card.dataset.edition) && positions.has(card.dataset.position) && (!rarity || card.dataset.rarity === rarity) && (!status || card.dataset.status === status) && (!duplicatesOnly || card.dataset.duplicate === '1') && (!search || card.dataset.search.includes(search));
         card.hidden = !show; if (show) visible += 1;
       });
-      resultCount.textContent = `${visible} player card${visible === 1 ? '' : 's'} shown`;
+      resultCount.classList.remove('error');
+      resultCount.textContent = `${visible} ${duplicatesOnly ? 'duplicate player card' : 'player card'}${visible === 1 ? '' : 's'} shown`;
     };
     const filterBoosts = () => {
       const rarity = document.querySelector('[data-boost-rarity-filter]').value;
@@ -138,16 +281,63 @@
         const show = (!rarity || boost.dataset.rarity === rarity) && (!type || boost.dataset.type === type) && (!search || boost.dataset.search.includes(search));
         boost.hidden = !show; if (show) visible += 1;
       });
+      resultCount.classList.remove('error');
       resultCount.textContent = `${visible} boost${visible === 1 ? '' : 's'} shown`;
     };
+    const filterTradeMarket = () => {
+      const positions = checkedValues('[data-trade-position-filter]');
+      const rarity = document.querySelector('[data-trade-rarity-filter]').value;
+      const search = document.querySelector('[data-trade-search]').value.trim().toLowerCase();
+      let visible = 0;
+      tradeCards.forEach(card => {
+        const show = positions.has(card.dataset.position) && (!rarity || card.dataset.rarity === rarity) && (!search || card.dataset.search.includes(search));
+        card.hidden = !show; if (show) visible += 1;
+      });
+      resultCount.classList.remove('error');
+      resultCount.textContent = `${visible} trade listing${visible === 1 ? '' : 's'} shown`;
+    };
+    const openTradeOffer = card => {
+      if (!tradeDialog || !tradeOfferSelect) return;
+      tradeTargetListing.value = card.dataset.listingId;
+      tradeTargetName.textContent = card.dataset.cardName;
+      tradeTargetOwner.textContent = card.dataset.owner;
+      let available = 0;
+      [...tradeOfferSelect.options].forEach(option => {
+        const show = option.dataset.rarity === card.dataset.rarity;
+        option.hidden = !show;
+        option.disabled = !show;
+        if (show) available += 1;
+      });
+      const firstOption = [...tradeOfferSelect.options].find(option => !option.disabled);
+      if (firstOption) tradeOfferSelect.value = firstOption.value;
+      tradeForm.hidden = !available;
+      noTradeCardMessage.hidden = Boolean(available);
+      tradeDialog.showModal();
+    };
+    tradeCards.forEach(card => {
+      card.addEventListener('click', () => openTradeOffer(card));
+      card.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.target !== card) return;
+        openTradeOffer(card);
+      });
+    });
     document.querySelectorAll('[data-filter-panel="players"] input, [data-filter-panel="players"] select').forEach(control => control.addEventListener('input', filterPlayers));
     document.querySelectorAll('[data-filter-panel="boosts"] input, [data-filter-panel="boosts"] select').forEach(control => control.addEventListener('input', filterBoosts));
+    document.querySelectorAll('[data-filter-panel="trading"] input, [data-filter-panel="trading"] select').forEach(control => control.addEventListener('input', filterTradeMarket));
+    document.querySelectorAll('[data-trade-tab]').forEach(tab => tab.addEventListener('click', () => {
+      document.querySelectorAll('[data-trade-tab]').forEach(item => item.classList.toggle('is-active', item === tab));
+      document.querySelectorAll('[data-trade-panel]').forEach(panel => panel.hidden = panel.dataset.tradePanel !== tab.dataset.tradeTab);
+      if (tab.dataset.tradeTab === 'market') filterTradeMarket();
+    }));
     document.querySelectorAll('[data-collection-tab]').forEach(tab => tab.addEventListener('click', () => {
       document.querySelectorAll('[data-collection-tab]').forEach(item => item.classList.toggle('is-active', item === tab));
       document.querySelectorAll('[data-collection-panel], [data-filter-panel]').forEach(panel => panel.hidden = panel.dataset.collectionPanel !== tab.dataset.collectionTab && panel.dataset.filterPanel !== tab.dataset.collectionTab);
-      tab.dataset.collectionTab === 'players' ? filterPlayers() : filterBoosts();
+      if (tab.dataset.collectionTab === 'players') filterPlayers();
+      if (tab.dataset.collectionTab === 'boosts') filterBoosts();
+      if (tab.dataset.collectionTab === 'trading') filterTradeMarket();
     }));
-    filterPlayers();
+    if (window.location.hash === '#trading') document.querySelector('[data-collection-tab="trading"]')?.click();
+    else filterPlayers();
   </script>
 </body>
 </html>

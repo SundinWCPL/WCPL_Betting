@@ -1,13 +1,5 @@
 import { withTransaction } from '../postgres.js';
-import { trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
-import { addBalanceTransaction, changeLockedUserBalance, lockUser } from './wallet.js';
-import { changeWutCoins, lockWutMembership } from './wutWallet.js';
-
-async function cardsMeta(client) {
-  const result = await client.query("SELECT data FROM app_documents WHERE document_key='cards_meta'");
-  if (!result.rows[0]) throw new Error('Required PostgreSQL document is missing: cards_meta.');
-  return result.rows[0].data || {};
-}
+import { lockWutMembership } from './wutWallet.js';
 
 async function lockedCardAndTrinket(client, { userId, cardId, trinketId = null }) {
   const cardResult = await client.query('SELECT data FROM owned_cards WHERE id=$1 AND user_id=$2 FOR UPDATE', [Number(cardId), Number(userId)]);
@@ -33,59 +25,21 @@ export async function attachWutTrinketWithClient(client, {
 }) {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242040]);
   await lockWutMembership(client, userId);
-  const { card, trinket } = await lockedCardAndTrinket(client, { userId, cardId, trinketId });
-  if (!trinket) throw new Error('Card or trinket not found.');
-  if (card.trinket_id) throw new Error('That card already has a trinket.');
-  if (trinket.attached_card_id) throw new Error('That trinket is already attached.');
-  const resolvedPosition = cardPosition || catalogByIdentity?.[card.card_identity]?.position ||
-    catalogByIdentity?.[`${card.edition || 'S3'}|${card.division_id}|${card.player_key}`]?.position || '';
-  if (resolvedPosition && !trinketFitsWutPosition(trinket.family, resolvedPosition)) {
-    throw new Error(`${trinket.family === 'generalist' ? 'Generalist' : 'Specialist'} can only be attached to skaters.`);
-  }
-  card.trinket_id = trinket.id;
-  trinket.attached_card_id = card.id;
-  trinket.attached_at = now.toISOString();
-  await saveAttachment(client, card, trinket);
-  return { card, trinket };
+  throw new Error('Trinkets are assigned inside the deck builder now.');
 }
 
 export async function removeWutTrinketWithClient(client, {
   userId, cardId, currency, now = new Date()
 }) {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242040]);
-  const membership = await lockWutMembership(client, userId);
+  await lockWutMembership(client, userId);
   const { card, trinket } = await lockedCardAndTrinket(client, { userId, cardId });
   if (!trinket) throw new Error('That card has no trinket.');
-  const kind = currency === 'mushy' ? 'mushy' : 'wut';
-  const meta = await cardsMeta(client);
-  const costs = kind === 'mushy'
-    ? meta.config?.wut?.trinketRemovalMushy
-    : meta.config?.wut?.trinketRemovalWut;
-  const cost = Number(costs?.[trinket.rarity]);
-  if (!Number.isFinite(cost) || cost < 0) throw new Error('Invalid trinket removal cost.');
-  if (kind === 'wut') {
-    await changeWutCoins(client, membership, -cost, 'trinket_removal', {
-      trinket_id: trinket.id,
-      card_id: card.id
-    }, now);
-  } else {
-    const user = await lockUser(client, userId);
-    await changeLockedUserBalance(client, user, -cost);
-    await addBalanceTransaction(client, {
-      userId,
-      week: Number((await client.query("SELECT data->>'currentWeek' AS week FROM app_documents WHERE document_key='settings'")).rows[0]?.week || 1),
-      amount: -cost,
-      kind: 'wut_trinket_removal',
-      category: 'cards_convenience',
-      note: `Removed trinket #${trinket.id}`,
-      createdAt: now.toISOString()
-    });
-  }
   card.trinket_id = null;
   trinket.attached_card_id = null;
   trinket.detached_at = now.toISOString();
   await saveAttachment(client, card, trinket);
-  return { cost, currency: kind };
+  return { cost: 0, currency: 'free' };
 }
 
 export const attachWutTrinketPostgres = (pool, input) =>

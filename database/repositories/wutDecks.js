@@ -1,6 +1,8 @@
 import { withTransaction } from '../postgres.js';
 import { addBalanceTransaction, changeLockedUserBalance, lockUser } from './wallet.js';
 import { lockWutMembership } from './wutWallet.js';
+import { validateWutDeckSnapshots } from '../../services/arenaRuntime.js';
+import { trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
 
 const asNumber = value => Number(value || 0);
 const catalogPlayer = (card, catalog) => catalog?.[card.card_identity] ||
@@ -16,7 +18,7 @@ async function documents(client) {
 }
 
 export async function saveWutDeckWithClient(client, {
-  userId, deckId = null, name, activeCardIds, benchCardIds, catalogByIdentity, now = new Date()
+  userId, deckId = null, name, activeCardIds, trinketAssignmentIds = {}, catalogByIdentity, now = new Date()
 }) {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242040]);
   const membership = await lockWutMembership(client, userId);
@@ -24,34 +26,42 @@ export async function saveWutDeckWithClient(client, {
   const owned = new Map(cards.map(row => [Number(row.id), row.data]));
   const trinkets = new Map((await client.query('SELECT id,data FROM owned_trinkets WHERE user_id=$1', [Number(userId)])).rows.map(row => [Number(row.id), row.data]));
   const active = [...new Set((activeCardIds || []).map(Number).filter(Number.isFinite))];
-  const bench = (benchCardIds || []).map(Number).filter(Number.isFinite);
-  if (active.length < 5 || active.length > 8) throw new Error('Active Deck must contain 5 to 8 unique cards.');
-  if (bench.length !== 5 || new Set(bench).size !== 5) throw new Error('Safety Bench must contain exactly 5 unique cards.');
-  if ([...active, ...bench].some(id => !owned.has(id))) throw new Error('Every deck card must be in your collection.');
-  for (const ids of [active, bench]) {
-    const identities = ids.map(id => String(owned.get(id).card_identity || ''));
-    if (new Set(identities).size !== identities.length) {
-      throw new Error(ids === active ? 'Active Deck cannot contain two copies of the same player card.' : 'Safety Bench cannot contain two copies of the same player card.');
-    }
+  if (active.some(id => !owned.has(id))) throw new Error('Every deck card must be in your collection.');
+  if (active.length) {
+    const listingRows = await client.query("SELECT data FROM card_records WHERE collection='trade_listings' AND data->>'status'='active'");
+    const listedIds = new Set(listingRows.rows.map(row => Number(row.data?.card_id)).filter(Number.isFinite));
+    if (active.some(id => listedIds.has(Number(id)))) throw new Error('Listed trade cards cannot be added to a deck.');
   }
   const docs = await documents(client);
   const wut = docs.cards_meta?.config?.wut || {};
   const rarityCosts = wut.rarityCosts || { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
   const trinketPower = wut.trinketPowerValues || { common: 0, uncommon: 0.5, rare: 1, epic: 1.5, legendary: 2.5 };
-  const benchSnapshots = bench.map(id => {
+  const activeSet = new Set(active);
+  const assignments = {};
+  const usedTrinkets = new Set();
+  for (const [rawCardId, rawTrinketId] of Object.entries(trinketAssignmentIds || {})) {
+    const cardId = Number(rawCardId);
+    const trinketId = Number(rawTrinketId);
+    if (!activeSet.has(cardId) || !trinketId) continue;
+    const trinket = trinkets.get(trinketId);
+    if (!trinket) throw new Error('Every deck trinket must be in your inventory.');
+    if (usedTrinkets.has(trinketId)) throw new Error('A trinket can only be used once in a deck.');
+    const player = catalogPlayer(owned.get(cardId), catalogByIdentity);
+    if (!trinketFitsWutPosition(trinket.family, player?.position)) throw new Error('That trinket is not legal for that card position.');
+    assignments[String(cardId)] = trinketId;
+    usedTrinkets.add(trinketId);
+  }
+  const activeSnapshots = active.map(id => {
     const card = owned.get(id);
     const player = catalogPlayer(card, catalogByIdentity);
     if (!player) throw new Error(`Card #${card.id} is not in the current WUT catalog.`);
-    const trinket = card.trinket_id ? trinkets.get(Number(card.trinket_id)) : null;
+    const trinket = trinkets.get(Number(assignments[String(id)])) || null;
     return {
       position: player.position,
       power: asNumber(rarityCosts[player.tier] || 1) + asNumber(trinket ? trinketPower[trinket.rarity] : 0)
     };
   });
-  if (benchSnapshots.map(card => card.position).sort().join('') !== 'DDFFG') {
-    throw new Error('Safety Bench must be exactly 2F / 2D / 1G.');
-  }
-  if (benchSnapshots.some(card => card.power > 2)) throw new Error('Every Safety Bench card must be Power 2 or lower.');
+  validateWutDeckSnapshots(activeSnapshots, wut, 'Deck');
   let row = deckId == null ? null : (await client.query(
     'SELECT id,data FROM wut_decks WHERE id=$1 AND user_id=$2 FOR UPDATE', [Number(deckId), Number(userId)]
   )).rows[0];
@@ -67,7 +77,7 @@ export async function saveWutDeckWithClient(client, {
     user_id: Number(userId),
     name: String(name || 'Saved Deck').trim().slice(0, 40) || 'Saved Deck',
     active_card_ids: active,
-    bench_card_ids: bench,
+    trinket_assignments: assignments,
     updated_at: now.toISOString()
   };
   if (row.insert) {

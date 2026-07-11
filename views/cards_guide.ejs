@@ -10,8 +10,8 @@
   <%- include('partials_header') %>
   <main class="container cards-page wut-guide">
     <section class="card page-title cards-title">
-      <div><p class="eyebrow">FAQ & Tutorial</p><h1>How to Play WUT 2.0</h1><p>Build a deck, out-draft your opponent, and turn real WCPL performances into Fantasy Points.</p></div>
-      <div class="cards-title-actions"><a class="button-link ghost" href="/cards">← WUT Hub</a><% if (cardsOpen) { %><a class="button-link" href="/cards/collection">Collection</a><% } %></div>
+      <div><p class="eyebrow">FAQ & Tutorial</p><h1>How to Play WUT 2.0</h1><p>Build a legal deck, outplay your opponent, and turn real WCPL performances into Fantasy Points.</p></div>
+      <div class="cards-title-actions"><a class="button-link ghost" href="/cards">WUT Hub</a><% if (cardsOpen) { %><a class="button-link" href="/cards/collection">Collection</a><% } %></div>
     </section>
 
     <nav class="card wut-guide-nav" aria-label="Guide sections">
@@ -23,9 +23,9 @@
         <p class="eyebrow">Five-minute version</p><h2>Quick Start</h2>
         <ol>
           <li>Join WUT and open your starter bundle: five unique Common cards (2F / 2D / 1G), two Common trinkets, 1,000 WUT Coins, and a free Standard pack.</li>
-          <li>Open the free pack in the Shop, then visit Collection to inspect cards and attach trinkets.</li>
-          <li>Build and save an Active Deck plus a complete Safety Bench.</li>
-          <li>Select that deck on the WUT Hub and enter the free matchmaking queue.</li>
+          <li>Open the free pack in the Shop, then visit Decks to build a lineup and assign trinkets.</li>
+          <li>Build and save an exact-size deck if you want to play Constructed Arena. The default is eight cards.</li>
+          <li>Enter Draft Arena to mini-draft shared packs, or select a saved deck and enter Constructed Arena.</li>
           <li>Take turns assigning cards to F1, F2, D1, D2, and G. Add optional boosts, lock your choices, then reveal the final score.</li>
         </ol>
       </section>
@@ -43,23 +43,27 @@
       <section class="card" id="decks">
         <p class="eyebrow">Prepare before queueing</p><h2>Deck Building</h2>
         <ul>
-          <li><strong>Active Deck:</strong> save 5–8 unique cards with no position or Power restrictions.</li>
-          <li><strong>Safety Bench:</strong> exactly 2F / 2D / 1G, all Power 1 or 2. Every slot is mandatory.</li>
-          <li>The Safety Bench guarantees the game can offer a legal play if the remaining Active Deck cannot.</li>
-          <li>Click a collection card to add it; click a card in the deck or bench to remove it. The card disappears from the collection list while assigned to the section being edited.</li>
-          <li>Your selected deck is snapshotted when you queue. Later collection changes do not alter that active match.</li>
+          <li><strong>Deck size:</strong> normal WUT decks require exactly eight unique cards by default. Admins can configure the size.</li>
+          <li><strong>Positions:</strong> every deck must include at least 2F / 2D / 1G.</li>
+          <li><strong>Top lineup cap:</strong> your highest-Power 2F / 2D / 1G combination must not exceed the configured cap. The default is 15 Power and includes trinket Power.</li>
+          <li>Draft Events have their own deck size and top-lineup Power cap in the draft preset, so special formats can raise or lower the cap.</li>
+          <li>Constructed Arena snapshots your selected deck when you queue. Later collection changes do not alter that active match.</li>
+          <li>Draft Arena has no deck-size or position minimum. You pick one item from each shared pack, then assign drafted trinkets before locking.</li>
         </ul>
       </section>
 
       <section class="card" id="matches">
         <p class="eyebrow">Asynchronous head-to-head</p><h2>Playing a Match</h2>
         <ul>
-          <li>A coin flip chooses who commits first. Turns follow a 1–2–2–2–2–1 card sequence until both five-card lineups are full.</li>
+          <li>Constructed Arena is best-of-three. Game 1 starts with a coin flip and the winner chooses who plays first. In game 2, the game-1 first player goes second. If game 3 is needed, the better combined FP differential from games 1 and 2 chooses first or second; tied differential falls back to a coin flip.</li>
+          <li>Each turn asks you to commit the maximum legal number of cards up to the turn cap.</li>
           <li>Lineups use 2F / 2D / 1G. A card must match the position of its chosen slot.</li>
-          <li>After an opponent fills a matching slot, your response can be at most one Power higher.</li>
+          <li>Draft Arena prep has one two-hour timer. If you do not lock your draft and trinket assignments before it expires, you forfeit.</li>
+          <li>After an opponent fills a matching slot, your response can be at most one Power higher by default.</li>
+          <li>If you have no legal card for any open slot, you are done committing cards for that match. Your opponent can keep filling slots; your empty slots score 0.</li>
           <li>You may commit consumable boosts up to your lineup's Boost Load. Standard load is 5; some Booster Cables increase it.</li>
           <li>A committed turn is permanent. Each player has two active hours per turn; the clock pauses during the configured overnight window.</li>
-          <li>When both lineups are complete, open the match to watch the slot-by-slot scoring reveal.</li>
+          <li>When no player has legal plays remaining, open the match to watch the slot-by-slot scoring reveal.</li>
         </ul>
       </section>
 
@@ -67,25 +71,26 @@
         <p class="eyebrow">Three unique performances</p><h2>Scoring & Chemistry</h2>
         <ul>
           <li>Each card rolls three different eligible games from its printed season. The detailed scoring view can show every rolled game's stat line and FP.</li>
-          <li>Lucky Charm bonus rolls also use previously unused games. A failed roll shows 0 bonus FP; a successful roll shows only the FP gained over the replaced result.</li>
           <li>Goals, assists, shots, hits, blocks, goalie saves, save percentage, and shutouts feed the configured scoring table.</li>
-          <li>Cards need the <strong>same team and same season</strong> for chemistry. Two, three, four, or five matching cards earn 10%, 15%, 20%, or 25% respectively.</li>
+          <li>Cards need the <strong>same team and same season</strong> for chemistry. Two, three, four, or five matching cards earn the configured chemistry bonus.</li>
           <li>The reveal lists base statistics, boosts, chemistry, and trinket effects separately so every FP change can be traced.</li>
         </ul>
       </section>
 
       <section class="card wut-guide-wide" id="trinkets">
         <p class="eyebrow">Permanent build identity</p><h2>Trinkets</h2>
-        <p>Trinkets add a rarity-scaled effect and up to 2.5 Power. A Common trinket adds no Power but still provides its effect. Attaching one is semi-permanent: removal costs WUT Coins or Mushybux.</p>
+        <% const guideRarities = ['common', 'uncommon', 'rare', 'epic', 'legendary']; const captainPatchEffects = wutConfig?.trinketEffects?.team_crest || {}; %>
+        <p>Trinkets add a rarity-scaled effect and up to 2.5 Power. A Common trinket adds no Power but still provides its effect. Trinkets are assigned inside a deck and can be changed freely before saving.</p>
         <ul>
           <li><strong>Roll control:</strong> Lucky Charm, Safety Net, and Glass Skates.</li>
           <li><strong>Scoring builds:</strong> Specialist, Generalist, Underdog Patch, First Strike, and Counterpunch Gloves.</li>
           <li><strong>Boost and chemistry builds:</strong> Booster Cable, Captain's Patch, and Journeyman.</li>
           <li><strong>Counterplay:</strong> Hex Charm, Warding Charm, Siphon Stone, and Zebra Stripes.</li>
-          <li>Only Specialist and Generalist are skater-only. Only one Captain's Patch can be active in a lineup.</li>
+          <li>Only Specialist and Generalist are skater-only. Up to two Captain's Patches can be active in a lineup; the second one played becomes an Assistant Captain and receives 50% of the Patch benefit.</li>
+          <li><strong>Current Captain's Patch:</strong> <%= guideRarities.map(rarity => `${wutTitleCase(rarity)}: ${wutTrinketDescription({ family: 'team_crest', rarity, effect: captainPatchEffects[rarity] })}`).join(' ') %></li>
         </ul>
         <div class="wut-trinket-encyclopedia" data-trinket-encyclopedia>
-          <div class="cards-section-head"><div><p class="eyebrow">All 15 trinkets</p><h3>Trinket Encyclopedia</h3><p class="muted">Choose an icon to compare all five rarities.</p></div></div>
+          <div class="cards-section-head"><div><p class="eyebrow">Current balance</p><h3>Trinket Effects</h3></div></div>
           <div class="wut-trinket-encyclopedia-icons" role="tablist" aria-label="Trinkets">
             <% Object.keys(WUT_TRINKET_ICONS).forEach((family, index) => { %>
               <button type="button" class="wut-trinket-encyclopedia-pick <%= index === 0 ? 'is-selected' : '' %>" data-trinket-family-pick="<%= family %>" role="tab" aria-selected="<%= index === 0 ? 'true' : 'false' %>" title="<%= wutTrinketName(family) %>"><span class="wut-trinket-icon"><%= WUT_TRINKET_ICONS[family] %></span><small><%= wutTrinketName(family) %></small></button>
@@ -95,8 +100,8 @@
             <div class="wut-trinket-encyclopedia-panel" data-trinket-family-panel="<%= family %>" <%= index === 0 ? '' : 'hidden' %>>
               <h3><span><%= WUT_TRINKET_ICONS[family] %></span> <%= wutTrinketName(family) %></h3>
               <div class="wut-trinket-rarity-list">
-                <% ['common','uncommon','rare','epic','legendary'].forEach(rarity => { const effect = wutConfig.trinketEffects[family][rarity]; %>
-                  <div class="wut-trinket-rarity-row"><span class="wut-trinket-icon tier-<%= rarity %>"><%= WUT_TRINKET_ICONS[family] %></span><div><strong class="tier-text-<%= rarity %>"><%= wutTitleCase(rarity) %> · +<%= wutConfig.trinketPowerValues[rarity] %> Power</strong><p><%= wutTrinketDescription({ family, rarity, effect }) %></p></div></div>
+                <% guideRarities.forEach(rarity => { const effect = wutConfig?.trinketEffects?.[family]?.[rarity]; %>
+                  <div class="wut-trinket-rarity-row"><span class="wut-trinket-icon tier-<%= rarity %>"><%= WUT_TRINKET_ICONS[family] %></span><div><strong class="tier-text-<%= rarity %>"><%= wutTitleCase(rarity) %> · +<%= wutConfig?.trinketPowerValues?.[rarity] ?? 0 %> Power</strong><p><%= wutTrinketDescription({ family, rarity, effect }) %></p></div></div>
                 <% }) %>
               </div>
             </div>
@@ -107,22 +112,20 @@
       <section class="card" id="economy">
         <p class="eyebrow">WUT Coins stay inside WUT</p><h2>Shop & Rewards</h2>
         <ul>
-          <li>Every player pack contains three unique players and two boosts. A purchase must be revealed and claimed before another pack can be bought.</li>
-          <li>Each player has a separate three-offer Trinket Shop. It refreshes automatically at midnight Pacific Time; a countdown appears in the Shop.</li>
-          <li>Trinket-shop rerolls replace all three offers, including sold-out slots, and can be paid with WUT Coins or Mushybux.</li>
+          <li>Every player pack contains three unique players and two boosts. Boost packs contain only boost consumables, including a configurable high-rarity guarantee.</li>
+          <li>A purchased pack must be revealed and claimed before another pack can be bought.</li>
+          <li>Each player has a separate three-offer Trinket Shop. It refreshes automatically at midnight Pacific Time.</li>
           <li>Completed matches award WUT Coins. Winners receive more; a timeout loser receives none.</li>
-          <li>Dailies cover WUT and eligible casino activity. Sportsbook missions are weekly so progress is counted only after bets lock or settle.</li>
-          <li>Mission rewards are not automatic—return to the WUT Hub and press Claim.</li>
+          <li>Mission rewards are not automatic. Return to the WUT Hub and press Claim.</li>
         </ul>
       </section>
 
       <section class="card" id="faq">
         <p class="eyebrow">Common questions</p><h2>FAQ</h2>
-        <details open><summary>Why is a card missing while I build a deck?</summary><p>A card already assigned to the section you are editing is hidden below. Safety Bench mode also hides cards above Power 2.</p></details>
-        <details><summary>Can the same card be in my Active Deck and Safety Bench?</summary><p>Yes. They are two separate lists. The bench is an emergency legal pool, not an extra match slot.</p></details>
+        <details open><summary>Why is a card missing while I build a deck?</summary><p>A card already assigned to the deck is hidden below.</p></details>
+        <details><summary>What happens if I run out of legal plays?</summary><p>You are done committing cards for that match. Any unfilled lineup slots remain empty and score 0.</p></details>
         <details><summary>Are boosts permanent?</summary><p>No. Boosts are consumables committed to a match. If an administrator voids a stuck match, its committed boosts are released.</p></details>
         <details><summary>Do two cards from the same team but different seasons get chemistry?</summary><p>No. Both team and printed season must match. Legendary Journeyman is the special exception that can adopt any team-season identity currently in play.</p></details>
-        <details><summary>Can Zebra Stripes invalidate an earlier Journeyman choice?</summary><p>It downgrades the effect, but a team selection that was legal when committed remains selected. Any stronger benefits lost at the lower rarity no longer apply.</p></details>
         <details><summary>Why did my trinket do nothing?</summary><p>Many effects have a trigger condition, may be weakened by Warding Charm or Zebra Stripes, or may lose an order-of-play contest. The detailed reveal identifies triggered and missed effects.</p></details>
         <details><summary>Where are my decks?</summary><p>Open Collection and choose Decks. The main WUT Hub stays focused on missions, matchmaking, and active games.</p></details>
       </section>

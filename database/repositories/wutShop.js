@@ -1,5 +1,5 @@
 import { withTransaction } from '../postgres.js';
-import { WUT_LAUNCH_TRINKET_EFFECTS } from '../../services/wutBalanceRules.js';
+import { WUT_LAUNCH_TRINKET_EFFECTS, normalizeWutTrinketEffect } from '../../services/wutBalanceRules.js';
 import { nextDateKey, zonedDateKey, zonedTimeToDate } from '../../services/zonedTime.js';
 import { addBalanceTransaction, changeLockedUserBalance, lockUser } from './wallet.js';
 import { changeWutCoins, lockWutMembership } from './wutWallet.js';
@@ -7,6 +7,12 @@ import { changeWutCoins, lockWutMembership } from './wutWallet.js';
 const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const FAMILIES = Object.keys(WUT_LAUNCH_TRINKET_EFFECTS);
 const asNumber = value => Number(value || 0);
+const clone = value => JSON.parse(JSON.stringify(value));
+const trinketEffectFor = (config, family, rarity) => clone(normalizeWutTrinketEffect(
+  family,
+  rarity,
+  config.trinketEffects?.[family]?.[rarity] ?? WUT_LAUNCH_TRINKET_EFFECTS[family]?.[rarity] ?? null
+));
 
 async function documents(client) {
   const result = await client.query(`
@@ -36,9 +42,18 @@ function buildOffer(config, slot, random) {
     rarity,
     power_cost: asNumber(config.trinketPowerValues?.[rarity]),
     price: asNumber(config.trinketPrices?.[rarity]),
-    effect: JSON.parse(JSON.stringify(config.trinketEffects?.[family]?.[rarity] ?? WUT_LAUNCH_TRINKET_EFFECTS[family]?.[rarity] ?? null)),
+    effect: trinketEffectFor(config, family, rarity),
     sold_at: null
   };
+}
+
+function refreshOffers(shop, config, random) {
+  const lockedSlot = Number(shop.locked_slot || 0);
+  const lockedOffer = (shop.offers || []).find(offer => Number(offer.slot) === lockedSlot && !offer.sold_at);
+  shop.offers = [1, 2, 3].map(slot => (slot === lockedSlot && lockedOffer
+    ? JSON.parse(JSON.stringify(lockedOffer))
+    : buildOffer(config, slot, random)));
+  if (!lockedOffer) delete shop.locked_slot;
 }
 
 async function lockShop(client, userId) {
@@ -73,11 +88,11 @@ async function ensureShop(client, userId, { now, force = false, random = Math.ra
   const shop = existing?.data || { user_id: Number(userId) };
   if (force || !existing || shop.date_key !== dateKey) {
     shop.date_key = dateKey;
-    shop.offers = [1, 2, 3].map(slot => buildOffer(config, slot, random));
+    refreshOffers(shop, config, random);
     shop.refreshed_at = now.toISOString();
   }
   for (const offer of shop.offers || []) {
-    if (offer.effect == null) offer.effect = JSON.parse(JSON.stringify(config.trinketEffects?.[offer.family]?.[offer.rarity] ?? WUT_LAUNCH_TRINKET_EFFECTS[offer.family]?.[offer.rarity] ?? null));
+    if (!offer.sold_at) offer.effect = trinketEffectFor(config, offer.family, offer.rarity);
     if (!offer.sold_at) offer.price = asNumber(config.trinketPrices?.[offer.rarity]);
   }
   shop.next_refresh_at = zonedTimeToDate(nextDateKey(dateKey), {}, timeZone).toISOString();
@@ -100,7 +115,7 @@ export async function buyWutTrinketWithClient(client, { userId, slot, now = new 
   const id = asNumber((await client.query("SELECT nextval('owned_trinkets_id_seq') AS id")).rows[0].id);
   const trinket = {
     id, user_id: Number(userId), family: offer.family, rarity: offer.rarity,
-    effect: JSON.parse(JSON.stringify(config.trinketEffects?.[offer.family]?.[offer.rarity] ?? WUT_LAUNCH_TRINKET_EFFECTS[offer.family]?.[offer.rarity] ?? null)),
+    effect: trinketEffectFor(config, offer.family, offer.rarity),
     attached_card_id: null, created_at: now.toISOString()
   };
   await client.query(`
@@ -109,9 +124,24 @@ export async function buyWutTrinketWithClient(client, { userId, slot, now = new 
   `, [id, Number(userId), trinket.family, trinket.rarity, id, JSON.stringify(trinket)]);
   offer.sold_at = now.toISOString();
   offer.owned_trinket_id = id;
+  if (Number(shop.locked_slot) === Number(slot)) delete shop.locked_slot;
   const existing = await lockShop(client, userId);
   await saveShop(client, userId, existing, shop);
   return trinket;
+}
+
+export async function toggleWutTrinketShopLockWithClient(client, { userId, slot, now = new Date(), random = Math.random }) {
+  await client.query('SELECT pg_advisory_xact_lock($1)', [8242040]);
+  await lockWutMembership(client, userId);
+  const { shop } = await ensureShop(client, userId, { now, random });
+  const offer = shop.offers.find(item => Number(item.slot) === Number(slot));
+  if (!offer) throw new Error('That trinket shop slot does not exist.');
+  if (offer.sold_at) throw new Error('Sold-out trinket shop slots cannot be locked.');
+  if (Number(shop.locked_slot) === Number(slot)) delete shop.locked_slot;
+  else shop.locked_slot = Number(slot);
+  const existing = await lockShop(client, userId);
+  await saveShop(client, userId, existing, shop);
+  return shop;
 }
 
 export async function rerollWutTrinketShopWithClient(client, {
@@ -144,5 +174,6 @@ export async function getWutTrinketShopWithClient(client, { userId, now = new Da
 }
 
 export const buyWutTrinketPostgres = (pool, input) => withTransaction(pool, client => buyWutTrinketWithClient(client, input));
+export const toggleWutTrinketShopLockPostgres = (pool, input) => withTransaction(pool, client => toggleWutTrinketShopLockWithClient(client, input));
 export const rerollWutTrinketShopPostgres = (pool, input) => withTransaction(pool, client => rerollWutTrinketShopWithClient(client, input));
 export const getWutTrinketShopPostgres = (pool, input) => withTransaction(pool, client => getWutTrinketShopWithClient(client, input));

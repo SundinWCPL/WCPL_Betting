@@ -71,9 +71,14 @@
     </section>
 
     <section class="card arena-queue-card">
+      <div><p class="eyebrow">Always-open Queue · <%= arena.queueCount %> <%= arena.queueCount === 1 ? 'person' : 'people' %> waiting · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span></p><h2><%= arena.queuedEntry ? 'You’re In' : 'Arena Queues' %></h2><p class="muted"><%= arena.queuedEntry ? `Queued for ${arena.queuedEntry.mode === 'constructed' ? 'Constructed Arena' : 'Draft Arena'}.` : `Draft winner ${arena.config.draftRewards?.winner || wut.config.rewards.winner} · constructed winner ${arena.config.constructedRewards?.winner || wut.config.rewards.winner} WUT Coins` %></p></div>
+      <% if (!arena.queuedEntry) { %><div class="arena-queue-actions"><form method="post" action="/cards/arena/enter"><input type="hidden" name="mode" value="draft"><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches ? 'disabled' : '' %>>Draft Arena</button></form><form method="post" action="/cards/arena/enter"><input type="hidden" name="mode" value="constructed"><select name="deck_id" required><option value="">Select saved deck</option><% wut.decks.forEach(deck => { %><option value="<%= deck.id %>"><%= deck.name %></option><% }) %></select><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches || !wut.decks.length ? 'disabled' : '' %>>Constructed Arena</button></form></div><% } else { %><span class="pill">Waiting for matchmaking</span><% } %>
+    </section>
+
+    <% if (false) { %><section class="card arena-queue-card">
       <div><p class="eyebrow">Always-open Queue · <%= arena.queueCount %> <%= arena.queueCount === 1 ? 'person' : 'people' %> waiting · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span></p><h2><%= arena.queuedEntry ? 'You’re In' : 'Choose a Deck & Queue' %></h2><p class="muted"><%= arena.queuedEntry ? `Queued with ${arena.queuedEntry.deck_name}. Its snapshot is locked.` : `Winner ${wut.config.rewards.winner} · loser ${wut.config.rewards.loser} WUT Coins · timeout loser 0` %></p></div>
       <% if (!arena.queuedEntry) { %><form method="post" action="/cards/arena/enter"><select name="deck_id" required><option value="">Select saved deck</option><% wut.decks.forEach(deck => { %><option value="<%= deck.id %>"><%= deck.name %></option><% }) %></select><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches || !wut.decks.length ? 'disabled' : '' %>>Enter Queue Free</button></form><% } else { %><span class="pill">Waiting for matchmaking</span><% } %>
-    </section>
+    </section><% } %>
 
     <section class="card arena-active-section">
       <div class="cards-section-head arena-active-head">
@@ -81,12 +86,18 @@
         <div class="arena-active-actions"><a class="button-link ghost" href="/cards/arena/history">Match History</a><span class="pill"><%= arena.activeMatches.length + arena.readyMatches.length %>/<%= arena.config.maxActiveMatches %> active</span></div>
       </div>
       <div class="arena-match-cards">
-        <% [...arena.readyMatches, ...arena.activeMatches].forEach(match => { const isReady = match.status === 'ready'; %>
+        <% [...arena.readyMatches, ...arena.activeMatches].forEach(match => { const isReady = match.status === 'ready'; const isDrafting = match.status === 'drafting'; const isChoosingFirst = match.status === 'choosing_first'; const firstDeciderId = Number(match.first_player_decider_user_id ?? match.coin_flip_winner_user_id ?? 0); %>
           <a class="arena-match-link <%= isReady ? 'is-ready' : match.is_your_turn ? 'is-your-turn' : '' %>" href="/cards/arena/matches/<%= match.id %>">
             <span class="arena-match-number">Match #<%= match.id %></span>
-            <h3>vs <%= match.opponent.displayName %> <small>· <%= match.opponent.elo %> ELO</small></h3>
+            <% if (isDrafting) { %>
+              <h3>vs <%= match.opponent.displayName %> <small>· Draft Arena</small></h3>
+              <div class="arena-match-progress"><span>You <strong><%= match.draft_loadouts?.[String(currentUser.id)]?.submitted_at ? 'locked' : 'prep' %></strong></span><span><%= match.opponent.displayName %> <strong><%= match.draft_loadouts?.[String(match.opponent.id)]?.submitted_at ? 'locked' : 'prep' %></strong></span></div>
+              <strong class="arena-match-callout"><%= match.is_your_turn ? 'Draft prep ready' : 'Waiting for draft prep' %></strong>
+            <% } else { %>
+            <h3>vs <%= match.opponent.displayName %> <small>· <%= match.series_format === 'bo3' ? `Bo3 game ${match.series_game_number || 1}` : `${match.opponent.elo} ELO` %></small></h3>
             <div class="arena-match-progress"><span>You <strong><%= committedCount(match, currentUser.id) %>/5</strong></span><span><%= match.opponent.displayName %> <strong><%= committedCount(match, match.opponent.id) %>/5</strong></span></div>
-            <strong class="arena-match-callout"><%= isReady ? 'Lineups Locked — Show Results' : match.is_your_turn ? `Your turn · place ${match.cards_required_this_turn}` : `${playerName(match, match.current_player_id)} is choosing` %></strong>
+            <strong class="arena-match-callout"><%= isReady ? 'Lineups Locked — Show Results' : isChoosingFirst ? (match.is_first_player_choice_turn ? 'Choose who plays first' : `${playerName(match, firstDeciderId)} is choosing first player`) : match.is_your_turn ? `Your turn · place ${match.cards_required_this_turn}` : `${playerName(match, match.current_player_id)} is choosing` %></strong>
+            <% } %>
             <% if (match.turn_deadline) { %><small data-deadline="<%= match.turn_deadline %>" data-paused="<%= match.timer_paused ? '1' : '0' %>"></small><% } %>
           </a>
         <% }) %>

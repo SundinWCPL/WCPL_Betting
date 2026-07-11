@@ -1,19 +1,34 @@
 import { withTransaction } from '../postgres.js';
-import { ARENA_TURN_SEQUENCE, nextArenaDeadline } from '../../services/arenaRuntime.js';
+import {
+  arenaCurrentPlayerId,
+  arenaTurnCap,
+  markWutCaptainPatchRole,
+  maxWutLegalPlacements,
+  nextArenaDeadline,
+  nextWutActivePlayer,
+  skipWutNoLegalPlayers,
+  validateWutDeckSnapshots,
+  WUT_CAPTAIN_PATCH_LIMIT,
+  wutCaptainPatchCount,
+  wutDeckRules
+} from '../../services/arenaRuntime.js';
 import {
   appendWutDraftEventLog,
   resolveWutDraftEventMatchRecord,
   selectWutDraftEliminationBye,
   transitionWutDraftEventRecord
 } from '../../services/wutDraftEvents.js';
-import { trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
+import { WUT_LAUNCH_TRINKET_EFFECTS, lockWardingChoices, normalizeWutTrinketEffect, trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
 import { getDraftEventPostgres, lockAndLoadDraftEvent, saveDraftEvent, saveDraftTournamentEvent } from './draftEventStore.js';
 import { refundEntrant } from './draftEvents.js';
 import { changeWutCoins, lockWutMembership } from './wutWallet.js';
-import { WUT_LAUNCH_TRINKET_EFFECTS } from '../../services/wutBalanceRules.js';
-
 const clone = value => JSON.parse(JSON.stringify(value));
 const asNumber = value => Number(value || 0);
+const trinketEffectFor = (wutConfig, family, rarity) => clone(normalizeWutTrinketEffect(
+  family,
+  rarity,
+  wutConfig?.trinketEffects?.[family]?.[rarity] ?? WUT_LAUNCH_TRINKET_EFFECTS[family]?.[rarity] ?? null
+));
 
 async function requireAdmin(client, userId) {
   const row = (await client.query('SELECT role FROM users WHERE id=$1', [Number(userId)])).rows[0];
@@ -75,7 +90,7 @@ function deckSnapshot(event, userId) {
       base_power: asNumber(snapshot.base_power || 1), power: asNumber(snapshot.power || snapshot.base_power || 1),
       trinket: snapshot.trinket ? clone(snapshot.trinket) : null };
   };
-  return { active: (deck.active_snapshots || []).map(convert), bench: (deck.safety_bench_snapshots || []).map(convert) };
+  return { active: (deck.active_snapshots || []).map(convert) };
 }
 
 function deadline(event, now) {
@@ -98,6 +113,7 @@ function createMatch(event, playerIds, round, now, active = true, role = 'main')
     status: active ? 'active' : 'pending', scores: null, winner_user_id: null, revealed_by: [],
     boost_load_cap: Number(event.config.match.boostLoadCap), boosts_mode: event.config.match.boostsMode,
     rules_snapshot: clone(event.environment_snapshot?.rules || {}), created_at: now.toISOString(), resolved_at: null, completed_at: null };
+  match.current_player_id = match.first_player_id;
   event.tournament.matches.push(match); round.match_ids.push(id); return match;
 }
 
@@ -158,18 +174,51 @@ function initialize(event, now) {
 }
 
 function autoDeck(event, userId, now) {
-  const inventory = event.inventories[String(userId)]; const bench = new Set((inventory.safety_bench_card_ids || []).map(Number));
-  const cards = inventory.cards.filter(card => !bench.has(Number(card.id))); const maximum = Number(event.config.deckbuilding.activeMaximum);
-  const selected = []; const identities = new Set();
-  for (const card of cards) { const identity = String(card.card_identity); if (identities.has(identity)) continue; identities.add(identity); selected.push(Number(card.id)); if (selected.length >= maximum) break; }
-  if (selected.length < Number(event.config.deckbuilding.activeMinimum)) throw new Error(`Player ${userId} cannot build a legal Event Deck.`);
+  const inventory = event.inventories[String(userId)]; const rules = wutDeckRules(event.config.deckbuilding);
+  const cards = [...inventory.cards].sort((a, b) => Number(a.power || 1) - Number(b.power || 1) || Number(a.id) - Number(b.id));
+  const selectedCards = []; const identities = new Set(); let captainPatchCount = 0;
   const snapshot = card => { const trinket = inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id)); return {
     event_item_id: card.id, card_identity: card.card_identity, position: card.player_snapshot.position, rarity: card.rarity || card.player_snapshot.tier,
     base_power: Number(event.environment_snapshot.rules?.rarityCosts?.[card.rarity || card.player_snapshot.tier] || 1), power: Number(card.power || 1),
     player: clone(card.player_snapshot), trinket: trinket ? { id: trinket.id, family: trinket.family, rarity: trinket.rarity, effect: clone(trinket.effect || {}) } : null }; };
-  event.decks[String(userId)] = { user_id: Number(userId), active_card_ids: selected, safety_bench_card_ids: [...bench],
-    active_snapshots: selected.map(id => snapshot(inventory.cards.find(card => Number(card.id) === id))),
-    safety_bench_snapshots: [...bench].map(id => inventory.cards.find(card => Number(card.id) === id)).filter(Boolean).map(snapshot),
+  const topLineupPower = selected => ['F', 'D', 'G'].reduce((sum, position) => {
+    const needed = position === 'G' ? 1 : 2;
+    return sum + selected.filter(card => card.player_snapshot.position === position)
+      .map(card => Number(card.power || 1)).sort((a, b) => b - a).slice(0, needed)
+      .reduce((part, power) => part + power, 0);
+  }, 0);
+  const canAdd = card => {
+    const identity = String(card.card_identity || '');
+    if (identities.has(identity)) return false;
+    const trinket = inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id));
+    return !(trinket?.family === 'team_crest' && captainPatchCount >= WUT_CAPTAIN_PATCH_LIMIT) &&
+      topLineupPower([...selectedCards, card]) <= rules.topLineupMaxPower;
+  };
+  const add = card => {
+    selectedCards.push(card); identities.add(String(card.card_identity || ''));
+    const trinket = inventory.trinkets.find(item => Number(item.id) === Number(card.trinket_id));
+    if (trinket?.family === 'team_crest') captainPatchCount += 1;
+  };
+  if (rules.requirePositions) {
+    for (const [position, needed] of [['F', 2], ['D', 2], ['G', 1]]) {
+      while (selectedCards.filter(card => card.player_snapshot.position === position).length < needed) {
+        const next = cards.find(card => card.player_snapshot.position === position && !selectedCards.includes(card) && canAdd(card));
+        if (!next) throw new Error(`Player ${userId} cannot build a legal Event Deck.`);
+        add(next);
+      }
+    }
+  }
+  for (const card of cards) {
+    if (selectedCards.length >= rules.deckSize) break;
+    if (!selectedCards.includes(card) && canAdd(card)) add(card);
+  }
+  if (selectedCards.length < rules.deckSize) throw new Error(`Player ${userId} cannot build a legal Event Deck.`);
+  const selected = selectedCards.map(card => Number(card.id));
+  const activeSnapshots = selected.map(id => snapshot(inventory.cards.find(card => Number(card.id) === id)));
+  validateWutDeckSnapshots(activeSnapshots, event.config.deckbuilding, 'Event Deck');
+  event.decks[String(userId)] = { user_id: Number(userId), active_card_ids: selected, safety_bench_card_ids: [],
+    active_snapshots: activeSnapshots,
+    safety_bench_snapshots: [],
     submitted_at: now.toISOString(), automatic: true, locked: Boolean(event.config.deckbuilding.lockDeckForTournament) };
 }
 
@@ -190,31 +239,69 @@ export async function commitWutDraftEventTurnWithClient(client, { eventId, match
   const event = await lockAndLoadDraftEvent(client, eventId); const match = event.tournament.matches.find(item => String(item.id) === String(matchId));
   if (!match || !(match.player_ids || []).map(Number).includes(Number(userId))) throw new Error('Draft Event match not found.');
   if (match.status !== 'active') throw new Error('This Draft Event match is not active.');
-  const first = Number(match.first_player_id); const second = Number(match.player_ids.find(id => Number(id) !== first));
-  const current = Number(match.turn_index) % 2 === 0 ? first : second;
+  const current = arenaCurrentPlayerId(match);
   if (current !== Number(userId)) throw new Error('It is not your turn.');
-  const required = ARENA_TURN_SEQUENCE[Number(match.turn_index)]; if (!Array.isArray(placements) || placements.length !== required) throw new Error(`This turn requires exactly ${required} cards.`);
-  const available = new Map([...(match.deck_snapshots[String(userId)]?.active || []), ...(match.deck_snapshots[String(userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
+  const available = new Map([...(match.deck_snapshots[String(userId)]?.active || [])].map(card => [Number(card.card_id), card]));
+  const required = maxWutLegalPlacements({
+    cards: [...available.values()], placements: match.placements || [], userId,
+    slotPowerAllowance: event.environment_snapshot.rules?.slotPowerAllowance || 1,
+    trinketFits: trinketFitsWutPosition
+  }, arenaTurnCap(match));
+  if (required <= 0) {
+    skipWutNoLegalPlayers(match, match.placements || [], {
+      slotPowerAllowance: event.environment_snapshot.rules?.slotPowerAllowance || 1,
+      trinketFits: trinketFitsWutPosition,
+      cardsForUser: id => match.deck_snapshots[String(id)]?.active || []
+    });
+    match.turn_deadline = match.status === 'active' ? deadline(event, now) : null;
+    await saveDraftTournamentEvent(client, event);
+    return match;
+  }
+  if (!Array.isArray(placements) || placements.length !== required) throw new Error(`This turn requires ${required} legal cards.`);
   const existing = match.placements || []; const occupied = new Set(existing.filter(row => Number(row.user_id) === Number(userId)).map(row => row.slot));
   const usedIds = new Set(existing.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id)));
   const identities = new Set(existing.filter(row => Number(row.user_id) === Number(userId)).map(row => row.card_snapshot?.card_identity)); const added = [];
+  let captainCount = wutCaptainPatchCount(existing, userId);
   for (const input of placements) { const slot = String(input.slot || '').toUpperCase(); const card = available.get(Number(input.cardId));
     if (!['F1','F2','D1','D2','G'].includes(slot) || occupied.has(slot) || added.some(row => row.slot === slot)) throw new Error('Choose each open lineup slot only once.');
     if (!card || usedIds.has(Number(card.card_id)) || added.some(row => Number(row.card_id) === Number(card.card_id))) throw new Error('That card is unavailable.');
     if (identities.has(card.card_identity) || added.some(row => row.card_snapshot.card_identity === card.card_identity)) throw new Error('That player card is already in this lineup.');
     if (card.position !== (slot === 'G' ? 'G' : slot[0])) throw new Error(`That card is not eligible for ${slot}.`);
     if (!trinketFitsWutPosition(card.trinket?.family, card.position)) throw new Error('That trinket is not legal for this card position.');
+    let cardSnapshot = card;
+    if (card.trinket?.family === 'team_crest') {
+      if (captainCount >= WUT_CAPTAIN_PATCH_LIMIT) throw new Error(`Only ${WUT_CAPTAIN_PATCH_LIMIT} Captain's Patches can be active in a lineup.`);
+      cardSnapshot = markWutCaptainPatchRole(card, captainCount);
+      captainCount += 1;
+    }
     const opponent = existing.find(row => Number(row.user_id) !== Number(userId) && row.slot === slot);
-    if (opponent && asNumber(card.power) > asNumber(opponent.power) + asNumber(event.environment_snapshot.rules?.slotPowerAllowance || 1)) throw new Error('That card exceeds the slot Power allowance.');
+    if (opponent && asNumber(cardSnapshot.power) > asNumber(opponent.power) + asNumber(event.environment_snapshot.rules?.slotPowerAllowance || 1)) throw new Error('That card exceeds the slot Power allowance.');
     let boost = null; if (input.boostId) { const inventory = event.inventories[String(userId)]; boost = inventory.boosts.find(item => Number(item.id) === Number(input.boostId));
       if (!boost || boost.consumed || existing.some(row => Number(row.boost_id) === Number(boost.id)) || added.some(row => Number(row.boost_id) === Number(boost.id))) throw new Error('That boost is unavailable.'); }
     added.push({ user_id: Number(userId), owner_user_id: Number(userId), slot, card_id: Number(card.card_id), boost_id: boost ? Number(boost.id) : null,
-      boost_load: boost ? asNumber(event.environment_snapshot.rules?.rarityCosts?.[boost.rarity] || 1) : 0, power: asNumber(card.power),
-      card_snapshot: clone(card), journeyman_key: String(input.journeymanKey || ''), committed_at: now.toISOString() });
+      boost_load: boost ? asNumber(event.environment_snapshot.rules?.rarityCosts?.[boost.rarity] || 1) : 0, power: asNumber(cardSnapshot.power),
+      card_snapshot: clone(cardSnapshot), journeyman_key: String(input.journeymanKey || ''),
+      ward_target_slot: String(input.wardTargetSlot || '').toUpperCase(), committed_at: now.toISOString() });
     if (boost && event.config.match.boostsMode !== 'refresh_each_match') { boost.consumed = true; boost.used_match_id = match.id; }
   }
+  lockWardingChoices(match.placements || [], added);
   match.placements.push(...added); match.turn_index = Number(match.turn_index) + 1;
-  match.status = match.turn_index >= ARENA_TURN_SEQUENCE.length ? 'scoring' : 'active'; match.turn_deadline = match.status === 'active' ? deadline(event, now) : null;
+  match.exhausted_user_ids = (match.exhausted_user_ids || []).map(Number);
+  const legalAfter = maxWutLegalPlacements({
+    cards: [...available.values()], placements: match.placements || [], userId,
+    slotPowerAllowance: event.environment_snapshot.rules?.slotPowerAllowance || 1,
+    trinketFits: trinketFitsWutPosition
+  }, arenaTurnCap(match));
+  if (legalAfter <= 0 || match.placements.filter(row => Number(row.user_id) === Number(userId)).length >= 5) {
+    match.exhausted_user_ids = [...new Set([...match.exhausted_user_ids, Number(userId)])];
+  }
+  const nextPlayer = nextWutActivePlayer(match, match.placements || [], {
+    previousUserId: userId,
+    slotPowerAllowance: event.environment_snapshot.rules?.slotPowerAllowance || 1,
+    trinketFits: trinketFitsWutPosition,
+    cardsForUser: id => match.deck_snapshots[String(id)]?.active || []
+  });
+  match.status = nextPlayer == null ? 'scoring' : 'active'; match.turn_deadline = match.status === 'active' ? deadline(event, now) : null; match.current_player_id = nextPlayer;
   await saveDraftTournamentEvent(client, event); return match;
 }
 
@@ -223,6 +310,21 @@ export async function getDraftMatchesNeedingScoringPostgres(pool) {
   for (const row of events.rows) { const event = await getDraftEventPostgres(pool, row.id);
     for (const match of (event.tournament.matches || []).filter(item => item.status === 'scoring')) matches.push({ ...match, draft_event_id: event.id }); }
   return matches;
+}
+
+export async function skipWutDraftEventNoLegalTurnsWithClient(client, { eventId, matchId, now = new Date() }) {
+  const event = await lockAndLoadDraftEvent(client, eventId);
+  const match = event.tournament.matches.find(item => String(item.id) === String(matchId));
+  if (!match || match.status !== 'active') return match || null;
+  const skipped = skipWutNoLegalPlayers(match, match.placements || [], {
+    slotPowerAllowance: event.environment_snapshot.rules?.slotPowerAllowance || 1,
+    trinketFits: trinketFitsWutPosition,
+    cardsForUser: id => match.deck_snapshots[String(id)]?.active || []
+  });
+  if (!skipped.length) return match;
+  match.turn_deadline = match.status === 'active' ? deadline(event, now) : null;
+  await saveDraftTournamentEvent(client, event);
+  return match;
 }
 
 export async function completeWutDraftEventMatchWithClient(client, { eventId, matchId, scoredPlacements, now = new Date() }) {
@@ -262,7 +364,7 @@ function resetMatch(event, match, active, now) {
     const boost = inventory?.boosts?.find(item => Number(item.id) === Number(row.boost_id)); if (!boost || (boost.used_match_id && String(boost.used_match_id) !== String(match.arena_match_key))) continue;
     boost.consumed = false; delete boost.used_match_id; delete boost.used_slot; delete boost.consumed_at; releasedBoosts++; }
   const clearedPlacements = (match.placements || []).length; match.placements = []; match.status = active ? 'active' : 'pending'; match.turn_index = 0;
-  match.turn_deadline = active ? deadline(event, now) : null; match.scores = null; match.winner_user_id = null; match.forfeit_user_id = null; match.revealed_by = [];
+  match.current_player_id = active ? match.first_player_id : null; match.turn_deadline = active ? deadline(event, now) : null; match.scores = null; match.winner_user_id = null; match.forfeit_user_id = null; match.revealed_by = [];
   match.resolved_at = null; match.completed_at = null; if (active) match.started_at = now.toISOString(); else delete match.started_at;
   for (const key of ['forfeit_reason','elimination_tiebreak','cancel_reason','cancelled_at','void_reason','voided_at','voided_by']) delete match[key];
   return { clearedPlacements, releasedBoosts };
@@ -386,7 +488,7 @@ export async function awardWutDraftEventPrizesWithClient(client, { eventId, admi
         await client.query(`INSERT INTO pack_purchases(id,user_id,status,pack_kind,pack_type,created_at,source_order,data) VALUES($1,$2,$3,'player',$4,$5,$6,$7::jsonb)`, [id,row.user_id,status,reward.packType,purchase.created_at,id,JSON.stringify(purchase)]);
         awards.push({ ...base, type: 'player_pack', pack_type: reward.packType, pack_purchase_id: id, status }); continue; }
       const rarity = reward.rarity === 'any' ? randomRarity() : String(reward.rarity || 'common'); const family = reward.type === 'specific_trinket' ? reward.family : families[Math.floor(random() * families.length)];
-      const id = Number((await client.query("SELECT nextval('owned_trinkets_id_seq') AS id")).rows[0].id); const trinket = { id, user_id: Number(row.user_id), family, rarity, effect: clone(cardsMeta.config?.wut?.trinketEffects?.[family]?.[rarity] ?? WUT_LAUNCH_TRINKET_EFFECTS[family]?.[rarity]), attached_card_id: null, source: 'draft_event_prize', draft_event_id: Number(event.id), created_at: now.toISOString() };
+      const id = Number((await client.query("SELECT nextval('owned_trinkets_id_seq') AS id")).rows[0].id); const trinket = { id, user_id: Number(row.user_id), family, rarity, effect: trinketEffectFor(cardsMeta.config?.wut || {}, family, rarity), attached_card_id: null, source: 'draft_event_prize', draft_event_id: Number(event.id), created_at: now.toISOString() };
       await client.query(`INSERT INTO owned_trinkets(id,user_id,family,rarity,attached_card_id,source_order,data) VALUES($1,$2,$3,$4,NULL,$5,$6::jsonb)`, [id,row.user_id,family,rarity,id,JSON.stringify(trinket)]); awards.push({ ...base, type:'trinket', family, rarity, trinket_id:id });
     }
   }
@@ -403,6 +505,7 @@ export async function awardWutDraftEventPrizesWithClient(client, { eventId, admi
 
 export const finishWutDraftDeckbuildingPostgres = (pool, input) => withTransaction(pool, client => finishWutDraftDeckbuildingWithClient(client, input));
 export const commitWutDraftEventTurnPostgres = (pool, input) => withTransaction(pool, client => commitWutDraftEventTurnWithClient(client, input));
+export const skipWutDraftEventNoLegalTurnsPostgres = (pool, input) => withTransaction(pool, client => skipWutDraftEventNoLegalTurnsWithClient(client, input));
 export const completeWutDraftEventMatchPostgres = (pool, input) => withTransaction(pool, client => completeWutDraftEventMatchWithClient(client, input));
 export const completeWutDraftEventRevealPostgres = (pool, input) => withTransaction(pool, client => completeWutDraftEventRevealWithClient(client, input));
 export const resolveWutDraftEventMatchPostgres = (pool, input) => withTransaction(pool, client => resolveWutDraftEventMatchWithClient(client, input));

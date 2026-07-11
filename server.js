@@ -97,6 +97,9 @@ import {
   joinWut,
   openWutStarterPack,
   adjustWutCoinBalance,
+  refundWutTrinketRemovalFees,
+  voidOngoingWutMatchesForRulesUpdate,
+  sellDuplicatePlayerCard,
   grantCardsTestItem,
   getCardsWeekReviews,
   acknowledgeCardsWeekReview,
@@ -112,18 +115,27 @@ import {
   adminVoidArenaMatch,
   enterArenaQueue,
   assignArenaMatchups,
+  submitArenaDraftPrep,
+  chooseArenaFirstPlayer,
   commitArenaTurn,
   autoAssignExpiredArenaTurns,
+  skipArenaNoLegalTurns,
   getArenaMatchesNeedingScoring,
   completeArenaMatch,
   completeArenaReveal,
   claimArenaWinnings,
   claimWutMission,
   getWutSystemsState,
+  getWutTradingState,
+  listWutTradeCard,
+  unlistWutTradeCard,
+  offerWutTrade,
+  resolveWutTradeOffer,
   setWutMissionBetOpportunities,
   saveWutDeck,
   buyWutDeckSlot,
   buyWutTrinket,
+  toggleWutTrinketShopLock,
   rerollWutTrinketShop,
   attachWutTrinket,
   removeWutTrinket,
@@ -146,10 +158,6 @@ import {
   startWutDraftEvent,
   resolveWutDraftEventMatch,
   resetCurrentWutDraftEventRound,
-  beginWutDraftSafetyBench,
-  voteWutDraftSafetyBench,
-  finishWutDraftSafetyBench,
-  extendWutDraftSafetyBench,
   processWutDraftEvents,
   beginWutDraftEvent,
   pickWutDraftItem,
@@ -225,6 +233,8 @@ import {
   saveCardsConfigPostgres,
   grantCardsTestItemPostgres,
   saveCalculatedCardTiersPostgres,
+  refundWutTrinketRemovalFeesPostgres,
+  voidOngoingWutMatchesForRulesUpdatePostgres,
   setCardsPlayerOverridesPostgres,
   setCardsPositionOverridePostgres,
   setCardsTierOverridePostgres,
@@ -257,12 +267,6 @@ import {
   saveWutDraftEventDeckPostgres
 } from './database/repositories/draftDecks.js';
 import {
-  beginWutDraftSafetyBenchPostgres,
-  extendWutDraftSafetyBenchPostgres,
-  finishWutDraftSafetyBenchPostgres,
-  voteWutDraftSafetyBenchPostgres
-} from './database/repositories/draftBench.js';
-import {
   commitWutDraftEventTurnPostgres,
   completeWutDraftEventMatchPostgres,
   completeWutDraftEventRevealPostgres,
@@ -274,6 +278,7 @@ import {
   getDraftMatchesNeedingScoringPostgres,
   resetCurrentWutDraftEventRoundPostgres,
   resolveWutDraftEventMatchPostgres,
+  skipWutDraftEventNoLegalTurnsPostgres,
   updateWutDraftTournamentTurnSecondsPostgres
 } from './database/repositories/draftTournament.js';
 import { processWutDraftEventsPostgres } from './database/repositories/draftScheduler.js';
@@ -300,8 +305,16 @@ import {
 } from './database/repositories/oddsAdmin.js';
 import { getLeaderboardsPostgres, getTopWeeklyBetsPostgres, getUserSettledBetHistoryPostgres, getWeeklyBetTotalByTeamPostgres } from './database/repositories/homeRead.js';
 import { createCardsPackPurchasePostgres, claimCardsPackPostgres } from './database/repositories/wutPacks.js';
+import { sellDuplicatePlayerCardPostgres } from './database/repositories/wutDuplicates.js';
+import {
+  getWutTradingStatePostgres,
+  listWutTradeCardPostgres,
+  offerWutTradePostgres,
+  resolveWutTradeOfferPostgres,
+  unlistWutTradeCardPostgres
+} from './database/repositories/wutTrades.js';
 import { saveWutDeckPostgres, buyWutDeckSlotPostgres } from './database/repositories/wutDecks.js';
-import { buyWutTrinketPostgres, rerollWutTrinketShopPostgres } from './database/repositories/wutShop.js';
+import { buyWutTrinketPostgres, rerollWutTrinketShopPostgres, toggleWutTrinketShopLockPostgres } from './database/repositories/wutShop.js';
 import { attachWutTrinketPostgres, removeWutTrinketPostgres } from './database/repositories/wutTrinkets.js';
 import {
   getCardsOwnedStatePostgres,
@@ -313,6 +326,9 @@ import {
   adminVoidArenaMatchPostgres,
   autoAssignExpiredArenaTurnsPostgres,
   commitArenaTurnPostgres,
+  chooseArenaFirstPlayerPostgres,
+  submitArenaDraftPrepPostgres,
+  skipArenaNoLegalTurnsPostgres,
   completeArenaMatchPostgres,
   completeArenaRevealPostgres,
   recalculateArenaEloFromHistoryPostgres
@@ -335,13 +351,14 @@ import {
   boostFantasyBonus,
   buildFantasyBreakdown,
   buildCardPlayerCatalog,
+  buildRarityDistribution,
   generateBoostPack,
   generatePlayerPack,
+  generateWutBoostPack,
   generateWutPlayerPack,
   availableWutMatchCards,
   generateWutStarterPack,
   chemistryMultiplierForCount,
-  captainPatchChemistry,
   wutChemistryKey,
   getCardSeriesOptions,
   scoreCardSeries,
@@ -360,6 +377,7 @@ import {
   WUT_TRINKET_ICONS,
   wutTitleCase,
   wutTrinketDescription,
+  wutTrinketIcon,
   wutTrinketName
 } from './services/wutTrinketText.js';
 import {
@@ -370,6 +388,11 @@ import {
   snapshotWutDraftCard,
   splitWutDraftCardPools
 } from './services/wutDraftEvents.js';
+import {
+  arenaCurrentPlayerId,
+  arenaTurnCap,
+  maxWutLegalPlacements
+} from './services/arenaRuntime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -378,6 +401,7 @@ const port = Number(process.env.PORT || 3000);
 app.locals.WUT_TRINKET_ICONS = WUT_TRINKET_ICONS;
 app.locals.wutTitleCase = wutTitleCase;
 app.locals.wutTrinketDescription = wutTrinketDescription;
+app.locals.wutTrinketIcon = wutTrinketIcon;
 app.locals.wutTrinketName = wutTrinketName;
 let liveCardsConfigCache = getCardsConfig();
 app.locals.wutTrinketPower = rarity => Number(liveCardsConfigCache.wut?.trinketPowerValues?.[String(rarity || '').toLowerCase()] || 0);
@@ -1310,6 +1334,7 @@ async function getCardsCatalog() {
     seasonId: settings.seasonId,
     positionOverrides: admin.positionOverrides,
     tierOverrides: admin.tierOverrides,
+    rarityThresholds: admin.config.rarityThresholds,
     scoringConfig: admin.config.scoring
   });
 }
@@ -1319,15 +1344,25 @@ async function getLiveCardsConfig() {
   return liveCardsConfigCache;
 }
 
-function sortCardsCatalogForAdmin(catalog) {
+function sortCardsCatalogForAdmin(catalog, sortMode = 'season') {
   const seasonRank = { S1: 1, S2: 2, S3: 3, MYTHIC: 4 };
   const rarityRank = { mythic: 6, legendary: 5, epic: 4, rare: 3, uncommon: 2, common: 1 };
+  const baseSort = (a, b) =>
+    String(a.divisionId || '').localeCompare(String(b.divisionId || '')) ||
+    String(a.name || '').localeCompare(String(b.name || ''));
+  if (sortMode === 'fpm_asc' || sortMode === 'fpm_desc') {
+    const direction = sortMode === 'fpm_asc' ? 1 : -1;
+    return [...catalog].sort((a, b) =>
+      (Number(a.expectedWutFpPerMatch || 0) - Number(b.expectedWutFpPerMatch || 0)) * direction ||
+      (seasonRank[a.edition] || 99) - (seasonRank[b.edition] || 99) ||
+      baseSort(a, b)
+    );
+  }
   return [...catalog].sort((a, b) =>
     (seasonRank[a.edition] || 99) - (seasonRank[b.edition] || 99) ||
+    Number(b.expectedWutFpPerMatch || 0) - Number(a.expectedWutFpPerMatch || 0) ||
     (rarityRank[b.tier] || 0) - (rarityRank[a.tier] || 0) ||
-    Number(b.weightedFpPerGame || 0) - Number(a.weightedFpPerGame || 0) ||
-    String(a.divisionId || '').localeCompare(String(b.divisionId || '')) ||
-    String(a.name || '').localeCompare(String(b.name || ''))
+    baseSort(a, b)
   );
 }
 
@@ -1846,9 +1881,14 @@ function arenaSnapshotForCard(card, wutConfig) {
 
 function arenaDeckSnapshotFromHub(hub, deck) {
   const cards = new Map((hub.cards || []).map(card => [Number(card.id), card]));
+  const trinkets = new Map((hub.wut?.trinkets || []).map(item => [Number(item.id), item]));
+  const assignments = deck.trinket_assignments || {};
   return {
-    active: (deck.active_card_ids || []).map(id => arenaSnapshotForCard(cards.get(Number(id)), hub.wut?.config)),
-    bench: (deck.bench_card_ids || []).map(id => arenaSnapshotForCard(cards.get(Number(id)), hub.wut?.config))
+    active: (deck.active_card_ids || []).map(id => {
+      const card = cards.get(Number(id));
+      const trinket = trinkets.get(Number(assignments[String(id)])) || null;
+      return arenaSnapshotForCard(card ? { ...card, trinket, power: calculateWutPower(card.player?.tier, trinket?.rarity, hub.wut?.config) } : card, hub.wut?.config);
+    })
   };
 }
 
@@ -1880,11 +1920,25 @@ async function scorePendingArenaMatches(catalog = null) {
         ? await getCardsOwnedStatePostgres(postgresPool(), placement.owner_user_id || placement.user_id)
         : getCardsOwnedState(placement.owner_user_id || placement.user_id));
       const rawCard = (eventInventory?.cards || owned?.cards || []).find(card => Number(card.id) === Number(placement.card_id));
-      const card = rawCard ? (eventInventory ? draftEventCardView(rawCard, eventInventory, catalogByKey) : decorateOwnedCard(rawCard, catalogByKey)) : null;
+      const card = rawCard ? (eventInventory ? draftEventCardView(rawCard, eventInventory, catalogByKey) : decorateOwnedCard(rawCard, catalogByKey))
+        : placement.card_snapshot?.player ? {
+            id: Number(placement.card_id),
+            card_identity: placement.card_snapshot.card_identity,
+            power: Number(placement.power || placement.card_snapshot.power || 1),
+            trinket: placement.card_snapshot.trinket || null,
+            player: {
+              ...placement.card_snapshot.player,
+              name: placement.card_snapshot.player.name || placement.card_snapshot.display_name,
+              tier: placement.card_snapshot.player.tier || placement.card_snapshot.rarity,
+              position: placement.card_snapshot.position
+            }
+          } : null;
       const rawBoost = (eventInventory?.boosts || owned?.boosts || []).find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
-      const boost = rawBoost ? {
-        ...rawBoost,
-        effect: config.boostEffects?.[rawBoost.boost_type]?.[rawBoost.rarity] || rawBoost.effect || DEFAULT_BOOST_EFFECTS[rawBoost.boost_type]?.[rawBoost.rarity]
+      const draftBoost = match.draft_loadouts?.[String(placement.user_id)]?.boosts?.find(boost => Number(boost.id) === Number(placement.boost_id)) || null;
+      const boostSource = rawBoost || draftBoost;
+      const boost = boostSource ? {
+        ...boostSource,
+        effect: config.boostEffects?.[boostSource.boost_type]?.[boostSource.rarity] || boostSource.effect || DEFAULT_BOOST_EFFECTS[boostSource.boost_type]?.[boostSource.rarity]
       } : null;
       const snapshotTrinket = placement.card_snapshot?.trinket || null;
       const legalTrinket = trinketFitsWutPosition(snapshotTrinket?.family, card?.player?.position || placement.card_snapshot?.position) ? snapshotTrinket : null;
@@ -1927,13 +1981,9 @@ async function scorePendingArenaMatches(catalog = null) {
         )
         : [];
       const teamCount = chemistryGroup.length;
-      const captainPatch = chemistryGroup
-        .filter(other => Number(other.placement.user_id) === Number(entry.placement.user_id) && other.trinket?.family === 'team_crest')
-        .sort((a, b) => Number(b.trinket?.effect || 0) - Number(a.trinket?.effect || 0))[0] || null;
       const baseChemistryMultiplier = chemistryMultiplierForCount(teamCount, config.scoring);
-      const captainChemistry = captainPatchChemistry(baseChemistryMultiplier, captainPatch ? [captainPatch.trinket.effect] : []);
       if (Number(match.rules_version || 1) < 2) {
-        const result = applyChemistryBonus(entry.result, { count: teamCount, multiplier: chemistryMultiplierForCount(teamCount, config.scoring) });
+        const result = applyChemistryBonus(entry.result, { count: teamCount, multiplier: baseChemistryMultiplier });
         positive.push({ ...entry, teamCount, wouldBeFp: Number(result.exactFp || result.fp || 0), finalFp: Number(result.exactFp || result.fp || 0), result });
         continue;
       }
@@ -1961,7 +2011,7 @@ async function scorePendingArenaMatches(catalog = null) {
         opponentRarityRank: opponent?.placement?.card_snapshot?.base_power || CARD_STARS[opponent?.placement?.card_snapshot?.rarity] || null,
         stats: entry.result.stats, boost: entry.boost, boostLoad: entry.placement.boost_load,
         adjacentBoostGains: rawScores.filter(other => Number(other.userId) === Number(entry.userId) && adjacentWutSlots(entry.slot).includes(other.slot)).map(other => rawBoostGains.get(other)),
-        chemistryMultiplier: captainChemistry.multiplier
+        chemistryMultiplier: baseChemistryMultiplier
       });
       entry.logs.push(...positiveLayers.logs);
       const scoringEffects = [];
@@ -1973,7 +2023,8 @@ async function scorePendingArenaMatches(catalog = null) {
           triggered: entry.trinket?.family === 'lucky_charm' ? Boolean(positiveLayers.luckyCharm?.hit) : Number(positiveLayers.trinketGain || 0) !== 0,
           label: positiveLayers.trinketLabel || 'Trinket',
           points: Number(positiveLayers.trinketGain || 0),
-          rarity: entry.trinket?.rarity || 'common'
+          rarity: entry.trinket?.rarity || 'common',
+          captainRole: entry.trinket?.captainRole || entry.trinket?.captain_role || ''
         });
       }
       if (positiveLayers.boostGain) scoringEffects.push({
@@ -1984,19 +2035,10 @@ async function scorePendingArenaMatches(catalog = null) {
       });
       const preChemistryFp = Number(positiveLayers.preChemistryFp || 0);
       const baseChemistryGain = preChemistryFp * Math.max(0, baseChemistryMultiplier - 1);
-      const captainPatchGain = Math.max(0, Number(positiveLayers.chemistryGain || 0) - baseChemistryGain);
       if (baseChemistryGain) scoringEffects.push({
         type: 'chemistry',
         label: `Chemistry (+${Number(((baseChemistryMultiplier - 1) * 100).toFixed(2))}%)`,
         points: baseChemistryGain
-      });
-      if (captainPatchGain) scoringEffects.push({
-        type: 'trinket',
-        family: 'team_crest',
-        triggered: true,
-        label: `Captain's Patch (+${Number(captainChemistry.effect * 100).toFixed(0)}% chemistry)`,
-        points: captainPatchGain,
-        rarity: captainPatch?.trinket?.rarity || 'common'
       });
       if (entry.zebraReduction) scoringEffects.push({
         type: 'trinket',
@@ -2075,7 +2117,7 @@ async function processAutomaticWutDraftStarts(catalog = null, now = new Date()) 
   const started = [];
   for (const event of due) {
     startWutDraftEvent({ eventId: event.id, environment: await draftEnvironmentFromCatalog(event, activeCatalog), adminUserId: null, system: true, now });
-    beginWutDraftSafetyBench({ eventId: event.id, adminUserId: null, system: true, now });
+    beginWutDraftEvent({ eventId: event.id, adminUserId: null, now });
     started.push(Number(event.id));
   }
   return started;
@@ -2124,7 +2166,7 @@ async function processArena(now = new Date()) {
       if (!settings.cardsOpen) return catalog;
       const arenaMeta = (await postgresPool().query("SELECT data FROM app_documents WHERE document_key='arena_meta'")).rows[0]?.data || {};
       const slot = String(Math.floor(now.getTime() / (30 * 60 * 1000)));
-      if (String(arenaMeta.lastMatchmakingSlot || '') !== slot) await assignArenaMatchupsPostgres(postgresPool(), { now });
+      if (String(arenaMeta.lastMatchmakingSlot || '') !== slot) await assignArenaMatchupsPostgres(postgresPool(), { now, catalog });
       await autoAssignExpiredArenaTurnsPostgres(postgresPool(), { now });
       await scorePendingArenaMatches(catalog);
       const draftTick = await processWutDraftEventsPostgres(postgresPool(), now);
@@ -2137,18 +2179,18 @@ async function processArena(now = new Date()) {
           system: true,
           now
         });
-        await beginWutDraftSafetyBenchPostgres(postgresPool(), { eventId, system: true, now });
+        await beginWutDraftEventPostgres(postgresPool(), { eventId, now });
       }
       await awardCompletedWutDraftEventsPostgres(catalog);
       return catalog;
     }
     if (getAdminSettings().maintenanceMode) return null;
     if (!getAdminSettings().cardsOpen) return getCardsCatalog();
+    const catalog = await getCardsCatalog();
     const admin = getArenaAdminState(now);
     if (admin.matchmakingDue) {
-      assignArenaMatchups(now);
+      assignArenaMatchups(now, catalog);
     }
-    const catalog = await getCardsCatalog();
     const identityMap = arenaCatalogByIdentity(catalog);
     autoAssignExpiredArenaTurns(identityMap, now);
     await scorePendingArenaMatches(catalog);
@@ -2162,8 +2204,16 @@ async function processArena(now = new Date()) {
 function decorateArenaMatch(match, allCards, boosts) {
   const placements = (match.placements || []).map(row => {
     const currentCard = allCards.find(item => Number(item.id) === Number(row.card_id)) || null;
-    const card = currentCard ? { ...currentCard, power: Number(row.power || currentCard.power || 1), trinket: row.card_snapshot?.trinket || row.trinket || currentCard.trinket || null } : null;
-    const boost = boosts.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const draftCard = row.card_snapshot?.player ? {
+      id: Number(row.card_id),
+      card_identity: row.card_snapshot.card_identity,
+      power: Number(row.power || row.card_snapshot.power || 1),
+      trinket: row.card_snapshot?.trinket || null,
+      player: { ...row.card_snapshot.player, tier: row.card_snapshot.rarity || row.card_snapshot.player.tier, position: row.card_snapshot.position }
+    } : null;
+    const card = currentCard ? { ...currentCard, power: Number(row.power || currentCard.power || 1), trinket: row.card_snapshot?.trinket || row.trinket || currentCard.trinket || null } : draftCard;
+    const draftBoost = match.draft_loadouts?.[String(row.user_id)]?.boosts?.find(item => Number(item.id) === Number(row.boost_id)) || null;
+    const boost = boosts.find(item => Number(item.id) === Number(row.boost_id)) || draftBoost;
     const needsSavePctBreakdown = card?.player?.position === 'G' && row.stats && !(row.score_breakdown || []).some(item => item.type === 'save_pct');
     return {
       ...row,
@@ -2233,19 +2283,41 @@ async function buildArenaCardsHub(userId, query = {}) {
   const wut = membership.starterOpened
     ? (postgresEnabled ? await getWutSystemsStatePostgres(postgresPool(), userId) : getWutSystemsState(userId))
     : { wutCoins: 0, decks: [], trinkets: [], shop: null, config: liveCardsConfigCache.wut };
-  const trinketsById = new Map((wut.trinkets || []).map(item => [Number(item.id), item]));
   const cards = owned.cards.map(card => {
     const decorated = decorateOwnedCard(card, catalogByKey);
-    const trinket = trinketsById.get(Number(card.trinket_id)) || null;
-    return { ...decorated, trinket, power: calculateWutPower(decorated.player?.tier, trinket?.rarity, wut.config) };
+    return { ...decorated, trinket: null, power: calculateWutPower(decorated.player?.tier, null, wut.config) };
   });
+  const duplicateSellValues = { common: 25, uncommon: 50, rare: 100, epic: 150, legendary: 200 };
+  const duplicateIds = new Set();
+  const cardsByIdentity = new Map();
+  for (const card of cards) {
+    const identity = String(card.card_identity || '').trim();
+    if (!identity) continue;
+    const group = cardsByIdentity.get(identity) || [];
+    group.push(card);
+    cardsByIdentity.set(identity, group);
+  }
+  for (const group of cardsByIdentity.values()) {
+    group.sort((a, b) => Number(a.id) - Number(b.id)).slice(1).forEach(card => duplicateIds.add(Number(card.id)));
+  }
   const boosts = owned.boosts.map(boost => ({
     ...boost,
     effect: config.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect || DEFAULT_BOOST_EFFECTS[boost.boost_type]?.[boost.rarity]
   }));
-  const arena = postgresEnabled
+  let arena = postgresEnabled
     ? await getArenaStateForUserPostgres(postgresPool(), userId)
     : getArenaStateForUser(userId);
+  for (let guard = 0; guard < 5; guard += 1) {
+    const stuckMatch = arena.activeMatches.find(match => match.status === 'active' && Number(match.cards_required_this_turn || 0) === 0);
+    if (!stuckMatch) break;
+    const skippedMatch = postgresEnabled
+      ? await skipArenaNoLegalTurnsPostgres(postgresPool(), { matchId: stuckMatch.id })
+      : skipArenaNoLegalTurns(stuckMatch.id);
+    if (skippedMatch?.status === 'scoring') await scorePendingArenaMatches(catalog);
+    arena = postgresEnabled
+      ? await getArenaStateForUserPostgres(postgresPool(), userId)
+      : getArenaStateForUser(userId);
+  }
   const allMatchCardIds = new Set([
     ...arena.activeMatches, ...arena.readyMatches, ...arena.history
   ].flatMap(match => match.placements.map(row => Number(row.card_id))));
@@ -2275,11 +2347,41 @@ async function buildArenaCardsHub(userId, query = {}) {
   const lockedCardIds = new Set(arena.activeMatches.flatMap(match => match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.card_id))));
   const lockedBoostIds = new Set(arena.activeMatches.flatMap(match => match.placements.filter(row => Number(row.user_id) === Number(userId)).map(row => Number(row.boost_id))));
   cards.sort((a, b) => (CARD_STARS[b.player?.tier] || 0) - (CARD_STARS[a.player?.tier] || 0) || String(a.player?.name).localeCompare(String(b.player?.name)));
+  const rawTrading = membership.starterOpened
+    ? (postgresEnabled ? await getWutTradingStatePostgres(postgresPool(), userId) : getWutTradingState(userId))
+    : { ownListings: [], marketListings: [], incomingOffers: [], outgoingOffers: [] };
+  const decorateTradeListing = listing => {
+    const rawCard = listing.card || owned.cards.find(card => Number(card.id) === Number(listing.card_id));
+    const decorated = rawCard ? decorateOwnedCard(rawCard, catalogByKey) : null;
+    return {
+      ...listing,
+      card: decorated ? { ...decorated, trinket: null, power: calculateWutPower(decorated.player?.tier, null, wut.config) } : null
+    };
+  };
+  const decorateTradeOffer = offer => ({
+    ...offer,
+    target_listing: decorateTradeListing(offer.target_listing || {}),
+    offered_listing: decorateTradeListing(offer.offered_listing || {})
+  });
+  const trading = {
+    ownListings: (rawTrading.ownListings || []).map(decorateTradeListing).filter(item => item.card),
+    marketListings: (rawTrading.marketListings || []).map(decorateTradeListing).filter(item => item.card),
+    incomingOffers: (rawTrading.incomingOffers || []).map(decorateTradeOffer).filter(item => item.target_listing.card && item.offered_listing.card),
+    outgoingOffers: (rawTrading.outgoingOffers || []).map(decorateTradeOffer).filter(item => item.target_listing.card && item.offered_listing.card)
+  };
+  const ownTradeListedIds = new Set(trading.ownListings.map(item => Number(item.card_id)));
   return {
     arena,
     wutMembership: membership,
     wut,
-    cards: cards.map(card => ({ ...card, arenaLocked: false })),
+    trading,
+    cards: cards.map(card => ({
+      ...card,
+      arenaLocked: false,
+      tradeListed: ownTradeListedIds.has(Number(card.id)),
+      duplicateCopy: duplicateIds.has(Number(card.id)),
+      duplicateSellValue: duplicateIds.has(Number(card.id)) ? Number(duplicateSellValues[card.player?.tier] || 0) : 0
+    })),
     boosts: boosts.filter(boost => !boost.consumed).map(boost => ({ ...boost, arenaLocked: lockedBoostIds.has(Number(boost.id)) })),
     balance: postgresEnabled ? Number((await getUserByIdPostgres(postgresPool(), userId))?.balance || 0) : getUserById(userId)?.balance || 0,
     wutCoins: Number(wut.wutCoins || 0),
@@ -2364,15 +2466,20 @@ async function postgresDraftMatchPayload(eventId, matchId, userId) {
   if (!event) throw new Error('Draft Event not found.');
   const raw = (event.tournament?.matches || []).find(item => String(item.id) === String(matchId));
   if (!raw || !(raw.player_ids || []).map(Number).includes(Number(userId))) throw new Error('Draft Event match not found.');
-  const first = Number(raw.first_player_id);
-  const second = Number(raw.player_ids.find(id => Number(id) !== first));
-  const current = raw.status === 'active' ? (Number(raw.turn_index || 0) % 2 === 0 ? first : second) : null;
+  const current = raw.status === 'active' ? arenaCurrentPlayerId(raw) : null;
+  const cardsRequired = current == null ? 0 : maxWutLegalPlacements({
+    cards: raw.deck_snapshots?.[String(current)]?.active || [],
+    placements: raw.placements || [],
+    userId: current,
+    slotPowerAllowance: raw.rules_snapshot?.slotPowerAllowance || event.environment_snapshot?.rules?.slotPowerAllowance || 1,
+    trinketFits: trinketFitsWutPosition
+  }, arenaTurnCap(raw));
   const players = raw.player_ids.map(id => {
     const entrant = event.entrants.find(item => Number(item.user_id) === Number(id));
     return { id: Number(id), displayName: entrant?.display_name || `Player ${id}` };
   });
   const match = { ...raw, players, opponent: players.find(player => player.id !== Number(userId)) || null,
-    current_player_id: current, cards_required_this_turn: raw.status === 'active' ? [1, 2, 2, 2, 2, 1][Number(raw.turn_index)] : 0,
+    current_player_id: current, cards_required_this_turn: raw.status === 'active' ? cardsRequired : 0,
     is_your_turn: current === Number(userId), timer_paused: Boolean(event.paused_at),
     boost_load_used: (raw.placements || []).filter(row => Number(row.user_id) === Number(userId)).reduce((sum, row) => sum + Number(row.boost_load || 0), 0) };
   return { event, match };
@@ -2386,8 +2493,7 @@ app.get('/cards/drafts/:eventId', requireLogin, requireWutReady, async (req, res
       : getWutDraftEventLobby({ eventId: req.params.eventId, userId: req.session.userId }))[0];
     if (!event) return res.status(404).send('Draft Event not found.');
     const inventorySource = Object.keys(event.inventories || {}).length ? event.inventories : event.archived_inventories || {};
-    const inventory = inventorySource[String(req.session.userId)] || { cards: [], boosts: [], trinkets: [], safety_bench_card_ids: [] };
-    const vote = event.bench?.votes?.find(item => Number(item.user_id) === Number(req.session.userId)) || null;
+    const inventory = inventorySource[String(req.session.userId)] || { cards: [], boosts: [], trinkets: [] };
     const currentPack = event.phase === 'draft' ? event.draft.boosters.find(pack =>
       Number(pack.booster_number) === Number(event.draft.current_booster) &&
       Number(pack.current_owner_user_id) === Number(req.session.userId) && !pack.awaiting_pass && pack.items.length
@@ -2400,9 +2506,6 @@ app.get('/cards/drafts/:eventId', requireLogin, requireWutReady, async (req, res
         boostViews: inventory.boosts || [],
         trinketViews: inventory.trinkets || []
       },
-      benchCandidates: (event.bench?.candidates || []).map(candidate => ({ ...candidate, cardView: draftEventCardView(candidate) })),
-      benchWinners: (event.bench?.winners || []).map(winner => ({ ...winner, cardView: draftEventCardView(winner) })),
-      userVote: vote,
       eventDeck: event.decks?.[String(req.session.userId)] || null,
       isEntrant: event.joined_by_user,
       currentPack: currentPack ? {
@@ -2443,22 +2546,6 @@ app.get('/cards/drafts/:eventId/status', requireLogin, requireWutReady, async (r
   } catch (err) { next(err); }
 });
 
-app.post('/cards/drafts/:eventId/bench-vote', requireLogin, requireWutReady, async (req, res) => {
-  try {
-    const values = key => req.body[key] == null ? [] : Array.isArray(req.body[key]) ? req.body[key] : [req.body[key]];
-    const input = {
-      eventId: req.params.eventId, userId: req.session.userId,
-      selections: { F: values('F'), D: values('D'), G: values('G') }
-    };
-    if (postgresEnabled) await voteWutDraftSafetyBenchPostgres(postgresPool(), input);
-    else voteWutDraftSafetyBench(input);
-    req.session.flash = { type: 'success', message: 'Your shared Safety Bench vote was saved.' };
-  } catch (err) {
-    req.session.flash = { type: 'error', message: err.message };
-  }
-  res.redirect(`/cards/drafts/${req.params.eventId}`);
-});
-
 app.post('/cards/drafts/:eventId/pick', requireLogin, requireWutReady, async (req, res) => {
   try {
     const input = { eventId: req.params.eventId, userId: req.session.userId, itemId: req.body.item_id };
@@ -2475,7 +2562,7 @@ app.post('/cards/drafts/:eventId/pick', requireLogin, requireWutReady, async (re
 app.post('/cards/drafts/:eventId/deck', requireLogin, requireWutReady, async (req, res) => {
   try {
     const values = req.body.active_card_ids == null ? [] : Array.isArray(req.body.active_card_ids) ? req.body.active_card_ids : [req.body.active_card_ids];
-    const input = { eventId: req.params.eventId, userId: req.session.userId, activeCardIds: values };
+    const input = { eventId: req.params.eventId, userId: req.session.userId, activeCardIds: values, trinketAssignmentIds: req.body.trinket_assignments || {} };
     const result = postgresEnabled ? await saveWutDraftEventDeckPostgres(postgresPool(), input) : saveWutDraftEventDeck(input);
     req.session.flash = { type: 'success', message: result.event.phase === 'tournament' ? 'Event Deck saved for the next tournament round.' : result.event.phase === 'complete' ? 'Event Deck locked. The tournament is complete.' : 'Event Deck saved. You can revise it until deckbuilding closes.' };
   } catch (err) {
@@ -2511,9 +2598,19 @@ app.post('/cards/drafts/:eventId/trinkets/detach', requireLogin, requireWutReady
 app.get('/cards/drafts/:eventId/matches/:matchId', requireLogin, requireWutReady, async (req, res, next) => {
   try {
     if (!postgresEnabled) processWutDraftEvents(new Date());
-    const payload = postgresEnabled
+    if (postgresEnabled) await skipWutDraftEventNoLegalTurnsPostgres(postgresPool(), {
+      eventId: req.params.eventId,
+      matchId: req.params.matchId
+    });
+    let payload = postgresEnabled
       ? await postgresDraftMatchPayload(req.params.eventId, req.params.matchId, req.session.userId)
       : getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    if (payload.match.status === 'scoring') {
+      await scorePendingArenaMatches();
+      payload = postgresEnabled
+        ? await postgresDraftMatchPayload(req.params.eventId, req.params.matchId, req.session.userId)
+        : getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    }
     const { event } = payload; let { match } = payload;
     const allCards = []; const allBoosts = [];
     const inventorySource = Object.keys(event.inventories || {}).length ? event.inventories : event.archived_inventories || {};
@@ -2523,8 +2620,8 @@ app.get('/cards/drafts/:eventId/matches/:matchId', requireLogin, requireWutReady
     }
     match = decorateArenaMatch(match, allCards, allBoosts);
     const inventory = inventorySource[String(req.session.userId)] || { cards: [], boosts: [], trinkets: [] };
-    const snapshotIds = new Set([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => Number(card.card_id)));
-    const snapshots = new Map([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
+    const snapshotIds = new Set([...(match.deck_snapshots?.[String(req.session.userId)]?.active || [])].map(card => Number(card.card_id)));
+    const snapshots = new Map([...(match.deck_snapshots?.[String(req.session.userId)]?.active || [])].map(card => [Number(card.card_id), card]));
     let cards = (inventory.cards || []).filter(card => snapshotIds.has(Number(card.id))).map(card => ({ ...draftEventCardView(card, inventory), power: snapshots.get(Number(card.id))?.power, trinket: snapshots.get(Number(card.id))?.trinket || null }));
     cards = availableWutMatchCards(cards, match.placements, req.session.userId);
     const usedThisMatch = new Set(match.placements.map(row => Number(row.boost_id)).filter(Boolean));
@@ -2544,9 +2641,19 @@ app.get('/cards/drafts/:eventId/matches/:matchId', requireLogin, requireWutReady
 
 app.get('/cards/drafts/:eventId/matches/:matchId/results', requireLogin, requireWutReady, async (req, res, next) => {
   try {
-    const payload = postgresEnabled
+    if (postgresEnabled) await skipWutDraftEventNoLegalTurnsPostgres(postgresPool(), {
+      eventId: req.params.eventId,
+      matchId: req.params.matchId
+    });
+    let payload = postgresEnabled
       ? await postgresDraftMatchPayload(req.params.eventId, req.params.matchId, req.session.userId)
       : getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    if (payload.match.status === 'scoring') {
+      await scorePendingArenaMatches();
+      payload = postgresEnabled
+        ? await postgresDraftMatchPayload(req.params.eventId, req.params.matchId, req.session.userId)
+        : getWutDraftEventMatch({ eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId });
+    }
     const { event } = payload; let { match } = payload;
     if (!['ready', 'completed'].includes(match.status) || !(match.revealed_by || []).map(Number).includes(Number(req.session.userId))) return res.redirect(`/cards/drafts/${event.id}/matches/${match.id}`);
     const allCards = []; const allBoosts = [];
@@ -2567,7 +2674,8 @@ app.post('/cards/drafts/:eventId/matches/:matchId/turn', requireLogin, requireWu
   try {
     const count = Math.max(0, Math.min(2, Number(req.body.count || 0)));
     const placements = Array.from({ length: count }, (_, index) => ({
-      slot: req.body[`slot_${index}`], cardId: req.body[`card_id_${index}`], boostId: req.body[`boost_id_${index}`] || null, journeymanKey: req.body[`journeyman_key_${index}`] || ''
+      slot: req.body[`slot_${index}`], cardId: req.body[`card_id_${index}`], boostId: req.body[`boost_id_${index}`] || null,
+      journeymanKey: req.body[`journeyman_key_${index}`] || '', wardTargetSlot: req.body[`ward_target_slot_${index}`] || ''
     }));
     const input = { eventId: req.params.eventId, matchId: req.params.matchId, userId: req.session.userId, placements };
     if (postgresEnabled) await commitWutDraftEventTurnPostgres(postgresPool(), input);
@@ -2663,17 +2771,121 @@ app.get('/cards/collection', requireLogin, requireWutReady, async (req, res, nex
   }
 });
 
+app.post('/cards/collection/sell-duplicate', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const catalog = await getCardsCatalog();
+    const input = {
+      userId: req.session.userId,
+      cardId: req.body.card_id,
+      catalogByIdentity: arenaCatalogByIdentity(catalog)
+    };
+    const result = postgresEnabled
+      ? await sellDuplicatePlayerCardPostgres(postgresPool(), input)
+      : sellDuplicatePlayerCard(input);
+    req.session.flash = { type: 'success', message: `Duplicate card sold for ${result.amount} WUT Coins.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/collection');
+});
+
+app.post('/cards/trading/list', requireLogin, requireWutReady, async (req, res) => {
+  const wantsJson = String(req.get('accept') || '').includes('application/json');
+  try {
+    const catalog = await getCardsCatalog();
+    const input = { userId: req.session.userId, cardId: req.body.card_id, catalogByIdentity: arenaCatalogByIdentity(catalog) };
+    const listing = postgresEnabled ? await listWutTradeCardPostgres(postgresPool(), input) : listWutTradeCard(input);
+    if (wantsJson) return res.json({ ok: true, listing });
+    req.session.flash = { type: 'success', message: 'Card listed for trading.' };
+  } catch (err) {
+    if (wantsJson) return res.status(400).json({ ok: false, error: err.message });
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/collection#trading');
+});
+
+app.post('/cards/trading/unlist', requireLogin, requireWutReady, async (req, res) => {
+  const wantsJson = String(req.get('accept') || '').includes('application/json');
+  try {
+    const input = { userId: req.session.userId, listingId: req.body.listing_id };
+    const listing = postgresEnabled ? await unlistWutTradeCardPostgres(postgresPool(), input) : unlistWutTradeCard(input);
+    if (wantsJson) return res.json({ ok: true, listing });
+    req.session.flash = { type: 'success', message: 'Trade listing removed.' };
+  } catch (err) {
+    if (wantsJson) return res.status(400).json({ ok: false, error: err.message });
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/collection#trading');
+});
+
+app.post('/cards/trading/offer', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const catalog = await getCardsCatalog();
+    const input = {
+      userId: req.session.userId,
+      targetListingId: req.body.target_listing_id,
+      offeredListingId: req.body.offered_listing_id,
+      catalogByIdentity: arenaCatalogByIdentity(catalog)
+    };
+    if (postgresEnabled) await offerWutTradePostgres(postgresPool(), input);
+    else offerWutTrade(input);
+    req.session.flash = { type: 'success', message: 'Trade offer sent.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/collection#trading');
+});
+
+app.post('/cards/trading/respond', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const catalog = await getCardsCatalog();
+    const input = {
+      userId: req.session.userId,
+      offerId: req.body.offer_id,
+      action: req.body.action,
+      catalogByIdentity: arenaCatalogByIdentity(catalog)
+    };
+    if (postgresEnabled) await resolveWutTradeOfferPostgres(postgresPool(), input);
+    else resolveWutTradeOffer(input);
+    req.session.flash = { type: 'success', message: req.body.action === 'accept' ? 'Trade accepted.' : 'Trade offer updated.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/cards/collection#trading');
+});
+
 app.get('/cards/arena/matches/:matchId', requireLogin, requireWutReady, async (req, res, next) => {
   try {
-    const payload = await buildArenaCardsHub(req.session.userId);
     const matchId = Number(req.params.matchId);
+    const skippedMatch = postgresEnabled
+      ? await skipArenaNoLegalTurnsPostgres(postgresPool(), { matchId })
+      : skipArenaNoLegalTurns(matchId);
+    if (skippedMatch?.status === 'scoring') await scorePendingArenaMatches();
+    const payload = await buildArenaCardsHub(req.session.userId);
     const match = [...payload.arena.activeMatches, ...payload.arena.readyMatches, ...payload.arena.history]
       .find(item => Number(item.id) === matchId);
     if (!match) return res.status(404).send('WUT match not found.');
+    if (match.status === 'drafting' && match.mode === 'draft') {
+      return res.render('cards_arena_draft', { ...payload, match });
+    }
     if (Number(match.rules_version || 1) >= 2) {
-      const snapshotIds = new Set([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => Number(card.card_id)));
-      const snapshots = new Map([...(match.deck_snapshots?.[String(req.session.userId)]?.active || []), ...(match.deck_snapshots?.[String(req.session.userId)]?.bench || [])].map(card => [Number(card.card_id), card]));
-      payload.cards = payload.cards.filter(card => snapshotIds.has(Number(card.id))).map(card => ({ ...card, power: snapshots.get(Number(card.id))?.power, trinket: snapshots.get(Number(card.id))?.trinket || null }));
+      const snapshotIds = new Set([...(match.deck_snapshots?.[String(req.session.userId)]?.active || [])].map(card => Number(card.card_id)));
+      const snapshots = new Map([...(match.deck_snapshots?.[String(req.session.userId)]?.active || [])].map(card => [Number(card.card_id), card]));
+      payload.cards = match.mode === 'draft'
+        ? [...snapshots.values()].map(snapshot => ({
+            id: Number(snapshot.card_id),
+            card_identity: snapshot.card_identity,
+            power: Number(snapshot.power || 1),
+            trinket: snapshot.trinket || null,
+            player: { ...snapshot.player, name: snapshot.player?.name || snapshot.display_name, tier: snapshot.rarity || snapshot.player?.tier, position: snapshot.position }
+        }))
+        : payload.cards.filter(card => snapshotIds.has(Number(card.id))).map(card => ({ ...card, power: snapshots.get(Number(card.id))?.power, trinket: snapshots.get(Number(card.id))?.trinket || null }));
+      if (match.mode === 'draft') {
+        const usedBoostIds = new Set((match.placements || []).filter(row => Number(row.user_id) === Number(req.session.userId)).map(row => Number(row.boost_id)));
+        payload.boosts = (match.draft_loadouts?.[String(req.session.userId)]?.boosts || [])
+          .filter(boost => !usedBoostIds.has(Number(boost.id)))
+          .map(boost => ({ ...boost, arenaLocked: false }));
+      }
     }
     payload.cards = availableWutMatchCards(payload.cards, match.placements, req.session.userId);
     return res.render('cards_match', { ...payload, match });
@@ -2693,22 +2905,57 @@ app.get('/cards/arena/history', requireLogin, requireWutReady, async (req, res, 
 app.post('/cards/arena/enter', requireLogin, requireWutReady, async (req, res) => {
   try {
     let entry;
+    const mode = String(req.body.mode || 'draft') === 'constructed' ? 'constructed' : 'draft';
     if (postgresEnabled) {
       const hub = await buildArenaCardsHub(req.session.userId);
-      const deck = (hub.wut.decks || []).find(item => Number(item.id) === Number(req.body.deck_id));
-      if (!deck) throw new Error('Select a saved deck before entering the queue.');
+      const deck = mode === 'constructed' ? (hub.wut.decks || []).find(item => Number(item.id) === Number(req.body.deck_id)) : null;
+      if (mode === 'constructed' && !deck) throw new Error('Select a saved deck before entering the Constructed Arena queue.');
       entry = await enterArenaQueuePostgres(postgresPool(), {
-        userId: req.session.userId, deckId: deck.id, deckSnapshot: arenaDeckSnapshotFromHub(hub, deck)
+        userId: req.session.userId, mode, deckId: deck?.id || null, deckSnapshot: deck ? arenaDeckSnapshotFromHub(hub, deck) : null,
+        catalog: await getCardsCatalog()
       });
     } else {
       const catalog = await getCardsCatalog();
-      entry = enterArenaQueue(req.session.userId, req.body.deck_id, arenaCatalogByIdentity(catalog));
+      entry = enterArenaQueue(req.session.userId, { mode, deckId: req.body.deck_id, catalogByIdentity: arenaCatalogByIdentity(catalog), catalog });
     }
-    req.session.flash = { type: 'success', message: entry.matchmakingTriggered ? 'Queue reached 10 players. Matchmaking ran immediately.' : 'WUT entry confirmed. Matchmaking will assign your opponent.' };
+    req.session.flash = { type: 'success', message: entry.matchmakingTriggered ? 'Queue reached 10 players. Matchmaking ran immediately.' : `${mode === 'draft' ? 'Draft Arena' : 'Constructed Arena'} entry confirmed. Matchmaking will assign your opponent.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
   res.redirect('/cards');
+});
+
+app.post('/cards/arena/matches/:matchId/draft', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const picks = {};
+    const trinketAttachments = {};
+    for (const [key, value] of Object.entries(req.body || {})) {
+      const pick = String(key).match(/^pick_(\d+)$/);
+      const attach = String(key).match(/^attach_(\d+)$/);
+      if (pick) picks[pick[1]] = value;
+      if (attach && value) trinketAttachments[attach[1]] = value;
+    }
+    if (postgresEnabled) await submitArenaDraftPrepPostgres(postgresPool(), {
+      userId: req.session.userId, matchId: req.params.matchId, picks, trinketAttachments
+    });
+    else submitArenaDraftPrep({ userId: req.session.userId, matchId: req.params.matchId, picks, trinketAttachments });
+    req.session.flash = { type: 'success', message: 'Draft Arena picks locked. The match will begin when both players are ready.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
+});
+
+app.post('/cards/arena/matches/:matchId/first-player', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const input = { userId: req.session.userId, matchId: req.params.matchId, choice: req.body.choice === 'opponent' ? 'opponent' : 'self' };
+    if (postgresEnabled) await chooseArenaFirstPlayerPostgres(postgresPool(), input);
+    else chooseArenaFirstPlayer(input);
+    req.session.flash = { type: 'success', message: 'First player selected. The game is live.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
 });
 
 app.post('/cards/arena/matches/:matchId/turn', requireLogin, requireWutReady, async (req, res) => {
@@ -2718,7 +2965,8 @@ app.post('/cards/arena/matches/:matchId/turn', requireLogin, requireWutReady, as
       slot: req.body[`slot_${index}`],
       cardId: req.body[`card_id_${index}`],
       boostId: req.body[`boost_id_${index}`] || null,
-      journeymanKey: req.body[`journeyman_key_${index}`] || ''
+      journeymanKey: req.body[`journeyman_key_${index}`] || '',
+      wardTargetSlot: req.body[`ward_target_slot_${index}`] || ''
     }));
     const input = {
       userId: req.session.userId,
@@ -2766,7 +3014,8 @@ app.post('/cards/arena/matches/:matchId/claim', requireLogin, requireWutReady, (
 
 app.post('/cards/arena/admin/match', requireAdmin, async (req, res) => {
   try {
-    const result = postgresEnabled ? await assignArenaMatchupsPostgres(postgresPool(), {}) : assignArenaMatchups();
+    const catalog = await getCardsCatalog();
+    const result = postgresEnabled ? await assignArenaMatchupsPostgres(postgresPool(), { catalog }) : assignArenaMatchups(new Date(), catalog);
     await scorePendingArenaMatches();
     req.session.flash = { type: 'success', message: `${result.createdMatchIds.length} WUT matchup${result.createdMatchIds.length === 1 ? '' : 's'} assigned.` };
   } catch (err) {
@@ -2816,9 +3065,9 @@ app.post('/cards/arena/debug/place', requireAdmin, requireWutReady, async (req, 
     const catalog = await getCardsCatalog();
     if (postgresEnabled) {
       const hub = await buildArenaCardsHub(req.session.userId); const card = hub.cards.find(item => Number(item.id) === Number(req.body.card_id)); const boost = hub.boosts.find(item => Number(item.id) === Number(req.body.boost_id)) || null;
-      await commitWutDebugPlacementPostgres(postgresPool(), { adminUserId:req.session.userId,side:req.body.side,slot:req.body.slot,cardSnapshot:arenaSnapshotForCard(card,hub.wut.config),boost,journeymanKey:req.body.journeyman_key||'',config:await getLiveCardsConfig() });
+      await commitWutDebugPlacementPostgres(postgresPool(), { adminUserId:req.session.userId,side:req.body.side,slot:req.body.slot,cardSnapshot:arenaSnapshotForCard(card,hub.wut.config),boost,journeymanKey:req.body.journeyman_key||'',wardTargetSlot:req.body.ward_target_slot||'',config:await getLiveCardsConfig() });
     } else commitWutDebugPlacement({ adminUserId: req.session.userId, side: req.body.side, slot: req.body.slot,
-      cardId: req.body.card_id, boostId: req.body.boost_id || null, journeymanKey: req.body.journeyman_key || '', catalogByIdentity: arenaCatalogByIdentity(catalog) });
+      cardId: req.body.card_id, boostId: req.body.boost_id || null, journeymanKey: req.body.journeyman_key || '', wardTargetSlot: req.body.ward_target_slot || '', catalogByIdentity: arenaCatalogByIdentity(catalog) });
     await scorePendingArenaMatches(catalog);
   } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
   res.redirect('/cards/arena/debug');
@@ -2985,20 +3234,28 @@ app.get('/cards/store', requireLogin, requireWutReady, async (req, res, next) =>
 app.post('/cards/store/buy', requireLogin, requireWutReady, async (req, res) => {
   try {
     const packKind = String(req.body.pack_kind || '');
-    const packType = String(req.body.pack_type || '');
-    if (packKind !== 'player' || !['standard', 'premium', 'prestige'].includes(packType)) {
+    let packType = String(req.body.pack_type || '');
+    const config = await getLiveCardsConfig();
+    let items;
+    let price;
+    if (packKind === 'player') {
+      if (!['standard', 'premium', 'prestige'].includes(packType)) throw new Error('Invalid pack selection.');
+      const catalog = await getCardsCatalog();
+      items = generateWutPlayerPack({ packType, catalog, config });
+      price = config.playerPackPrices?.[packType];
+    } else if (packKind === 'boost') {
+      packType = 'boost';
+      items = generateWutBoostPack({ config });
+      price = config.boostPack?.price ?? 250;
+    } else {
       throw new Error('Invalid pack selection.');
     }
-    const config = await getLiveCardsConfig();
-    const catalog = await getCardsCatalog();
-    const items = generateWutPlayerPack({ packType, catalog, config });
-    const prices = config.playerPackPrices;
     const input = {
       userId: req.session.userId,
       week: (postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings()).currentWeek,
       packKind,
       packType,
-      price: prices[packType],
+      price,
       items
     };
     if (postgresEnabled) await createCardsPackPurchasePostgres(postgresPool(), input);
@@ -3017,7 +3274,8 @@ app.post('/cards/decks/save', requireLogin, requireWutReady, async (req, res) =>
   try {
     const catalog = await getCardsCatalog();
     const input = { userId: req.session.userId, deckId: req.body.deck_id || null, name: req.body.name,
-      activeCardIds: [].concat(req.body.active_card_ids || []), benchCardIds: [].concat(req.body.bench_card_ids || []),
+      activeCardIds: [].concat(req.body.active_card_ids || []),
+      trinketAssignmentIds: req.body.trinket_assignments || {},
       catalogByIdentity: arenaCatalogByIdentity(catalog) };
     if (postgresEnabled) await saveWutDeckPostgres(postgresPool(), input);
     else saveWutDeck(input);
@@ -3035,6 +3293,14 @@ app.post('/cards/decks/slot', requireLogin, requireWutReady, async (req, res) =>
 app.post('/cards/trinkets/buy', requireLogin, requireWutReady, async (req, res) => {
   try { const input = { userId: req.session.userId, slot: req.body.slot }; if (postgresEnabled) await buyWutTrinketPostgres(postgresPool(), input); else buyWutTrinket(input); req.session.flash = { type: 'success', message: 'Trinket added to inventory.' }; }
   catch (err) { req.session.flash = { type: 'error', message: err.message }; } res.redirect('/cards/store');
+});
+app.post('/cards/trinkets/lock', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const input = { userId: req.session.userId, slot: req.body.slot };
+    const shop = postgresEnabled ? await toggleWutTrinketShopLockPostgres(postgresPool(), input) : toggleWutTrinketShopLock(input);
+    req.session.flash = { type: 'success', message: shop.locked_slot ? 'Trinket offer locked for future rerolls.' : 'Trinket offer lock cleared.' };
+  } catch (err) { req.session.flash = { type: 'error', message: err.message }; }
+  res.redirect('/cards/store');
 });
 app.post('/cards/trinkets/reroll', requireLogin, requireWutReady, async (req, res) => {
   try { const input = { userId: req.session.userId, currency: req.body.currency }; if (postgresEnabled) await rerollWutTrinketShopPostgres(postgresPool(), input); else rerollWutTrinketShop(input); req.session.flash = { type: 'success', message: 'Trinket shop rerolled.' }; }
@@ -3352,7 +3618,10 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     const backupInfo = getBackupInfo();
     const casinoSummary = postgresEnabled ? await getCasinoSummaryPostgres(postgresPool()) : getCasinoSummary();
     const cardsAdmin = postgresEnabled ? await getCardsAdminStatePostgres(postgresPool()) : getCardsAdminState();
-    const cardsCatalog = sortCardsCatalogForAdmin(await getCardsCatalog());
+    const rawCardsCatalog = await getCardsCatalog();
+    const cardPoolSort = ['fpm_desc', 'fpm_asc'].includes(String(req.query.card_pool_sort || '')) ? String(req.query.card_pool_sort) : 'season';
+    const cardsCatalog = sortCardsCatalogForAdmin(rawCardsCatalog, cardPoolSort);
+    const rarityDistribution = buildRarityDistribution(rawCardsCatalog);
     let settlementPreview = null;
     let settledBetAudit = null;
     let seriesOddsRecommendations = null;
@@ -3488,6 +3757,8 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       casinoSummary,
       cardsAdmin,
       cardsCatalog,
+      cardPoolSort,
+      rarityDistribution,
       cardStars: CARD_STARS,
       cardCooldowns: CARD_COOLDOWNS,
       boostEffects: cardsAdmin.config.boostEffects,
@@ -3585,20 +3856,22 @@ app.post('/admin/cards/drafts/presets', requireAdmin, async (req, res) => {
 });
 
 async function draftEnvironmentFromCatalog(event, catalog) {
-  const { boosterCards, benchCards } = splitWutDraftCardPools(event.config, catalog);
+  const { boosterCards } = splitWutDraftCardPools(event.config, catalog);
   const cards = boosterCards.map(snapshotWutDraftCard);
   const global = await getLiveCardsConfig();
   const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
   return {
     season_id: settings.seasonId,
     cards,
-    bench_cards: benchCards.map(snapshotWutDraftCard),
+    bench_cards: [],
     rules: {
       scoring: global.scoring,
       boostEffects: global.boostEffects,
       rarityCosts: global.wut.rarityCosts,
       trinketPowerValues: global.wut.trinketPowerValues,
       slotPowerAllowance: global.wut.slotPowerAllowance,
+      deckSize: event.config.deckbuilding.deckSize,
+      topLineupMaxPower: event.config.deckbuilding.topLineupMaxPower,
       trinketEffects: global.wut.trinketEffects
     }
   };
@@ -3615,13 +3888,6 @@ app.post('/admin/cards/drafts/:eventId/phase', requireAdmin, async (req, res) =>
       const environment = await draftEnvironmentFromCatalog(current, await getCardsCatalog());
       const input = { eventId: req.params.eventId, environment, adminUserId: req.session.userId };
       event = postgresEnabled ? await startWutDraftEventPostgres(postgresPool(), input) : startWutDraftEvent(input);
-    } else if (nextPhase === 'bench_vote') {
-      const current = (postgresEnabled
-        ? await getDraftEventLobbyPostgres(postgresPool(), { eventId: req.params.eventId, includePrivate: true })
-        : getWutDraftEventLobby({ eventId: req.params.eventId, includePrivate: true }))[0];
-      const environment = await draftEnvironmentFromCatalog(current, await getCardsCatalog());
-      const input = { eventId: req.params.eventId, adminUserId: req.session.userId, benchCards: environment.bench_cards };
-      event = postgresEnabled ? await beginWutDraftSafetyBenchPostgres(postgresPool(), input) : beginWutDraftSafetyBench(input);
     } else if (nextPhase === 'draft') {
       const input = { eventId: req.params.eventId, adminUserId: req.session.userId };
       event = postgresEnabled ? await beginWutDraftEventPostgres(postgresPool(), input) : beginWutDraftEvent(input);
@@ -3646,33 +3912,9 @@ app.post('/admin/cards/drafts/:eventId/start-now', requireAdmin, async (req, res
     const startInput = { eventId: req.params.eventId, environment, adminUserId: req.session.userId, startNow: true };
     if (postgresEnabled) await startWutDraftEventPostgres(postgresPool(), startInput);
     else startWutDraftEvent(startInput);
-    const benchInput = { eventId: req.params.eventId, adminUserId: req.session.userId };
-    const event = postgresEnabled ? await beginWutDraftSafetyBenchPostgres(postgresPool(), benchInput) : beginWutDraftSafetyBench(benchInput);
+    const draftInput = { eventId: req.params.eventId, adminUserId: req.session.userId };
+    const event = postgresEnabled ? await beginWutDraftEventPostgres(postgresPool(), draftInput) : beginWutDraftEvent(draftInput);
     req.session.flash = { type: 'success', message: `Draft Event #${event.id} started early and is now in ${event.phase.replaceAll('_', ' ')}.` };
-  } catch (err) {
-    req.session.flash = { type: 'error', message: err.message };
-  }
-  res.redirect('/admin/cards/drafts');
-});
-
-app.post('/admin/cards/drafts/:eventId/bench/finish', requireAdmin, async (req, res) => {
-  try {
-    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, reason: req.body.reason };
-    if (postgresEnabled) await finishWutDraftSafetyBenchPostgres(postgresPool(), input);
-    else finishWutDraftSafetyBench(input);
-    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} Safety Bench was finalized.` };
-  } catch (err) {
-    req.session.flash = { type: 'error', message: err.message };
-  }
-  res.redirect('/admin/cards/drafts');
-});
-
-app.post('/admin/cards/drafts/:eventId/bench/extend', requireAdmin, async (req, res) => {
-  try {
-    const input = { eventId: req.params.eventId, adminUserId: req.session.userId, seconds: req.body.seconds };
-    if (postgresEnabled) await extendWutDraftSafetyBenchPostgres(postgresPool(), input);
-    else extendWutDraftSafetyBench(input);
-    req.session.flash = { type: 'success', message: `Draft Event #${req.params.eventId} Safety Bench timer was extended.` };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }
@@ -3996,6 +4238,37 @@ app.post('/admin/cards/wut-coins', requireAdmin, async (req, res) => {
     };
     const result = postgresEnabled ? await adjustWutCoinBalancePostgres(postgresPool(), input) : adjustWutCoinBalance(input);
     req.session.flash = { type: 'success', message: `Adjusted WUT balance by ${result.amount > 0 ? '+' : ''}${result.amount}. New balance: ${result.balance} WUT Coins.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/refund-trinket-removals', requireAdmin, async (req, res) => {
+  try {
+    const result = postgresEnabled
+      ? await refundWutTrinketRemovalFeesPostgres(postgresPool(), { adminUserId: req.session.userId })
+      : refundWutTrinketRemovalFees({ adminUserId: req.session.userId });
+    req.session.flash = {
+      type: 'success',
+      message: `Refunded ${result.wutAmount} WUT Coins across ${result.wutCount} transaction(s), ${result.mushyAmount} Mushybux across ${result.mushyCount} transaction(s), cleared ${result.detachedCards} card / ${result.detachedTrinkets} trinket legacy attachment(s), and reset ${result.clearedDecks || 0} saved deck(s).`
+    };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin#cards-controls');
+});
+
+app.post('/admin/cards/void-ongoing-rules-update', requireAdmin, async (req, res) => {
+  try {
+    const result = postgresEnabled
+      ? await voidOngoingWutMatchesForRulesUpdatePostgres(postgresPool(), { adminUserId: req.session.userId })
+      : voidOngoingWutMatchesForRulesUpdate({ adminUserId: req.session.userId });
+    const voided = Number(result.arena_matches_voided || 0) + Number(result.draft_event_matches_voided || 0);
+    req.session.flash = {
+      type: 'success',
+      message: `Voided ${voided} ongoing WUT match(es), granted ${result.reward_transactions} compensation transaction(s) of ${result.reward_amount} WUT Coins, and released ${result.released_boosts} boost(s).`
+    };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };
   }

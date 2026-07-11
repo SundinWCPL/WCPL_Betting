@@ -21,21 +21,27 @@ export async function createCardsPackPurchaseWithClient(client, {
   if (pending.rows[0]) throw new Error('Reveal your current or queued prize pack before buying another.');
   const cleanPrice = Math.ceil(Number(price || 0));
   if (cleanPrice <= 0) throw new Error('Invalid pack price.');
-  if (String(packKind) !== 'player') throw new Error('Separate boost packs were removed in WUT 2.0.');
-  if (!Array.isArray(items) || items.length !== 5 || items.filter(item => item.itemType === 'player').length !== 3 || items.filter(item => item.itemType === 'boost').length !== 2) {
+  const cleanKind = String(packKind);
+  if (!['player', 'boost'].includes(cleanKind)) throw new Error('Invalid pack selection.');
+  if (cleanKind === 'player' && (!Array.isArray(items) || items.length !== 5 || items.filter(item => item.itemType === 'player').length !== 3 || items.filter(item => item.itemType === 'boost').length !== 2)) {
     throw new Error('A player pack must contain exactly three players and two boosts.');
+  }
+  if (cleanKind === 'boost' && (!Array.isArray(items) || items.length < 1 || items.some(item => item.itemType !== 'boost'))) {
+    throw new Error('A boost pack must contain only boosts.');
   }
   const meta = await cardsMeta(client);
   const freePurchase = meta.config?.wut?.freeShopPurchases === true;
   const chargedPrice = freePurchase ? 0 : cleanPrice;
   if (asNumber(membership.wut_coins) < chargedPrice) throw new Error('Insufficient WUT Coins.');
-  if (chargedPrice) await changeWutCoins(client, membership, -chargedPrice, 'player_pack_purchase', { pack_type: String(packType) }, now);
+  if (chargedPrice) {
+    await changeWutCoins(client, membership, -chargedPrice, cleanKind === 'boost' ? 'boost_pack_purchase' : 'player_pack_purchase', { pack_type: String(packType) }, now);
+  }
   const id = asNumber((await client.query("SELECT nextval('pack_purchases_id_seq') AS id")).rows[0].id);
   const purchase = {
     id,
     user_id: Number(userId),
     week: Number(week),
-    pack_kind: String(packKind),
+    pack_kind: cleanKind,
     pack_type: String(packType),
     price: chargedPrice,
     list_price: cleanPrice,
@@ -48,7 +54,7 @@ export async function createCardsPackPurchaseWithClient(client, {
   await client.query(`
     INSERT INTO pack_purchases(id,user_id,status,pack_kind,pack_type,created_at,source_order,data)
     VALUES($1,$2,'pending',$3,$4,$5,$6,$7::jsonb)
-  `, [id, Number(userId), String(packKind), String(packType), purchase.created_at, id, JSON.stringify(purchase)]);
+  `, [id, Number(userId), cleanKind, String(packType), purchase.created_at, id, JSON.stringify(purchase)]);
   return purchase;
 }
 

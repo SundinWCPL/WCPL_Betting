@@ -30,8 +30,7 @@
             </div>
             <div class="draft-event-actions">
               <a class="button-link ghost" href="/cards/drafts/<%= event.id %>">View Event</a>
-              <% if (!event.paused_at && ['scheduled','signup_open','signup_closed'].includes(event.phase)) { %><form method="post" action="/admin/cards/drafts/<%= event.id %>/start-now" onsubmit="return confirm('Start this event now? Signup will close immediately and the configured Safety Bench or draft phase will begin.');"><button class="positive">Start Event Now</button></form><% } %>
-              <% if (event.phase === 'bench_vote') { %><form method="post" action="/admin/cards/drafts/<%= event.id %>/bench/extend"><input type="hidden" name="seconds" value="60"><button class="ghost">+60s Vote</button></form><form method="post" action="/admin/cards/drafts/<%= event.id %>/bench/finish" onsubmit="return confirm('Finish Safety Bench voting now and use the current results?');"><input type="hidden" name="reason" value="Finished early by administrator"><button>Finish Vote</button></form><% } %>
+              <% if (!event.paused_at && ['scheduled','signup_open','signup_closed'].includes(event.phase)) { %><form method="post" action="/admin/cards/drafts/<%= event.id %>/start-now" onsubmit="return confirm('Start this event now? Signup will close immediately and the draft phase will begin.');"><button class="positive">Start Event Now</button></form><% } %>
               <% if (event.phase === 'draft') { %><form method="post" action="/admin/cards/drafts/<%= event.id %>/draft/extend"><input type="hidden" name="seconds" value="60"><button class="ghost">+60s Pick</button></form><form method="post" action="/admin/cards/drafts/<%= event.id %>/draft/autopick" onsubmit="return confirm('Force autopicks for every player still waiting in this pass step?');"><button>Force Pending Picks</button></form><% } %>
               <% if (event.phase === 'deckbuilding') { %><form method="post" action="/admin/cards/drafts/<%= event.id %>/deckbuilding/extend"><input type="hidden" name="seconds" value="300"><button class="ghost">+5m Build</button></form><form method="post" action="/admin/cards/drafts/<%= event.id %>/deckbuilding/finish" onsubmit="return confirm('Lock submitted decks and automatically build every missing deck?');"><button>Lock / Autosubmit Decks</button></form><% } %>
               <% if (event.phase === 'tournament') { %><form method="post" action="/admin/cards/drafts/<%= event.id %>/tournament/timers" class="draft-inline-timer"><input type="number" name="seconds" min="15" max="604800" step="1" value="<%= event.config.match.turnSeconds %>" aria-label="Tournament turn seconds"><button class="ghost">Set Turn Timer</button></form><form method="post" action="/admin/cards/drafts/<%= event.id %>/tournament/reset-round" onsubmit="return confirm('RESET EVERY GAME in the current round? All committed lineups and partial results in this round will be erased, boosts returned, and the same matchups restarted.');"><input type="hidden" name="reason" value="Current round reset by administrator"><button class="danger">Reset Current Round</button></form><form method="post" action="/admin/cards/drafts/<%= event.id %>/tournament/advance" onsubmit="return confirm('Force the tournament engine to finish or advance the current round? Unresolved matches should normally be recovered individually first.');"><button class="ghost">Force Advance Round</button></form><% } %>
@@ -76,14 +75,7 @@
         <label class="check"><input type="checkbox" data-path="signup.allowWithdrawal"> Allow withdrawal</label><label class="check"><input type="checkbox" data-path="signup.allowLateSignup"> Allow late signup</label><label class="check"><input type="checkbox" data-path="signup.automaticClose"> Close signup automatically</label>
       </div></section>
 
-      <section class="card admin-card"><p class="eyebrow">C · Guaranteed legal lineup</p><h2>Shared Safety Bench</h2><div class="draft-field-grid">
-        <label>Mode<select data-path="safetyBench.mode" id="draftBenchMode"><option value="shared_vote">Shared vote</option><option value="random_shared">Random shared</option><option value="preset_shared">Preset shared</option><option value="disabled">Disabled</option></select></label>
-        <label data-bench-vote>Voting seconds<input type="number" min="5" data-path="safetyBench.votingSeconds"></label><p class="muted wide">Safety Bench cards are always Common and use the eligible seasons, divisions, and positions from the Booster Pool.</p>
-        <% ['F','D','G'].forEach(position => { %><fieldset data-bench-active><legend><%= position %> pool</legend><label>Candidates<input type="number" min="1" data-path="safetyBench.positions.<%= position %>.candidates"></label><label>Winners<input type="number" min="1" data-path="safetyBench.positions.<%= position %>.winners"></label></fieldset><% }) %>
-        <label class="wide" data-bench-preset>Preset card IDs (comma-separated)<input data-path="safetyBench.presetCards" data-csv></label>
-      </div></section>
-
-      <section class="card admin-card"><p class="eyebrow">D · Symmetric packs</p><h2>Booster Composition</h2><p class="draft-fairness-note"><strong>Fairness rule:</strong> each booster round rolls one shared item-type and rarity blueprint. Every player gets that exact composition; only the specific card, boost, or trinket identities differ.</p><div class="draft-field-grid">
+      <section class="card admin-card"><p class="eyebrow">C · Symmetric packs</p><h2>Booster Composition</h2><p class="draft-fairness-note"><strong>Fairness rule:</strong> each booster round rolls one shared item-type and rarity blueprint. Every player gets that exact composition; only the specific card, boost, or trinket identities differ.</p><div class="draft-field-grid">
         <label>Boosters per player<input type="number" min="1" max="20" data-path="boosters.countPerPlayer"></label><label>Player cards per booster<input type="number" min="0" max="30" data-path="boosters.contents.players"></label><label>Boosts per booster<input type="number" min="0" max="30" data-path="boosters.contents.boosts"></label><label>Trinkets per booster<input type="number" min="0" max="30" data-path="boosters.contents.trinkets"></label>
         <label class="check"><input type="checkbox" data-path="boosters.guarantees.rarePlusPlayerPerBooster"> Guarantee one Rare+ player per booster</label><label>Guaranteed trinket rarity<select data-path="boosters.guarantees.trinketRarity" data-rarity-select data-allow-none></select></label>
         <label class="check"><input type="checkbox" data-path="boosters.pool.allowDuplicateInBooster"> Allow duplicate identity in one booster</label><label class="check"><input type="checkbox" data-path="boosters.pool.allowDuplicateInEvent"> Allow identity repeats across the event</label>
@@ -91,16 +83,16 @@
       </div>
       <div class="draft-odds-tables"><% [['players','Player cards'],['boosts','Boosts'],['trinkets','Trinkets']].forEach(([type,label]) => { %><fieldset><legend><%= label %></legend><div class="draft-rarity-range"><label>Min<select data-path="boosters.rarityLimits.<%= type %>.minimum" data-rarity-select></select></label><label>Max<select data-path="boosters.rarityLimits.<%= type %>.maximum" data-rarity-select></select></label></div><div class="draft-rarity-odds"><% rarityNames.forEach(rarity => { %><label class="rarity-<%= rarity %>"><span><%= rarity %></span><input type="number" min="0" step="0.01" data-path="boosters.rarityOdds.<%= type %>.<%= rarity %>"></label><% }) %></div></fieldset><% }) %></div></section>
 
-      <section class="card admin-card"><p class="eyebrow">E · Live draft</p><h2>Picking Rules</h2><div class="draft-field-grid">
+      <section class="card admin-card"><p class="eyebrow">D · Live draft</p><h2>Picking Rules</h2><div class="draft-field-grid">
         <label>Seconds per pick<input type="number" min="5" data-path="draft.pickSeconds"></label><label class="wide">Pass direction by booster (comma-separated)<input data-path="draft.passDirections" data-csv placeholder="left,right,left"></label><label class="check"><input type="checkbox" data-path="draft.autopick.enabled"> Autopick on timeout</label><label class="wide">Autopick priority<input data-path="draft.autopick.priority" data-csv placeholder="rarity,player,trinket,boost,random"></label>
       </div></section>
 
-      <section class="card admin-card"><p class="eyebrow">F · Build phase</p><h2>Event Decks</h2><div class="draft-field-grid">
-        <label>Build seconds<input type="number" min="30" data-path="deckbuilding.seconds"></label><label>Active minimum<input type="number" min="1" max="30" data-path="deckbuilding.activeMinimum"></label><label>Active maximum<input type="number" min="1" max="30" data-path="deckbuilding.activeMaximum"></label>
+      <section class="card admin-card"><p class="eyebrow">E · Build phase</p><h2>Event Decks</h2><div class="draft-field-grid">
+        <label>Build seconds<input type="number" min="30" data-path="deckbuilding.seconds"></label><label>Deck size<input type="number" min="1" max="30" data-path="deckbuilding.deckSize"></label><label>Top lineup Power cap<input type="number" min="1" step="0.5" data-path="deckbuilding.topLineupMaxPower"></label>
         <label class="check"><input type="checkbox" data-path="deckbuilding.lockDeckForTournament"> Lock decks for tournament</label><label class="check"><input type="checkbox" data-path="deckbuilding.sideboardingBetweenRounds"> Sideboard between rounds</label><label class="check"><input type="checkbox" data-path="deckbuilding.lockTrinketAttachments"> Lock trinket attachments</label><label class="check"><input type="checkbox" data-path="deckbuilding.allowTrinketReassignment"> Allow trinket reassignment</label>
       </div></section>
 
-      <section class="card admin-card"><p class="eyebrow">G · Bracket</p><h2>Tournament</h2><div class="draft-field-grid">
+      <section class="card admin-card"><p class="eyebrow">F · Bracket</p><h2>Tournament</h2><div class="draft-field-grid">
         <label>Format<select data-path="tournament.format" id="draftTournamentFormat"><option value="round_robin">Round robin</option><option value="swiss">Swiss</option><option value="single_elimination">Single elimination</option><option value="swiss_top_cut">Swiss + top cut</option></select></label><label>Between-round seconds<input type="number" min="0" data-path="tournament.betweenRoundSeconds"></label><label class="check"><input type="checkbox" data-path="tournament.automaticNextRound"> Start next round automatically</label>
       </div>
       <div data-format-panel="round_robin" class="draft-format-panel"><h3>Round Robin</h3><label>Meetings<input type="number" min="1" data-path="tournament.roundRobin.meetings"></label><label class="check"><input type="checkbox" data-path="tournament.roundRobin.byeCountsAsWin"> Bye counts as win</label><label>Tiebreakers<input data-path="tournament.roundRobin.tiebreakers" data-csv></label></div>
@@ -109,12 +101,12 @@
       <div data-format-panel="swiss_top_cut" class="draft-format-panel"><h3>Swiss + Top Cut</h3><label>Swiss rounds<input type="number" min="1" data-path="tournament.topCut.swissRounds"></label><label>Advancing<input type="number" min="2" data-path="tournament.topCut.advancing"></label><label>Cut seeding<select data-path="tournament.topCut.seeding"><option value="standings">Standings</option><option value="random">Random</option><option value="wut_elo">WUT ELO</option></select></label></div>
       </section>
 
-      <section class="card admin-card"><p class="eyebrow">H · Games</p><h2>Match Rules</h2><div class="draft-field-grid">
+      <section class="card admin-card"><p class="eyebrow">G · Games</p><h2>Match Rules</h2><div class="draft-field-grid">
         <label>Turn seconds<input type="number" min="15" data-path="match.turnSeconds"></label><label>Opening timeout<select data-path="match.openingTimeout"><option value="forfeit">Forfeit</option><option value="cancel">Cancel match</option><option value="autoplay">Autoplay</option></select></label><label>Later timeout<select data-path="match.laterTimeout"><option value="forfeit">Forfeit</option><option value="autoplay">Autoplay</option></select></label><label>Boost load cap<input type="number" min="0" data-path="match.boostLoadCap"></label><label>Boost lifecycle<select data-path="match.boostsMode"><option value="tournament_consumable">Consumable for tournament</option><option value="refresh_each_match">Refresh each match</option></select></label>
         <label class="check"><input type="checkbox" data-path="match.overnightPause"> Pause timers overnight</label><label class="check"><input type="checkbox" data-path="match.simultaneousMatches"> Run matches simultaneously</label>
       </div></section>
 
-      <section class="card admin-card"><div class="cards-section-head"><div><p class="eyebrow">I · Rewards</p><h2>Prize Builder</h2><p class="muted">Create any number of placement or participation tiers, each with one or more permanent rewards.</p></div><button type="button" id="addDraftPrizeTier">Add Prize Tier</button></div><div id="draftPrizeBuilder" class="draft-prize-builder"></div></section>
+      <section class="card admin-card"><div class="cards-section-head"><div><p class="eyebrow">H · Rewards</p><h2>Prize Builder</h2><p class="muted">Create any number of placement or participation tiers, each with one or more permanent rewards.</p></div><button type="button" id="addDraftPrizeTier">Add Prize Tier</button></div><div id="draftPrizeBuilder" class="draft-prize-builder"></div></section>
 
       <section class="card admin-card draft-builder-submit"><div><h2>Ready?</h2><p class="muted">Publishing creates a scheduled event. It does not charge players or begin signup until the event enters that phase.</p></div><div class="draft-builder-actions"><button type="submit" formaction="/admin/cards/drafts/presets">Save New Preset</button><button type="submit" class="positive">Publish Event</button></div></section>
     </form>
@@ -226,10 +218,6 @@
       const syncConditionalPanels = () => {
         const format = document.getElementById('draftTournamentFormat').value;
         document.querySelectorAll('[data-format-panel]').forEach(panel => panel.hidden = panel.dataset.formatPanel !== format);
-        const mode = document.getElementById('draftBenchMode').value;
-        document.querySelectorAll('[data-bench-vote]').forEach(node => node.hidden = mode !== 'shared_vote');
-        document.querySelectorAll('[data-bench-active]').forEach(node => node.hidden = mode === 'disabled');
-        document.querySelectorAll('[data-bench-preset]').forEach(node => node.hidden = mode !== 'preset_shared');
       };
       const serialize = () => {
         const selected = presets.find(preset => String(preset.id) === String(select.value)) || presets[0];
@@ -255,7 +243,6 @@
       prizeBuilder.addEventListener('change', event => { if (event.target.matches('[data-reward-type]')) syncReward(event.target.closest('.draft-prize-reward')); });
       select.addEventListener('change', () => populate(presets.find(preset => String(preset.id) === select.value)));
       document.getElementById('draftTournamentFormat').addEventListener('change', syncConditionalPanels);
-      document.getElementById('draftBenchMode').addEventListener('change', syncConditionalPanels);
       form.addEventListener('submit', event => { try { serialize(); } catch (error) { event.preventDefault(); alert(`Draft Event configuration is invalid: ${error.message}`); } });
       if (presets.length) populate(presets[0]);
     })();
