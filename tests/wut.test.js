@@ -409,7 +409,17 @@ function playConstructedSeriesToReady(userId, catalogByIdentity, winnerUserId = 
       ...row,
       fp: Number(row.user_id) === Number(winnerUserId) ? 20 : 10
     })));
-    if (completed.status === 'ready') return completed;
+    if (completed.status === 'ready') {
+      db.completeArenaReveal(userId, completed.id);
+      const opponentId = completed.player_ids.map(Number).find(id => id !== Number(userId));
+      db.completeArenaReveal(opponentId, completed.id);
+      const afterReveal = db.getArenaStateForUser(userId).history.find(item => Number(item.id) === Number(completed.id));
+      if (afterReveal?.series_pending_next_game) {
+        db.advanceArenaConstructedSeries({ userId, matchId: completed.id });
+        continue;
+      }
+      return afterReveal || completed;
+    }
   }
 }
 

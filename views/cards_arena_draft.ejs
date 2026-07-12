@@ -12,6 +12,8 @@
   <%
     const loadout = match.draft_loadouts?.[String(currentUser.id)] || null;
     const submitted = Boolean(loadout?.submitted_at);
+    const draftProgress = match.draft_progress?.[String(currentUser.id)] || { picks: {} };
+    const savedPicks = draftProgress.picks || {};
     const packs = match.mini_draft?.packs || [];
     const packItemCard = item => ({
       id: item.id,
@@ -124,7 +126,7 @@
               <h2>Assign Trinkets</h2>
               <p class="muted" data-loadout-message>Select a trinket, then click an eligible drafted player to attach it. Click an attached trinket badge to clear it.</p>
             </div>
-            <button type="button" class="ghost" data-review-packs>Edit Picks</button>
+            <span class="pill">Picks locked as chosen</span>
           </div>
 
           <div class="draft-arena-loadout-layout">
@@ -185,6 +187,7 @@
       const pickInputs = new Map([...document.querySelectorAll('[data-pick-input]')].map(input => [String(input.dataset.pickInput), input]));
       const attachInputs = new Map([...document.querySelectorAll('[data-attach-input]')].map(input => [String(input.dataset.attachInput), input]));
       const attachments = {};
+      const savedPicks = <%- JSON.stringify(savedPicks) %>;
       let currentPack = 0;
       let selectedTrinket = null;
 
@@ -211,18 +214,34 @@
         }
       };
 
+      const lockSavedChoices = () => {
+        for (const [packIndex, itemId] of Object.entries(savedPicks || {})) {
+          const choice = choices.find(item => item.dataset.packIndex === String(packIndex) && item.dataset.itemId === String(itemId));
+          if (!choice) continue;
+          choice.classList.add('is-picked', 'is-locked');
+          pickInputs.get(String(packIndex)).value = String(itemId);
+          choices.filter(item => item.dataset.packIndex === String(packIndex) && item !== choice).forEach(item => {
+            item.disabled = true;
+            item.classList.add('is-locked-out');
+          });
+        }
+      };
+
+      const isPackLocked = packIndex => Boolean(savedPicks?.[String(packIndex)]);
+
       const updatePackControls = () => {
         const panel = panels[currentPack];
         const packIndex = panel?.dataset.packPanel;
         const selected = packChoice(packIndex);
         if (heading) heading.textContent = `Pack ${currentPack + 1} of ${panels.length}`;
-        if (help) help.textContent = selected ? `${selected.dataset.itemName || selected.dataset.playerName || 'Item'} selected.` : 'Pick one item from this pack.';
+        if (help) help.textContent = selected ? `${selected.dataset.itemName || selected.dataset.playerName || 'Item'} locked.` : 'Pick one item from this pack. Once selected, it is locked.';
         backButton.disabled = currentPack <= 0;
         nextButton.disabled = !selected;
         nextButton.textContent = currentPack >= panels.length - 1 ? 'Review Loadout' : 'Next Pack';
         chips.forEach((chip, index) => {
           const isCurrent = index === currentPack;
           const isPicked = Boolean(packChoice(chip.dataset.packChip));
+          chip.disabled = index > firstUnpickedPackIndex();
           chip.classList.toggle('is-current', isCurrent);
           chip.classList.toggle('is-picked', isPicked);
           chip.setAttribute('aria-current', isCurrent ? 'step' : 'false');
@@ -243,6 +262,11 @@
         loadoutStage.hidden = false;
         renderLoadout();
         setMessage('Select a trinket, then click an eligible drafted player to attach it. Click an attached trinket badge to clear it.');
+      };
+
+      const firstUnpickedPackIndex = () => {
+        const index = panels.findIndex(panel => !packChoice(panel.dataset.packPanel));
+        return index < 0 ? panels.length - 1 : index;
       };
 
       const clearInvalidAttachments = () => {
@@ -281,7 +305,7 @@
         const source = player.querySelector('.arena-wut-card-inner')?.outerHTML || '';
         const attachedId = attachments[player.dataset.itemId];
         const attached = selectedTrinkets().find(choice => choice.dataset.itemId === String(attachedId));
-        return `<span class="arena-wut-card tier-${player.dataset.rarity}" data-deck-hover-flip data-rendered-draft-card="${player.dataset.itemId}" data-rendered-power="${playerPower(player)}" data-rendered-trinket="${attached?.dataset.itemId || ''}" data-rendered-trinket-family="${attached?.dataset.family || ''}" data-rendered-trinket-rarity="${attached?.dataset.rarity || ''}" data-rendered-trinket-icon="${trinketIcon(attached)}">${source}</span>`;
+        return `<span data-rendered-draft-card="${player.dataset.itemId}" data-rendered-power="${playerPower(player)}" data-rendered-trinket="${attached?.dataset.itemId || ''}" data-rendered-trinket-family="${attached?.dataset.family || ''}" data-rendered-trinket-rarity="${attached?.dataset.rarity || ''}" data-rendered-trinket-icon="${trinketIcon(attached)}">${source}</span>`;
       };
 
       const applyRenderedTrinkets = () => {
@@ -299,7 +323,7 @@
         const players = selectedPlayers();
         const trinkets = selectedTrinkets();
         const boosts = selectedBoosts();
-        playersTarget.innerHTML = players.map(player => `<button type="button" class="collection-player arena-collection-card tier-${player.dataset.rarity} draft-arena-loadout-player" data-drafted-player="${player.dataset.itemId}" data-position="${player.dataset.position}">${playerMarkup(player)}</button>`).join('');
+        playersTarget.innerHTML = players.map(player => `<button type="button" class="collection-player arena-wut-card arena-collection-card tier-${player.dataset.rarity} draft-arena-loadout-player" data-deck-hover-flip data-drafted-player="${player.dataset.itemId}" data-position="${player.dataset.position}">${playerMarkup(player)}</button>`).join('');
         trinketsTarget.innerHTML = trinkets.map(trinket => `<button type="button" class="wut-trinket-inventory-item tier-${trinket.dataset.rarity}" data-drafted-trinket="${trinket.dataset.itemId}" data-family="${trinket.dataset.family}" data-rarity="${trinket.dataset.rarity}" title="${trinket.querySelector('small')?.textContent?.trim() || ''}"><span class="wut-trinket-icon">${trinketIcon(trinket)}</span><small>${trinket.dataset.itemName || 'Trinket'}</small><em>${trinket.dataset.rarity}</em></button>`).join('');
         boostsTarget.innerHTML = boosts.map(boost => `<article class="collection-boost tier-${boost.dataset.rarity}">${boost.querySelector('.collection-boost')?.innerHTML || ''}</article>`).join('');
         document.querySelector('[data-empty-players]').hidden = players.length > 0;
@@ -311,11 +335,32 @@
         window.fitWutCardNames?.();
       };
 
-      choices.forEach(choice => choice.addEventListener('click', () => {
+      const lockChoice = async choice => {
         const packIndex = choice.dataset.packIndex;
+        if (isPackLocked(packIndex)) return;
+        choices.filter(item => item.dataset.packIndex === packIndex).forEach(item => { item.disabled = true; });
+        const formData = new URLSearchParams();
+        formData.set('pack_index', packIndex);
+        formData.set('item_id', choice.dataset.itemId);
+        const response = await fetch(`/cards/arena/matches/<%= match.id %>/draft-pick`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) {
+          choices.filter(item => item.dataset.packIndex === packIndex).forEach(item => { item.disabled = false; });
+          setMessage(result.error || 'Could not lock that pack pick.', true);
+          return;
+        }
+        savedPicks[String(packIndex)] = String(choice.dataset.itemId);
         choices.filter(item => item.dataset.packIndex === packIndex).forEach(item => item.classList.remove('is-picked'));
-        choice.classList.add('is-picked');
+        choice.classList.add('is-picked', 'is-locked');
         pickInputs.get(String(packIndex)).value = choice.dataset.itemId;
+        choices.filter(item => item.dataset.packIndex === packIndex && item !== choice).forEach(item => {
+          item.disabled = true;
+          item.classList.add('is-locked-out');
+        });
         selectedTrinket = null;
         clearInvalidAttachments();
         updateCounts();
@@ -325,16 +370,20 @@
         } else {
           window.setTimeout(showLoadout, 180);
         }
-      }));
+      };
 
-      chips.forEach((chip, index) => chip.addEventListener('click', () => showPack(index)));
+      choices.forEach(choice => choice.addEventListener('click', () => { lockChoice(choice); }));
+
+      chips.forEach((chip, index) => chip.addEventListener('click', () => {
+        if (index > firstUnpickedPackIndex()) return;
+        showPack(index);
+      }));
       backButton.addEventListener('click', () => showPack(currentPack - 1));
       nextButton.addEventListener('click', () => {
         if (!packChoice(panels[currentPack]?.dataset.packPanel)) return;
         if (currentPack >= panels.length - 1) showLoadout();
         else showPack(currentPack + 1);
       });
-      document.querySelector('[data-review-packs]')?.addEventListener('click', () => showPack(currentPack));
 
       trinketsTarget.addEventListener('click', event => {
         const button = event.target.closest('[data-drafted-trinket]');
@@ -392,7 +441,9 @@
       });
 
       updateCounts();
-      showPack(0);
+      lockSavedChoices();
+      if (panels.every(panel => packChoice(panel.dataset.packPanel))) showLoadout();
+      else showPack(firstUnpickedPackIndex());
     }
   </script>
 </body>

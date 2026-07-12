@@ -133,6 +133,19 @@ function draftItemById(match, itemId) {
   return null;
 }
 
+function draftItemByPackAndId(match, packIndex, itemId) {
+  const found = draftItemById(match, itemId);
+  return found && Number(found.pack?.index) === Number(packIndex) ? found : null;
+}
+
+function lockedDraftProgress(match, userId) {
+  match.draft_progress ||= {};
+  const key = String(Number(userId));
+  match.draft_progress[key] ||= { picks: {}, updated_at: null };
+  match.draft_progress[key].picks ||= {};
+  return match.draft_progress[key];
+}
+
 function draftCardSnapshot(item, trinket, wutConfig) {
   const player = item?.player_snapshot;
   const rarity = player?.tier || item?.rarity || 'common';
@@ -155,10 +168,13 @@ export async function submitArenaDraftPrepWithClient(client, { userId, matchId, 
   const userKey = String(Number(userId));
   if (match.draft_loadouts?.[userKey]?.submitted_at) throw new Error('Your Draft Arena picks are already locked.');
   const packs = match.mini_draft?.packs || [];
+  const lockedPicks = match.draft_progress?.[userKey]?.picks || {};
+  if (packs.length && packs.some(pack => !lockedPicks[String(pack.index)])) throw new Error('Draft Arena packs must be picked in order before locking prep.');
   const picked = new Map();
-  for (const [rawPackIndex, rawItemId] of Object.entries(picks || {})) {
+  for (const [rawPackIndex, rawItemId] of Object.entries(lockedPicks)) {
     const packIndex = Number(rawPackIndex);
-    const found = draftItemById(match, rawItemId);
+    if (String(picks?.[String(rawPackIndex)] || '') !== String(rawItemId)) throw new Error('Draft Arena picks changed after they were locked.');
+    const found = draftItemByPackAndId(match, packIndex, rawItemId);
     if (!found || Number(found.pack.index) !== packIndex) throw new Error('Each pack must be picked from its own three choices.');
     picked.set(packIndex, found);
   }
@@ -201,6 +217,34 @@ export async function submitArenaDraftPrepWithClient(client, { userId, matchId, 
     [row.match_key, match.status, match.current_player_id || null, match.turn_deadline || null, JSON.stringify(match)]);
   return match;
 }
+
+export async function recordArenaDraftPickProgressWithClient(client, { userId, matchId, packIndex, itemId, now = new Date() }) {
+  const result = await client.query("SELECT match_key,data,status FROM arena_matches WHERE numeric_id=$1 AND match_kind='arena' FOR UPDATE", [Number(matchId)]);
+  const row = result.rows[0];
+  const match = row?.data;
+  if (!match || match.mode !== 'draft' || !(match.player_ids || []).map(Number).includes(Number(userId))) throw new Error('Draft Arena match not found.');
+  if (row.status !== 'drafting') throw new Error('This draft is no longer accepting picks.');
+  const userKey = String(Number(userId));
+  if (match.draft_loadouts?.[userKey]?.submitted_at) throw new Error('Your Draft Arena picks are already locked.');
+  const packs = match.mini_draft?.packs || [];
+  const cleanPackIndex = Number(packIndex);
+  if (!packs.some(pack => Number(pack.index) === cleanPackIndex)) throw new Error('Draft Arena pack not found.');
+  const progress = lockedDraftProgress(match, userId);
+  const existing = progress.picks[String(cleanPackIndex)];
+  if (existing != null) {
+    if (Number(existing) !== Number(itemId)) throw new Error('That Draft Arena pack pick is already locked.');
+    return { packIndex: cleanPackIndex, itemId: Number(existing), alreadyLocked: true };
+  }
+  const expectedPackIndex = Number(packs[Object.keys(progress.picks).length]?.index);
+  if (cleanPackIndex !== expectedPackIndex) throw new Error('Draft Arena packs must be picked in order.');
+  if (!draftItemByPackAndId(match, cleanPackIndex, itemId)) throw new Error('That item is not in this Draft Arena pack.');
+  progress.picks[String(cleanPackIndex)] = Number(itemId);
+  progress.updated_at = now.toISOString();
+  await client.query('UPDATE arena_matches SET data=$2::jsonb WHERE match_key=$1', [row.match_key, JSON.stringify(match)]);
+  return { packIndex: cleanPackIndex, itemId: Number(itemId), alreadyLocked: false };
+}
+
+export const recordArenaDraftPickProgressPostgres = (pool, input) => withTransaction(pool, client => recordArenaDraftPickProgressWithClient(client, input));
 
 export const submitArenaDraftPrepPostgres = (pool, input) => withTransaction(pool, client => submitArenaDraftPrepWithClient(client, input));
 
@@ -492,14 +536,28 @@ export async function completeArenaMatchWithClient(client, { matchId, scoredPlac
     const seriesWon = Object.values(match.series_wins).some(value => asNumber(value) >= asNumber(match.series_target_wins || CONSTRUCTED_SERIES_TARGET_WINS));
     const seriesComplete = seriesWon || match.series_games.length >= asNumber(match.series_max_games || CONSTRUCTED_SERIES_MAX_GAMES);
     if (!seriesComplete) {
-      prepareNextConstructedGame(match, now, config.arena);
-      await client.query('DELETE FROM arena_placements WHERE match_key=$1', [matchRow.match_key]);
+      match.status = 'ready';
+      match.resolved_at = now.toISOString();
+      match.turn_deadline = null;
+      match.current_player_id = null;
+      match.revealed_by = [];
+      match.series_pending_next_game = true;
+      match.series_can_advance = false;
+      match.series_game_result = {
+        game_number: gameNumber,
+        scores: { ...totals },
+        winner_user_id: match.winner_user_id,
+        series_wins: { ...match.series_wins },
+        series_total_fp: { ...match.series_total_fp }
+      };
       await client.query(`
         UPDATE arena_matches SET status=$2,current_player_id=$3,turn_deadline=$4,data=$5::jsonb
         WHERE match_key=$1
-      `, [matchRow.match_key, match.status, match.current_player_id || null, match.turn_deadline, JSON.stringify(match)]);
-      return { ...match, placements: [] };
+      `, [matchRow.match_key, match.status, null, null, JSON.stringify(match)]);
+      return { ...match, placements: scored };
     }
+    match.series_pending_next_game = false;
+    match.series_can_advance = false;
     match.scores = { ...match.series_wins };
     match.winner_user_id = resolveConstructedSeriesWinner(match);
     match.status = 'ready';
@@ -624,14 +682,47 @@ export async function completeArenaRevealWithClient(client, { userId, matchId, n
   match.revealed_by = Array.isArray(match.revealed_by) ? match.revealed_by : [];
   if (!match.revealed_by.map(Number).includes(Number(userId))) match.revealed_by.push(Number(userId));
   if (match.revealed_by.length >= match.player_ids.length) {
-    match.status = 'completed';
-    match.completed_at ||= now.toISOString();
-    await applyElo(client, match, now);
+    if (match.mode === 'constructed' && match.series_format === 'bo3' && match.series_pending_next_game) {
+      match.series_can_advance = true;
+    } else {
+      match.status = 'completed';
+      match.completed_at ||= now.toISOString();
+      await applyElo(client, match, now);
+    }
   }
   await client.query('UPDATE arena_matches SET status=$2,data=$3::jsonb WHERE match_key=$1',
     [row.match_key, match.status, JSON.stringify(match)]);
   return match;
 }
+
+export async function advanceArenaConstructedSeriesWithClient(client, { userId, matchId, now = new Date() }) {
+  const result = await client.query(
+    "SELECT match_key,data,status FROM arena_matches WHERE numeric_id=$1 AND match_kind='arena' FOR UPDATE",
+    [Number(matchId)]
+  );
+  const row = result.rows[0];
+  const match = row?.data;
+  if (!match || match.mode !== 'constructed' || match.series_format !== 'bo3' || !(match.player_ids || []).map(Number).includes(Number(userId))) {
+    throw new Error('Constructed Arena match not found.');
+  }
+  if (row.status !== 'ready' || !match.series_pending_next_game) throw new Error('This series is not waiting on the next game.');
+  const revealed = new Set((match.revealed_by || []).map(Number));
+  if (!match.player_ids.map(Number).every(id => revealed.has(id))) throw new Error('Both players must reveal this game before the next game can begin.');
+  const config = await cardsConfig(client);
+  prepareNextConstructedGame(match, now, config.arena);
+  match.revealed_by = [];
+  match.series_pending_next_game = false;
+  match.series_can_advance = false;
+  await client.query('DELETE FROM arena_placements WHERE match_key=$1', [row.match_key]);
+  await client.query(`
+    UPDATE arena_matches SET status=$2,current_player_id=$3,turn_deadline=$4,data=$5::jsonb
+    WHERE match_key=$1
+  `, [row.match_key, match.status, match.current_player_id || null, match.turn_deadline || null, JSON.stringify(match)]);
+  return match;
+}
+
+export const advanceArenaConstructedSeriesPostgres = (pool, input) =>
+  withTransaction(pool, client => advanceArenaConstructedSeriesWithClient(client, input));
 
 export async function recalculateArenaEloFromHistoryWithClient(client, now = new Date()) {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242038]);

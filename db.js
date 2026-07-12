@@ -4610,6 +4610,19 @@ function arenaDraftItemById(match, itemId) {
   return null;
 }
 
+function arenaDraftItemByPackAndId(match, packIndex, itemId) {
+  const found = arenaDraftItemById(match, itemId);
+  return found && Number(found.pack?.index) === Number(packIndex) ? found : null;
+}
+
+function lockedArenaDraftProgress(match, userId) {
+  match.draft_progress ||= {};
+  const key = String(Number(userId));
+  match.draft_progress[key] ||= { picks: {}, updated_at: null };
+  match.draft_progress[key].picks ||= {};
+  return match.draft_progress[key];
+}
+
 function arenaDraftCardSnapshot(item, trinket = null) {
   const player = item?.player_snapshot;
   if (!player) throw new Error('Drafted player not found.');
@@ -5205,10 +5218,13 @@ export function submitArenaDraftPrep({ userId, matchId, picks, trinketAttachment
   const userKey = String(Number(userId));
   if (match.draft_loadouts?.[userKey]?.submitted_at) throw new Error('Your Draft Arena picks are already locked.');
   const packs = match.mini_draft?.packs || [];
+  const lockedPicks = match.draft_progress?.[userKey]?.picks || {};
+  if (packs.length && packs.some(pack => !lockedPicks[String(pack.index)])) throw new Error('Draft Arena packs must be picked in order before locking prep.');
   const pickedByPack = new Map();
-  for (const [rawPackIndex, rawItemId] of Object.entries(picks || {})) {
+  for (const [rawPackIndex, rawItemId] of Object.entries(lockedPicks)) {
     const packIndex = Number(rawPackIndex);
-    const found = arenaDraftItemById(match, rawItemId);
+    if (String(picks?.[String(rawPackIndex)] || '') !== String(rawItemId)) throw new Error('Draft Arena picks changed after they were locked.');
+    const found = arenaDraftItemByPackAndId(match, packIndex, rawItemId);
     if (!found || Number(found.pack.index) !== packIndex) throw new Error('Each pack must be picked from its own three choices.');
     pickedByPack.set(packIndex, found);
   }
@@ -5257,6 +5273,31 @@ export function submitArenaDraftPrep({ userId, matchId, picks, trinketAttachment
   }
   saveState();
   return publicArenaMatch(match, userId);
+}
+
+export function recordArenaDraftPickProgress({ userId, matchId, packIndex, itemId, now = new Date() }) {
+  ensureArenaState();
+  const match = state.cards.arena.matches.find(item => Number(item.id) === Number(matchId));
+  if (!match || match.mode !== 'draft' || !match.player_ids.map(Number).includes(Number(userId))) throw new Error('Draft Arena match not found.');
+  if (match.status !== 'drafting') throw new Error('This draft is no longer accepting picks.');
+  const userKey = String(Number(userId));
+  if (match.draft_loadouts?.[userKey]?.submitted_at) throw new Error('Your Draft Arena picks are already locked.');
+  const packs = match.mini_draft?.packs || [];
+  const cleanPackIndex = Number(packIndex);
+  if (!packs.some(pack => Number(pack.index) === cleanPackIndex)) throw new Error('Draft Arena pack not found.');
+  const progress = lockedArenaDraftProgress(match, userId);
+  const existing = progress.picks[String(cleanPackIndex)];
+  if (existing != null) {
+    if (Number(existing) !== Number(itemId)) throw new Error('That Draft Arena pack pick is already locked.');
+    return { packIndex: cleanPackIndex, itemId: Number(existing), alreadyLocked: true };
+  }
+  const expectedPackIndex = Number(packs[Object.keys(progress.picks).length]?.index);
+  if (cleanPackIndex !== expectedPackIndex) throw new Error('Draft Arena packs must be picked in order.');
+  if (!arenaDraftItemByPackAndId(match, cleanPackIndex, itemId)) throw new Error('That item is not in this Draft Arena pack.');
+  progress.picks[String(cleanPackIndex)] = Number(itemId);
+  progress.updated_at = now.toISOString();
+  saveState();
+  return { packIndex: cleanPackIndex, itemId: Number(itemId), alreadyLocked: false };
 }
 
 function adminArenaMatch(match) {
@@ -5871,10 +5912,25 @@ export function completeArenaMatch(matchId, scoredPlacements, now = new Date()) 
     const seriesWon = Object.values(match.series_wins).some(value => Number(value) >= Number(match.series_target_wins || CONSTRUCTED_SERIES_TARGET_WINS));
     const seriesComplete = seriesWon || match.series_games.length >= Number(match.series_max_games || CONSTRUCTED_SERIES_MAX_GAMES);
     if (!seriesComplete) {
-      prepareNextConstructedSeriesGame(match, now);
+      match.status = 'ready';
+      match.resolved_at = now.toISOString();
+      match.turn_deadline = null;
+      match.current_player_id = null;
+      match.revealed_by = [];
+      match.series_pending_next_game = true;
+      match.series_can_advance = false;
+      match.series_game_result = {
+        game_number: gameNumber,
+        scores: { ...totals },
+        winner_user_id: match.winner_user_id,
+        series_wins: { ...match.series_wins },
+        series_total_fp: { ...match.series_total_fp }
+      };
       saveState();
       return JSON.parse(JSON.stringify(match));
     }
+    match.series_pending_next_game = false;
+    match.series_can_advance = false;
     match.scores = { ...match.series_wins };
     match.winner_user_id = resolveConstructedSeriesWinner(match);
     match.status = 'ready';
@@ -5899,10 +5955,29 @@ export function completeArenaReveal(userId, matchId, now = new Date()) {
   match.revealed_by = Array.isArray(match.revealed_by) ? match.revealed_by : [];
   if (!match.revealed_by.map(Number).includes(Number(userId))) match.revealed_by.push(Number(userId));
   if (match.revealed_by.length >= match.player_ids.length) {
-    match.status = 'completed';
-    match.completed_at = match.completed_at || now.toISOString();
-    applyArenaElo(match, now);
+    if (match.mode === 'constructed' && match.series_format === 'bo3' && match.series_pending_next_game) {
+      match.series_can_advance = true;
+    } else {
+      match.status = 'completed';
+      match.completed_at = match.completed_at || now.toISOString();
+      applyArenaElo(match, now);
+    }
   }
+  saveState();
+  return publicArenaMatch(match, userId);
+}
+
+export function advanceArenaConstructedSeries({ userId, matchId, now = new Date() }) {
+  ensureArenaState();
+  const match = state.cards.arena.matches.find(item => Number(item.id) === Number(matchId) && item.player_ids.map(Number).includes(Number(userId)));
+  if (!match || match.mode !== 'constructed' || match.series_format !== 'bo3') throw new Error('Constructed Arena match not found.');
+  if (match.status !== 'ready' || !match.series_pending_next_game) throw new Error('This series is not waiting on the next game.');
+  const revealed = new Set((match.revealed_by || []).map(Number));
+  if (!match.player_ids.map(Number).every(id => revealed.has(id))) throw new Error('Both players must reveal this game before the next game can begin.');
+  prepareNextConstructedSeriesGame(match, now);
+  match.revealed_by = [];
+  match.series_pending_next_game = false;
+  match.series_can_advance = false;
   saveState();
   return publicArenaMatch(match, userId);
 }

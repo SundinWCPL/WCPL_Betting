@@ -31,6 +31,8 @@
     const draftContext = typeof eventContext === 'undefined' ? null : eventContext;
     const leftUserId = focusedMatch ? Number(currentUser.id) : null;
     const rightUserId = focusedMatch ? Number(focusedMatch.opponent.id) : null;
+    const focusedRevealed = focusedMatch ? (focusedMatch.revealed_by || []).map(Number) : [];
+    const focusedAllRevealed = focusedMatch ? focusedMatch.player_ids.map(Number).every(id => focusedRevealed.includes(id)) : false;
   %>
   <main class="container cards-page arena-page">
     <section class="card page-title cards-title">
@@ -67,7 +69,14 @@
         </div>
 
         <div class="arena-outcome" data-arena-outcome>
-          <% if (focusedMatch.winner_user_id == null) { %><h2>Draw</h2>
+          <% if (focusedMatch.series_pending_next_game) { %>
+            <% if (focusedMatch.winner_user_id == null) { %><h2>Game <%= focusedMatch.series_game_result?.game_number || focusedMatch.series_game_number || 1 %> Draw</h2>
+            <% } else if (Number(focusedMatch.winner_user_id) === Number(currentUser.id)) { %><h2>You Won Game <%= focusedMatch.series_game_result?.game_number || focusedMatch.series_game_number || 1 %>!</h2>
+            <% } else { %><h2>You Lost Game <%= focusedMatch.series_game_result?.game_number || focusedMatch.series_game_number || 1 %></h2><% } %>
+            <span class="pill">Series <%= focusedMatch.series_wins?.[String(currentUser.id)] || 0 %>-<%= focusedMatch.series_wins?.[String(focusedMatch.opponent.id)] || 0 %></span>
+            <% if (focusedAllRevealed) { %><form method="post" action="/cards/arena/matches/<%= focusedMatch.id %>/advance-series"><button>Start Next Game</button></form>
+            <% } else { %><p class="muted">Waiting for your opponent to confirm this reveal.</p><% } %>
+          <% } else if (focusedMatch.winner_user_id == null) { %><h2>Draw</h2>
           <% } else if (Number(focusedMatch.winner_user_id) === Number(currentUser.id)) { %>
             <h2>You Won!</h2>
             <% if (draftContext) { %><span class="pill positive">Tournament win</span><% } else if (Number(focusedMatch.rules_version || 1) >= 2) { %><span class="pill"><%= focusedMatch.wut_rewards?.[String(currentUser.id)] || 0 %> WUT Coins awarded</span><% } else if (!focusedMatch.winnings_claimed_at) { %><form method="post" action="/cards/arena/matches/<%= focusedMatch.id %>/claim"><button>Collect legacy winnings</button></form><% } else { %><span class="pill">Winnings collected</span><% } %>

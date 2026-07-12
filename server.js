@@ -116,6 +116,8 @@ import {
   enterArenaQueue,
   assignArenaMatchups,
   submitArenaDraftPrep,
+  recordArenaDraftPickProgress,
+  advanceArenaConstructedSeries,
   chooseArenaFirstPlayer,
   commitArenaTurn,
   autoAssignExpiredArenaTurns,
@@ -327,10 +329,12 @@ import {
   autoAssignExpiredArenaTurnsPostgres,
   commitArenaTurnPostgres,
   chooseArenaFirstPlayerPostgres,
+  recordArenaDraftPickProgressPostgres,
   submitArenaDraftPrepPostgres,
   skipArenaNoLegalTurnsPostgres,
   completeArenaMatchPostgres,
   completeArenaRevealPostgres,
+  advanceArenaConstructedSeriesPostgres,
   recalculateArenaEloFromHistoryPostgres
 } from './database/repositories/arenaMatch.js';
 import { assignArenaMatchupsPostgres, enterArenaQueuePostgres } from './database/repositories/arenaQueue.js';
@@ -2974,6 +2978,23 @@ app.post('/cards/arena/matches/:matchId/draft', requireLogin, requireWutReady, a
   res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
 });
 
+app.post('/cards/arena/matches/:matchId/draft-pick', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    const input = {
+      userId: req.session.userId,
+      matchId: req.params.matchId,
+      packIndex: req.body.pack_index,
+      itemId: req.body.item_id
+    };
+    const result = postgresEnabled
+      ? await recordArenaDraftPickProgressPostgres(postgresPool(), input)
+      : recordArenaDraftPickProgress(input);
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/cards/arena/matches/:matchId/first-player', requireLogin, requireWutReady, async (req, res) => {
   try {
     const input = { userId: req.session.userId, matchId: req.params.matchId, choice: req.body.choice === 'opponent' ? 'opponent' : 'self' };
@@ -3024,6 +3045,17 @@ app.post('/cards/arena/matches/:matchId/reveal', requireLogin, requireWutReady, 
     req.session.flash = { type: 'error', message: err.message };
     return res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
   }
+});
+
+app.post('/cards/arena/matches/:matchId/advance-series', requireLogin, requireWutReady, async (req, res) => {
+  try {
+    if (postgresEnabled) await advanceArenaConstructedSeriesPostgres(postgresPool(), { userId: req.session.userId, matchId: req.params.matchId });
+    else advanceArenaConstructedSeries({ userId: req.session.userId, matchId: req.params.matchId });
+    req.session.flash = { type: 'success', message: 'Next Bo3 game started.' };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  return res.redirect(`/cards/arena/matches/${encodeURIComponent(req.params.matchId)}`);
 });
 
 app.post('/cards/arena/matches/:matchId/claim', requireLogin, requireWutReady, (req, res) => {
