@@ -69,12 +69,12 @@ export async function getCardsAdminStatePostgres(pool) {
       (SELECT count(*) FROM wut_memberships)::int AS wut_members,
       (SELECT count(*) FROM pack_purchases)::int AS packs,
       (SELECT count(*) FROM arena_entries WHERE status='queued')::int AS queued_arena_entries,
-      (SELECT count(*) FROM arena_matches WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active','scoring'))::int AS active_arena_matches`);
+      (SELECT count(*) FROM arena_matches WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active','scoring','ready'))::int AS active_arena_matches`);
   const rulesVoidCounts = await pool.query(`
     SELECT
       (SELECT count(*) FROM arena_matches
         WHERE match_kind='arena'
-          AND status IN ('drafting','choosing_first','active','scoring')
+          AND status IN ('drafting','choosing_first','active','scoring','ready')
           AND NOT (data ? 'wut_rewards_awarded_at')
           AND NOT (data ? 'elo_updated_at'))::int AS arena_count,
       (SELECT count(*) FROM draft_matches

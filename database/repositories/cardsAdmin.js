@@ -180,7 +180,7 @@ export async function voidActiveWutMatchesForAdminWithClient(client, { adminUser
 
   const arenaRows = (await client.query(`
     SELECT match_key,numeric_id,data,status FROM arena_matches
-    WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active','scoring')
+    WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active','scoring','ready')
     FOR UPDATE
   `)).rows;
   for (const row of arenaRows) {

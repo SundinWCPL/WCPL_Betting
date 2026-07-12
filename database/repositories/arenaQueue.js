@@ -37,8 +37,16 @@ export async function assignArenaMatchupsWithClient(client, { now = new Date(), 
   const meta = await lockArenaMeta(client);
   const config = meta.config || {};
   const queued = (await client.query("SELECT id,user_id,data FROM arena_entries WHERE status='queued' ORDER BY joined_at,id FOR UPDATE")).rows;
-  const active = (await client.query("SELECT data,status FROM arena_matches WHERE status IN ('drafting','choosing_first','active','scoring')")).rows.map(row => row.data || {});
-  const eligible = queued.filter(row => ((row.data?.mode || 'constructed') === 'draft' || row.data?.deck_snapshot) &&
+  const active = (await client.query("SELECT data,status FROM arena_matches WHERE status IN ('drafting','choosing_first','active','scoring','ready')")).rows.map(row => row.data || {});
+  for (const row of queued) {
+    const activeCount = active.filter(match => arenaModeOf(match.mode) === arenaModeOf(row.data?.mode) &&
+      (match.player_ids || []).map(Number).includes(Number(row.user_id))).length;
+    if (activeCount < asNumber(config.maxActiveMatches || 3)) continue;
+    const entry = { ...(row.data || {}), status: 'cancelled', cancel_reason: 'active_match_cap', cancelled_at: now.toISOString() };
+    await client.query("UPDATE arena_entries SET status='cancelled',data=$2::jsonb WHERE id=$1", [row.id, JSON.stringify(entry)]);
+    row.data = entry;
+  }
+  const eligible = queued.filter(row => row.data?.status === 'queued' && ((row.data?.mode || 'constructed') === 'draft' || row.data?.deck_snapshot) &&
     active.filter(match => arenaModeOf(match.mode) === arenaModeOf(row.data?.mode) && (match.player_ids || []).map(Number).includes(Number(row.user_id))).length < asNumber(config.maxActiveMatches || 3)
   ).map(row => ({ ...row.data, id: asNumber(row.id), user_id: asNumber(row.user_id) }));
   const ratings = new Map((await client.query('SELECT user_id,rating FROM arena_ratings')).rows.map(row => [asNumber(row.user_id), Number(row.rating)]));
@@ -144,7 +152,7 @@ export async function enterArenaQueueWithClient(client, {
   const cleanMode = mode === 'constructed' ? 'constructed' : 'draft';
   const activeCount = asNumber((await client.query(`
     SELECT count(*)::integer AS count FROM arena_matches
-    WHERE status IN ('drafting','choosing_first','active','scoring') AND data->'player_ids' @> $1::jsonb
+    WHERE status IN ('drafting','choosing_first','active','scoring','ready') AND data->'player_ids' @> $1::jsonb
       AND COALESCE(data->>'mode','constructed')=$2
   `, [JSON.stringify([Number(userId)]), cleanMode])).rows[0].count);
   if (activeCount >= asNumber(config.maxActiveMatches || 3)) throw new Error(`You already have ${config.maxActiveMatches} active ${cleanMode === 'draft' ? 'Draft Arena' : 'Constructed Arena'} matches.`);

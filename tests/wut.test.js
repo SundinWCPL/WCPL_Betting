@@ -423,6 +423,39 @@ function playConstructedSeriesToReady(userId, catalogByIdentity, winnerUserId = 
   }
 }
 
+function playConstructedGameToReady({ userId, matchId, catalogByIdentity, winnerUserId = userId }) {
+  let match = db.getArenaStateForUser(userId).activeMatches.find(item => Number(item.id) === Number(matchId));
+  match = chooseFirstForConstructedMatch(match) || match;
+  while (true) {
+    const arena = db.getArenaStateForUser(userId);
+    match = arena.activeMatches.find(item => Number(item.id) === Number(matchId));
+    if (!match || match.status !== 'active') break;
+    const current = Number(match.current_player_id);
+    const snapshots = match.deck_snapshots[String(current)].active;
+    const usedCards = new Set(match.placements.filter(row => Number(row.user_id) === current).map(row => Number(row.card_id)));
+    const usedSlots = new Set(match.placements.filter(row => Number(row.user_id) === current).map(row => row.slot));
+    const openSlots = ['F1', 'F2', 'D1', 'D2', 'G'].filter(slot => !usedSlots.has(slot));
+    const placements = [];
+    for (const slot of openSlots) {
+      const position = slot === 'G' ? 'G' : slot[0];
+      const card = snapshots.find(item => item.position === position && !usedCards.has(Number(item.card_id)));
+      if (!card) continue;
+      placements.push({ slot, cardId: card.card_id });
+      usedCards.add(Number(card.card_id));
+      if (placements.length === Number(match.cards_required_this_turn)) break;
+    }
+    db.commitArenaTurn({ userId: current, matchId: match.id, placements, catalogByIdentity });
+  }
+  const scoring = db.getArenaMatchesNeedingScoring().find(item => Number(item.id) === Number(matchId));
+  assert.ok(scoring);
+  const completed = db.completeArenaMatch(scoring.id, scoring.placements.map(row => ({
+    ...row,
+    fp: Number(row.user_id) === Number(winnerUserId) ? 20 : 10
+  })));
+  assert.equal(completed.status, 'ready');
+  return completed;
+}
+
 test('new WUT users receive the complete starter bundle', () => {
   db.initDb();
   db.joinWut(1);
@@ -1740,6 +1773,37 @@ test('Arena active match cap is enforced per mode', async () => {
   assert.equal(after.activeCounts.constructed, 1);
 });
 
+test('Arena ready matches still count toward the queue cap', async () => {
+  const catalog = await cards.buildCardPlayerCatalog();
+  const catalogByIdentity = {};
+  const user = createWutReadyUser('QUEUE-READY-CAP', catalogByIdentity);
+  const deck = saveConstructedTestDeck(user.id, 'QUEUE-READY-CAP', catalogByIdentity);
+  const modeLimit = db.getArenaStateForUser(user.id).config.maxActiveMatches;
+
+  const firstOpponent = createWutReadyUser('QUEUE-READY-CAP-OPP-0', catalogByIdentity);
+  const firstOpponentDeck = saveConstructedTestDeck(firstOpponent.id, 'QUEUE-READY-CAP-OPP-0', catalogByIdentity);
+  db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog });
+  db.enterArenaQueue(firstOpponent.id, { mode: 'constructed', deckId: firstOpponentDeck.id, catalogByIdentity, catalog });
+  const firstMatchId = db.assignArenaMatchups(new Date(), catalog).createdMatchIds[0];
+  playConstructedGameToReady({ userId: user.id, matchId: firstMatchId, catalogByIdentity });
+
+  for (let index = 1; index < modeLimit; index += 1) {
+    const opponent = createWutReadyUser(`QUEUE-READY-CAP-OPP-${index}`, catalogByIdentity);
+    const opponentDeck = saveConstructedTestDeck(opponent.id, `QUEUE-READY-CAP-OPP-${index}`, catalogByIdentity);
+    db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog });
+    db.enterArenaQueue(opponent.id, { mode: 'constructed', deckId: opponentDeck.id, catalogByIdentity, catalog });
+    db.assignArenaMatchups(new Date(Date.now() + index), catalog);
+  }
+
+  const capped = db.getArenaStateForUser(user.id);
+  assert.equal(capped.readyMatches.some(match => Number(match.id) === Number(firstMatchId)), true);
+  assert.equal(capped.activeCounts.constructed, modeLimit);
+  assert.throws(
+    () => db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog }),
+    new RegExp(`${modeLimit} active Constructed Arena matches`)
+  );
+});
+
 test('Draft Arena packs preserve boost effects and scoring source identity', async () => {
   const catalog = (await cards.buildCardPlayerCatalog()).filter(player => player.edition === 'S3' && player.tier === 'common' && player.position === 'F');
   assert.ok(catalog.length, 'fixture needs at least one eligible S3 common forward');
@@ -1764,6 +1828,8 @@ test('Draft Arena packs preserve boost effects and scoring source identity', asy
   assert.deepEqual(pack.boosts[0].effect, db.getCardsConfig().boostEffects.goal.common);
   assert.ok(pack.players[0].player_snapshot.divisionId, 'draft player snapshot keeps current division');
   assert.ok(pack.players[0].player_snapshot.sourceDivisionId, 'draft player snapshot keeps scoring source division');
+  assert.ok(pack.players[0].player_snapshot.editionStats, 'draft player snapshot keeps card-back season stats');
+  assert.ok(pack.players[0].player_snapshot.seasonStats?.[pack.players[0].player_snapshot.edition], 'draft player snapshot keeps season stats by edition');
 });
 
 test('historical scoring does not crash when a legacy snapshot references a missing division', async () => {

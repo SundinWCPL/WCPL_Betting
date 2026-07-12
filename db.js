@@ -4147,7 +4147,7 @@ export function getCardsAdminState() {
       wutMembers: state.cards.wutMemberships.length,
       packs: state.cards.packPurchases.length,
       queuedArenaEntries: state.cards.arena.entries.filter(entry => entry.status === 'queued').length,
-      activeArenaMatches: state.cards.arena.matches.filter(match => ['drafting', 'choosing_first', 'active', 'scoring'].includes(match.status)).length
+      activeArenaMatches: state.cards.arena.matches.filter(match => ARENA_ACTIVE_STATUSES.includes(match.status)).length
     }
   };
 }
@@ -4562,7 +4562,7 @@ function ensureArenaState() {
   ensureCardsState();
 }
 
-const ARENA_ACTIVE_STATUSES = ['drafting', 'choosing_first', 'active', 'scoring'];
+const ARENA_ACTIVE_STATUSES = ['drafting', 'choosing_first', 'active', 'scoring', 'ready'];
 const CONSTRUCTED_SERIES_TARGET_WINS = 2;
 const CONSTRUCTED_SERIES_MAX_GAMES = 3;
 
@@ -5124,6 +5124,12 @@ export function pairArenaQueueEntriesByElo(
 export function assignArenaMatchups(now = new Date(), catalog = []) {
   ensureArenaState();
   const arena = state.cards.arena;
+  for (const entry of arena.entries.filter(entry => entry.status === 'queued')) {
+    if (activeArenaMatchesForUser(entry.user_id, arenaModeOf(entry.mode)).length < Number(arena.config.maxActiveMatches || 3)) continue;
+    entry.status = 'cancelled';
+    entry.cancel_reason = 'active_match_cap';
+    entry.cancelled_at = now.toISOString();
+  }
   const eligible = arena.entries.filter(entry => entry.status === 'queued' && ((entry.mode || 'constructed') === 'draft' || entry.deck_snapshot) &&
     activeArenaMatchesForUser(entry.user_id, arenaModeOf(entry.mode)).length < Number(arena.config.maxActiveMatches || 3));
   const activePairs = new Set(arena.matches
@@ -5204,7 +5210,7 @@ export function getArenaAdminState(now = new Date()) {
     nextMatchmakingAt: nextArenaMatchmakingAt(now).toISOString(),
     queued,
     queueCounts,
-    active: state.cards.arena.matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status)).length,
+    active: state.cards.arena.matches.filter(match => ARENA_ACTIVE_STATUSES.includes(match.status)).length,
     ready: state.cards.arena.matches.filter(match => match.status === 'ready').length,
     config: JSON.parse(JSON.stringify(state.cards.arena.config))
   };
@@ -5353,7 +5359,7 @@ export function getWutRulesUpdateVoidSummary() {
   ensureCardsState();
   const action = state.cards.rolloutActions?.lastActiveMatchVoid || state.cards.rolloutActions?.voidOngoingMatchesV1 || null;
   const arenaCount = state.cards.arena.matches.filter(match =>
-    ['drafting', 'choosing_first', 'active', 'scoring'].includes(match.status) &&
+    ARENA_ACTIVE_STATUSES.includes(match.status) &&
     !match.wut_rewards_awarded_at &&
     !match.elo_updated_at
   ).length;
@@ -5384,7 +5390,7 @@ export function voidActiveWutMatchesForAdmin({ adminUserId = null, rewardAmount 
   let skippedAwarded = 0;
   const voidedAt = now.toISOString();
 
-  for (const match of state.cards.arena.matches.filter(item => ['drafting', 'choosing_first', 'active', 'scoring'].includes(item.status))) {
+  for (const match of state.cards.arena.matches.filter(item => ARENA_ACTIVE_STATUSES.includes(item.status))) {
     if (match.wut_rewards_awarded_at || match.elo_updated_at) {
       skippedAwarded += 1;
       continue;
@@ -6337,7 +6343,7 @@ function referencedPermanentCardIds(userId) {
     for (const snapshot of entry.deck_snapshot?.active || []) ids.add(Number(snapshot.card_id));
   }
   for (const match of state.cards.arena?.matches || []) {
-    if (!['drafting', 'choosing_first', 'active', 'scoring'].includes(match.status)) continue;
+    if (!ARENA_ACTIVE_STATUSES.includes(match.status)) continue;
     for (const snapshot of match.deck_snapshots?.[String(targetUserId)]?.active || []) ids.add(Number(snapshot.card_id));
     for (const placement of match.placements || []) {
       if (Number(placement.user_id) === targetUserId && Number(placement.card_id || 0)) ids.add(Number(placement.card_id));

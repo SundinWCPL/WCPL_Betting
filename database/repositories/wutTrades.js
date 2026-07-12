@@ -23,7 +23,7 @@ async function referencedCardIds(client, userId) {
   const decks = await client.query('SELECT data FROM wut_decks WHERE user_id=$1', [Number(userId)]);
   const lineups = await client.query("SELECT data FROM card_records WHERE collection='lineups' AND user_id=$1", [Number(userId)]);
   const entries = await client.query("SELECT data FROM arena_entries WHERE user_id=$1 AND status='queued'", [Number(userId)]);
-  const matches = await client.query("SELECT data FROM arena_matches WHERE status IN ('drafting','choosing_first','active','scoring')");
+  const matches = await client.query("SELECT data FROM arena_matches WHERE status IN ('drafting','choosing_first','active','scoring','ready')");
   for (const row of decks.rows) for (const id of row.data?.active_card_ids || []) ids.add(Number(id));
   for (const row of lineups.rows) if (Number(row.data?.card_id || 0)) ids.add(Number(row.data.card_id));
   for (const row of entries.rows) for (const card of row.data?.deck_snapshot?.active || []) ids.add(Number(card.card_id));

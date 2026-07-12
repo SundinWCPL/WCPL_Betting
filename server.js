@@ -1872,6 +1872,47 @@ function arenaCatalogByIdentity(catalog) {
   return out;
 }
 
+function hydrateDraftArenaPlayerSnapshot(snapshot, catalogByIdentity) {
+  if (!snapshot) return snapshot;
+  const canonical = catalogByIdentity?.[snapshot.cardIdentity] ||
+    catalogByIdentity?.[snapshot.card_identity] ||
+    catalogByIdentity?.[snapshot.catalogKey] ||
+    catalogByIdentity?.[`${snapshot.edition || snapshot.season || 'S3'}|${snapshot.divisionId}|${snapshot.playerKey}`] ||
+    catalogByIdentity?.[`${snapshot.divisionId}|${snapshot.playerKey}`] ||
+    null;
+  if (!canonical) return snapshot;
+  return {
+    ...canonical,
+    ...snapshot,
+    seasonStats: snapshot.seasonStats || canonical.seasonStats || {},
+    editionStats: snapshot.editionStats || canonical.editionStats || null,
+    s1SyntheticRates: snapshot.s1SyntheticRates || canonical.s1SyntheticRates || null,
+    s2: snapshot.s2 || canonical.s2 || null,
+    s3: snapshot.s3 || canonical.s3 || null,
+    expectedWutFpPerMatch: snapshot.expectedWutFpPerMatch ?? canonical.expectedWutFpPerMatch ?? null,
+    weightedFpPerGame: snapshot.weightedFpPerGame ?? canonical.weightedFpPerGame ?? null,
+    rarityGamesPlayed: snapshot.rarityGamesPlayed ?? canonical.rarityGamesPlayed ?? null,
+    stars: snapshot.stars || canonical.stars || 1
+  };
+}
+
+function hydrateDraftArenaMatchSnapshots(match, catalogByIdentity) {
+  if (!match || match.mode !== 'draft') return match;
+  for (const pack of match.mini_draft?.packs || []) {
+    for (const item of pack.players || (pack.player ? [pack.player] : [])) {
+      item.player_snapshot = hydrateDraftArenaPlayerSnapshot(item.player_snapshot, catalogByIdentity);
+    }
+  }
+  for (const snapshot of Object.values(match.deck_snapshots || {}).flatMap(deck => deck?.active || [])) {
+    snapshot.player = hydrateDraftArenaPlayerSnapshot(snapshot.player, catalogByIdentity);
+  }
+  for (const row of match.placements || []) {
+    if (row.card_snapshot?.player) row.card_snapshot.player = hydrateDraftArenaPlayerSnapshot(row.card_snapshot.player, catalogByIdentity);
+    if (row.card?.player) row.card.player = hydrateDraftArenaPlayerSnapshot(row.card.player, catalogByIdentity);
+  }
+  return match;
+}
+
 function arenaSnapshotForCard(card, wutConfig) {
     if (!card?.player) throw new Error('A saved deck references a card that is no longer in the WUT catalog.');
     const player = card.player;
@@ -2368,6 +2409,10 @@ async function buildArenaCardsHub(userId, query = {}) {
     otherBoosts.push(...matchOwned.boosts);
   }
   const matchBoosts = [...boosts, ...otherBoosts];
+  const arenaIdentityMap = arenaCatalogByIdentity(catalog);
+  arena.activeMatches = arena.activeMatches.map(match => hydrateDraftArenaMatchSnapshots(match, arenaIdentityMap));
+  arena.readyMatches = arena.readyMatches.map(match => hydrateDraftArenaMatchSnapshots(match, arenaIdentityMap));
+  arena.history = arena.history.map(match => hydrateDraftArenaMatchSnapshots(match, arenaIdentityMap));
   arena.activeMatches = arena.activeMatches.map(match => decorateArenaMatch(match, matchCards, matchBoosts));
   arena.readyMatches = arena.readyMatches.map(match => decorateArenaMatch(match, matchCards, matchBoosts));
   arena.history = arena.history.map(match => decorateArenaMatch(match, matchCards, matchBoosts));
@@ -2892,6 +2937,7 @@ app.get('/cards/arena/matches/:matchId', requireLogin, requireWutReady, async (r
     const match = [...payload.arena.activeMatches, ...payload.arena.readyMatches, ...payload.arena.history]
       .find(item => Number(item.id) === matchId);
     if (!match) return res.status(404).send('WUT match not found.');
+    hydrateDraftArenaMatchSnapshots(match, arenaCatalogByIdentity(await getCardsCatalog()));
     if (match.status === 'drafting' && match.mode === 'draft') {
       return res.render('cards_arena_draft', { ...payload, match });
     }

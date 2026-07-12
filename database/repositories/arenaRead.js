@@ -17,7 +17,7 @@ export async function getArenaAdminSummaryPostgres(pool, now = new Date()) {
       (SELECT count(*)::int FROM arena_entries WHERE status='queued') AS queued,
       (SELECT count(*)::int FROM arena_entries WHERE status='queued' AND COALESCE(data->>'mode','constructed')='draft') AS queued_draft,
       (SELECT count(*)::int FROM arena_entries WHERE status='queued' AND COALESCE(data->>'mode','constructed')='constructed') AS queued_constructed,
-      (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active')) AS active,
+      (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active','scoring','ready')) AS active,
       (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status='ready') AS ready`)
   ]);
   const data = structuredClone(meta.rows[0]?.data || {});
@@ -120,6 +120,7 @@ export async function getArenaStateForUserPostgres(pool, userId, now = new Date(
   const matches = matchRows.rows.map(row => ({ ...(row.data || {}), status: row.status, placements: row.placements || [] }))
     .map(match => publicMatch(match, playerId, names, config, wutConfig, now));
   const activeMatches = matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status));
+  const capMatches = matches.filter(match => ['drafting', 'choosing_first', 'active', 'scoring', 'ready'].includes(match.status));
   const queueCounts = { draft: 0, constructed: 0 };
   for (const row of queueCountRows.rows) queueCounts[arenaModeOf(row.mode)] = Number(row.count || 0);
   const ownQueuedEntries = queuedEntries.rows.map(row => structuredClone(row.data || {}));
@@ -152,7 +153,7 @@ export async function getArenaStateForUserPostgres(pool, userId, now = new Date(
     queuedEntries: Object.fromEntries(Object.entries(ownQueuedByMode).map(([mode, entry]) => [mode, entry ? structuredClone(entry) : null])),
     activeCounts: Object.fromEntries(['draft', 'constructed'].map(mode => [
       mode,
-      activeMatches.filter(match => arenaModeOf(match.mode) === mode).length
+      capMatches.filter(match => arenaModeOf(match.mode) === mode).length
     ])),
     rating: names.get(playerId)?.rating ?? ARENA_DEFAULT_ELO,
     record: {
