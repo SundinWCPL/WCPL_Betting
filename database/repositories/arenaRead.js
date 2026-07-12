@@ -4,6 +4,7 @@ import { trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
 const asNumber = value => Number(value || 0);
 const firstPlayerDeciderId = match => Number(match?.first_player_decider_user_id ?? match?.coin_flip_winner_user_id);
 const arenaModeOf = value => String(value || 'constructed') === 'draft' ? 'draft' : 'constructed';
+const countsTowardUserCap = (match, userId) => match?.status !== 'ready' || !(match.revealed_by || []).map(Number).includes(Number(userId));
 
 export async function getArenaRatingPostgres(pool, userId) {
   const row = (await pool.query('SELECT rating FROM arena_ratings WHERE user_id=$1', [Number(userId)])).rows[0];
@@ -120,7 +121,7 @@ export async function getArenaStateForUserPostgres(pool, userId, now = new Date(
   const matches = matchRows.rows.map(row => ({ ...(row.data || {}), status: row.status, placements: row.placements || [] }))
     .map(match => publicMatch(match, playerId, names, config, wutConfig, now));
   const activeMatches = matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status));
-  const capMatches = matches.filter(match => ['drafting', 'choosing_first', 'active', 'scoring', 'ready'].includes(match.status));
+  const capMatches = matches.filter(match => ['drafting', 'choosing_first', 'active', 'scoring', 'ready'].includes(match.status) && countsTowardUserCap(match, playerId));
   const queueCounts = { draft: 0, constructed: 0 };
   for (const row of queueCountRows.rows) queueCounts[arenaModeOf(row.mode)] = Number(row.count || 0);
   const ownQueuedEntries = queuedEntries.rows.map(row => structuredClone(row.data || {}));

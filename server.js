@@ -62,6 +62,13 @@ import {
   setCasinoLinkVisible,
   resetCasinoData,
   spinCasinoSlots,
+  getBlackjackStateForUser,
+  sitBlackjackSeatJson,
+  leaveBlackjackSeatJson,
+  heartbeatBlackjackSeatJson,
+  betBlackjackJson,
+  actBlackjackJson,
+  addBlackjackChatJson,
   getHorseRaceStateForUser,
   placeOrUpdateHorseRaceBet,
   buyHorse,
@@ -196,6 +203,15 @@ import {
   getCasinoStateForUserPostgres,
   spinCasinoSlotsPostgres
 } from './database/repositories/casinoSlots.js';
+import {
+  actBlackjackPostgres,
+  addBlackjackChatPostgres,
+  betBlackjackPostgres,
+  getBlackjackStateForUserPostgres,
+  heartbeatBlackjackSeatPostgres,
+  leaveBlackjackSeatPostgres,
+  sitBlackjackSeatPostgres
+} from './database/repositories/casinoBlackjack.js';
 import {
   getShotDoctorStateForUserPostgres,
   startShotDoctorRunPostgres,
@@ -454,6 +470,7 @@ let arenaClockBusy = false;
 
 let horseChatCooldownCardDate = null;
 const horseChatCooldowns = new Map();
+const blackjackChatCooldowns = new Map();
 
 function syncHorseChatCooldowns(cardDate) {
   if (horseChatCooldownCardDate !== cardDate) {
@@ -1129,6 +1146,106 @@ app.post('/casino/slots/spin', requireLogin, async (req, res) => {
     }
     req.session.flash = { type: 'error', message: err.message };
     return res.redirect('/casino');
+  }
+});
+
+app.get('/casino/blackjack', requireLogin, async (req, res) => {
+  const blackjackState = postgresEnabled
+    ? await getBlackjackStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+    : getBlackjackStateForUser(req.session.userId);
+  res.render('blackjack', { blackjackState });
+});
+
+app.get('/casino/blackjack/state', requireLogin, async (req, res) => {
+  const blackjackState = postgresEnabled
+    ? await getBlackjackStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+    : getBlackjackStateForUser(req.session.userId);
+  res.json({ ok: true, blackjackState });
+});
+
+app.post('/casino/blackjack/sit', requireLogin, async (req, res) => {
+  try {
+    const user = res.locals.currentUser;
+    const input = {
+      userId: req.session.userId,
+      displayName: user?.display_name || user?.username || `User ${req.session.userId}`,
+      seatIndex: req.body.seat_index
+    };
+    const result = postgresEnabled
+      ? await sitBlackjackSeatPostgres(postgresPool(), { userId: input.userId, input })
+      : sitBlackjackSeatJson({ userId: input.userId, input });
+    res.json({ ok: true, blackjackState: result.blackjackState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/blackjack/leave', requireLogin, async (req, res) => {
+  try {
+    const result = postgresEnabled
+      ? await leaveBlackjackSeatPostgres(postgresPool(), { userId: req.session.userId })
+      : leaveBlackjackSeatJson({ userId: req.session.userId });
+    res.json({ ok: true, blackjackState: result.blackjackState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/blackjack/heartbeat', requireLogin, async (req, res) => {
+  try {
+    const result = postgresEnabled
+      ? await heartbeatBlackjackSeatPostgres(postgresPool(), { userId: req.session.userId })
+      : heartbeatBlackjackSeatJson({ userId: req.session.userId });
+    res.json({ ok: true, blackjackState: result.blackjackState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/blackjack/bet', requireLogin, async (req, res) => {
+  try {
+    const input = { wager: req.body.wager };
+    const result = postgresEnabled
+      ? await betBlackjackPostgres(postgresPool(), { userId: req.session.userId, input })
+      : betBlackjackJson({ userId: req.session.userId, input });
+    res.json({ ok: true, blackjackState: result.blackjackState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/blackjack/action', requireLogin, async (req, res) => {
+  try {
+    const input = { playerAction: req.body.action };
+    const result = postgresEnabled
+      ? await actBlackjackPostgres(postgresPool(), { userId: req.session.userId, input })
+      : actBlackjackJson({ userId: req.session.userId, input });
+    res.json({ ok: true, blackjackState: result.blackjackState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/blackjack/chat', requireLogin, async (req, res) => {
+  try {
+    const now = new Date();
+    const userId = Number(req.session.userId);
+    const lastSentAt = Number(blackjackChatCooldowns.get(userId) || 0);
+    if (now.getTime() - lastSentAt < 2000) {
+      return res.status(429).json({ ok: false, error: 'Give the table two seconds between messages.' });
+    }
+    const user = res.locals.currentUser;
+    const input = {
+      username: user?.display_name || user?.username || `User ${userId}`,
+      message: req.body.message
+    };
+    const result = postgresEnabled
+      ? await addBlackjackChatPostgres(postgresPool(), { userId, input, now })
+      : addBlackjackChatJson({ userId, input, now });
+    blackjackChatCooldowns.set(userId, now.getTime());
+    res.json({ ok: true, message: result.message, blackjackState: result.blackjackState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
   }
 });
 

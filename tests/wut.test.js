@@ -1773,7 +1773,7 @@ test('Arena active match cap is enforced per mode', async () => {
   assert.equal(after.activeCounts.constructed, 1);
 });
 
-test('Arena ready matches still count toward the queue cap', async () => {
+test('Arena ready matches count toward the queue cap only until you reveal them', async () => {
   const catalog = await cards.buildCardPlayerCatalog();
   const catalogByIdentity = {};
   const user = createWutReadyUser('QUEUE-READY-CAP', catalogByIdentity);
@@ -1787,7 +1787,16 @@ test('Arena ready matches still count toward the queue cap', async () => {
   const firstMatchId = db.assignArenaMatchups(new Date(), catalog).createdMatchIds[0];
   playConstructedGameToReady({ userId: user.id, matchId: firstMatchId, catalogByIdentity });
 
-  for (let index = 1; index < modeLimit; index += 1) {
+  let afterReady = db.getArenaStateForUser(user.id);
+  assert.equal(afterReady.readyMatches.some(match => Number(match.id) === Number(firstMatchId)), true);
+  assert.equal(afterReady.activeCounts.constructed, 1);
+  db.completeArenaReveal(user.id, firstMatchId);
+  afterReady = db.getArenaStateForUser(user.id);
+  assert.equal(afterReady.readyMatches.some(match => Number(match.id) === Number(firstMatchId)), false);
+  assert.equal(afterReady.history.some(match => Number(match.id) === Number(firstMatchId)), true);
+  assert.equal(afterReady.activeCounts.constructed, 0);
+
+  for (let index = 0; index < modeLimit; index += 1) {
     const opponent = createWutReadyUser(`QUEUE-READY-CAP-OPP-${index}`, catalogByIdentity);
     const opponentDeck = saveConstructedTestDeck(opponent.id, `QUEUE-READY-CAP-OPP-${index}`, catalogByIdentity);
     db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog });
@@ -1796,7 +1805,6 @@ test('Arena ready matches still count toward the queue cap', async () => {
   }
 
   const capped = db.getArenaStateForUser(user.id);
-  assert.equal(capped.readyMatches.some(match => Number(match.id) === Number(firstMatchId)), true);
   assert.equal(capped.activeCounts.constructed, modeLimit);
   assert.throws(
     () => db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog }),

@@ -39,6 +39,17 @@ import {
   shuffledHorseIds
 } from './services/horseRacing.js';
 import { resolveSlotSpin as resolveCanonicalSlotSpin } from './services/casinoSlots.js';
+import {
+  actBlackjack,
+  addBlackjackChat,
+  betBlackjack,
+  ensureBlackjackTable,
+  heartbeatBlackjackSeat,
+  leaveBlackjackSeat,
+  processBlackjackTable,
+  publicBlackjackState,
+  sitBlackjackSeat
+} from './services/casinoBlackjack.js';
 import { countDistinctBackedTeams, holdMissionUntilLock } from './services/wutMissionRules.js';
 import {
   arenaTurnCap,
@@ -122,6 +133,7 @@ function defaultState() {
       totalPaid: 0,
       spins: [],
       shotDoctorRuns: [],
+      blackjack: ensureBlackjackTable(),
       horseRacing: {
         config: {
           maxBet: HORSE_RACING_CONFIG.maxBet,
@@ -446,6 +458,7 @@ function ensureCasinoState() {
   state.casino.totalPaid = Number(state.casino.totalPaid || 0);
   state.casino.spins = Array.isArray(state.casino.spins) ? state.casino.spins : [];
   state.casino.shotDoctorRuns = Array.isArray(state.casino.shotDoctorRuns) ? state.casino.shotDoctorRuns : [];
+  state.casino.blackjack = ensureBlackjackTable(state.casino.blackjack);
   const storedHorseRacing = state.casino.horseRacing || {};
   const hadHorseRegistry = Array.isArray(storedHorseRacing.horses) && storedHorseRacing.horses.length > 0;
   state.casino.horseRacing = {
@@ -4570,9 +4583,15 @@ function arenaModeOf(value) {
   return String(value || 'constructed') === 'draft' ? 'draft' : 'constructed';
 }
 
+function arenaMatchCountsTowardUserCap(match, userId) {
+  if (!ARENA_ACTIVE_STATUSES.includes(match.status)) return false;
+  if (match.status !== 'ready') return true;
+  return !(match.revealed_by || []).map(Number).includes(Number(userId));
+}
+
 function activeArenaMatchesForUser(userId, mode = null) {
   return state.cards.arena.matches.filter(match =>
-    ARENA_ACTIVE_STATUSES.includes(match.status) &&
+    arenaMatchCountsTowardUserCap(match, userId) &&
     match.player_ids.map(Number).includes(Number(userId)) &&
     (mode == null || arenaModeOf(match.mode) === arenaModeOf(mode))
   );
@@ -8400,8 +8419,10 @@ export function getCasinoSummary() {
   const horseOwnerPaid = state.casino.horseRacing.ownerRewards
     .filter(reward => reward.claimed_at)
     .reduce((sum, reward) => sum + Number(reward.amount || 0), 0);
-  const totalWagered = slotWagered + puckIqWagered + horseRacingWagered;
-  const totalPaid = slotPaid + puckIqPaid + horseRacingPaid + horseOwnerPaid;
+  const blackjackWagered = Number(state.casino.blackjack?.totals?.wagered || 0);
+  const blackjackPaid = Number(state.casino.blackjack?.totals?.paid || 0);
+  const totalWagered = slotWagered + puckIqWagered + horseRacingWagered + blackjackWagered;
+  const totalPaid = slotPaid + puckIqPaid + horseRacingPaid + horseOwnerPaid + blackjackPaid;
 
   return {
     totalWagered,
@@ -8409,6 +8430,7 @@ export function getCasinoSummary() {
     netProfit: totalPaid - totalWagered,
     slotSpins: state.casino.spins.length,
     puckIqRuns: state.casino.shotDoctorRuns.length,
+    blackjackHands: Number(state.casino.blackjack?.totals?.hands || 0),
     horseRacingBets: state.casino.horseRacing.bets.length,
     horseRacingConfig: getHorseRacingConfig()
   };
@@ -8584,6 +8606,98 @@ export function spinCasinoSlots({ userId, wager }) {
     jackpotAmount: Math.floor(Number(state.casino.jackpotAmount || 0))
   };
 }
+
+function applyBlackjackTransactions(transactions = []) {
+  for (const tx of transactions) {
+    const user = state.users.find(candidate => Number(candidate.id) === Number(tx.userId));
+    if (!user) throw new Error('User not found.');
+    const nextBalance = Number(user.balance || 0) + Number(tx.amount || 0);
+    if (nextBalance < 0) throw new Error('Insufficient balance.');
+    user.balance = nextBalance;
+    state.transactions.push({
+      id: state.nextTransactionId++,
+      user_id: Number(tx.userId),
+      amount: Number(tx.amount || 0),
+      kind: tx.kind,
+      category: 'casino',
+      game: 'blackjack',
+      week: Number(state.settings?.currentWeek || 1),
+      note: tx.note,
+      blackjack_hand_id: tx.blackjackHandId,
+      created_at: nowIso()
+    });
+  }
+}
+
+function processStoredBlackjack(now = new Date()) {
+  ensureCasinoState();
+  const before = JSON.stringify(state.casino.blackjack);
+  const result = processBlackjackTable(state.casino.blackjack, { now });
+  state.casino.blackjack = result.table;
+  applyBlackjackTransactions(result.transactions);
+  return {
+    table: result.table,
+    changed: result.transactions.length > 0 || JSON.stringify(result.table) !== before
+  };
+}
+
+function publicStoredBlackjack(userId, now = new Date()) {
+  const { table, changed } = processStoredBlackjack(now);
+  if (changed) saveState();
+  return publicBlackjackState(table, {
+    userId,
+    now,
+    isCasinoOpen: getAdminSettings().casinoOpen,
+    balanceSummary: getBalanceSummaryForUser(userId)
+  });
+}
+
+export function getBlackjackStateForUser(userId) {
+  return publicStoredBlackjack(userId);
+}
+
+function mutateStoredBlackjack({ userId, action, input = {}, now = new Date() }) {
+  ensureCasinoState();
+  const { table } = processStoredBlackjack(now);
+  if (!['leave', 'heartbeat', 'chat'].includes(action) && !getAdminSettings().casinoOpen) {
+    throw new Error('The casino is currently closed.');
+  }
+  let result;
+  if (action === 'sit') {
+    result = sitBlackjackSeat(table, { userId, displayName: input.displayName, seatIndex: input.seatIndex, now });
+  } else if (action === 'leave') {
+    result = leaveBlackjackSeat(table, { userId, now });
+  } else if (action === 'heartbeat') {
+    result = heartbeatBlackjackSeat(table, { userId, now });
+  } else if (action === 'bet') {
+    result = betBlackjack(table, { userId, wager: input.wager, now });
+  } else if (action === 'act') {
+    result = actBlackjack(table, { userId, action: input.playerAction, now });
+  } else if (action === 'chat') {
+    result = addBlackjackChat(table, { userId, username: input.username, message: input.message, now });
+  } else {
+    throw new Error('Unknown blackjack action.');
+  }
+  state.casino.blackjack = result.table;
+  applyBlackjackTransactions(result.transactions);
+  saveState();
+  return {
+    message: result.message || null,
+    blackjackState: publicBlackjackState(result.table, {
+      userId,
+      now,
+      isCasinoOpen: getAdminSettings().casinoOpen,
+      balanceSummary: getBalanceSummaryForUser(userId)
+    })
+  };
+}
+
+export const sitBlackjackSeatJson = input => mutateStoredBlackjack({ ...input, action: 'sit' });
+export const leaveBlackjackSeatJson = input => mutateStoredBlackjack({ ...input, action: 'leave' });
+export const heartbeatBlackjackSeatJson = input => mutateStoredBlackjack({ ...input, action: 'heartbeat' });
+export const betBlackjackJson = input => mutateStoredBlackjack({ ...input, action: 'bet' });
+export const actBlackjackJson = input => mutateStoredBlackjack({ ...input, action: 'act' });
+export const addBlackjackChatJson = input => mutateStoredBlackjack({ ...input, action: 'chat' });
 
 
 const SHOT_DOCTOR_SECONDS_PER_SHOT = Number(process.env.SHOT_DOCTOR_SECONDS_PER_SHOT || 15);

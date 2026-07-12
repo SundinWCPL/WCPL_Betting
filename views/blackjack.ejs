@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WCPL Blackjack</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<%- include('partials_header') %>
+
+<main class="container casino-container blackjack-page">
+  <section class="casino-topbar">
+    <div class="toggle-row casino-tabs">
+      <a class="button-link ghost" href="/casino">Slots</a>
+      <a class="button-link ghost" href="/casino/puckIQ">Puck IQ</a>
+      <a class="button-link ghost" href="/casino/horse-racing">Horse Racing</a>
+      <a class="button-link ghost-active" href="/casino/blackjack">Blackjack</a>
+    </div>
+    <div class="casino-balance card">
+      <span class="muted">Available Balance</span>
+      <strong data-balance-display><%= blackjackState.balanceSummary.available_balance.toLocaleString() %></strong>
+    </div>
+  </section>
+
+  <% if (!blackjackState.isCasinoOpen) { %>
+    <section class="casino-closed-notice card">
+      <strong>Casino Closed</strong>
+      <span>Blackjack seating and betting are currently disabled.</span>
+    </section>
+  <% } %>
+
+  <section class="blackjack-layout">
+    <div class="blackjack-main">
+      <section class="card blackjack-table-card">
+        <div class="blackjack-table-head">
+          <div>
+            <p class="eyebrow">Live Table</p>
+            <h1>Blackjack</h1>
+          </div>
+          <div class="blackjack-phase">
+            <span data-phase-label>Loading</span>
+            <strong data-phase-clock>--</strong>
+          </div>
+        </div>
+
+        <div class="blackjack-dealer">
+          <span class="blackjack-dealer-label">Dealer <b data-dealer-total></b></span>
+          <div class="blackjack-cards" data-dealer-cards></div>
+        </div>
+
+        <div class="blackjack-spotlight" data-blackjack-spotlight></div>
+
+        <div class="blackjack-seats" data-blackjack-seats></div>
+
+        <div class="blackjack-rules-strip">
+          <strong>House Rules</strong>
+          <ul data-house-rules></ul>
+        </div>
+      </section>
+
+      <div class="blackjack-inline-message" data-blackjack-message></div>
+    </div>
+
+    <aside class="card blackjack-rail">
+      <div class="blackjack-chat-head">
+        <div>
+          <p class="eyebrow">Table Chat</p>
+          <h2>Rail</h2>
+        </div>
+        <span class="blackjack-live">Live</span>
+      </div>
+
+      <div class="blackjack-chat-messages" data-blackjack-chat></div>
+      <form class="blackjack-chat-form" data-blackjack-chat-form>
+        <textarea name="message" rows="2" maxlength="<%= blackjackState.config.chatMaxLength %>" placeholder="Say it at the table"></textarea>
+        <div>
+          <small><span data-chat-count>0</span>/<%= blackjackState.config.chatMaxLength %></small>
+          <button type="submit">Send</button>
+        </div>
+      </form>
+
+      <div class="blackjack-log-panel">
+        <div class="blackjack-log-head">
+          <strong>Recent Hands</strong>
+          <small data-hand-count>0</small>
+        </div>
+        <div class="blackjack-hand-log" data-hand-log></div>
+      </div>
+    </aside>
+  </section>
+</main>
+
+<script>
+(() => {
+  let tableState = <%- JSON.stringify(blackjackState) %>;
+  let busy = false;
+  let selectedWager = tableState.config.allowedWagers[0] || 25;
+  let dealerRevealCount = null;
+  let dealerRevealSignature = '';
+  let dealerRevealTimer = null;
+  let displayedBalance = Number(tableState.balanceSummary?.available_balance || 0);
+  let balanceTarget = displayedBalance;
+  let balanceAnimating = false;
+  let balanceAnimationToken = 0;
+
+  const $ = selector => document.querySelector(selector);
+  const $$ = selector => [...document.querySelectorAll(selector)];
+  const fmt = value => Number(value || 0).toLocaleString();
+  const parseFmt = value => Number(String(value || '').replace(/,/g, ''));
+  const messageEl = $('[data-blackjack-message]');
+  const phaseLabel = $('[data-phase-label]');
+  const phaseClock = $('[data-phase-clock]');
+  const balanceDisplay = $('[data-balance-display]');
+  const dealerCards = $('[data-dealer-cards]');
+  const dealerTotal = $('[data-dealer-total]');
+  const spotlightEl = $('[data-blackjack-spotlight]');
+  const seatsEl = $('[data-blackjack-seats]');
+  const chatEl = $('[data-blackjack-chat]');
+  const chatForm = $('[data-blackjack-chat-form]');
+  const chatInput = chatForm?.querySelector('textarea');
+  const chatCount = $('[data-chat-count]');
+  const handLog = $('[data-hand-log]');
+  const handCount = $('[data-hand-count]');
+  const rulesEl = $('[data-house-rules]');
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function setBalanceState(direction = '') {
+    if (!balanceDisplay) return;
+    balanceDisplay.classList.toggle('balance-increasing', direction === 'increase');
+    balanceDisplay.classList.toggle('balance-decreasing', direction === 'decrease');
+  }
+
+  function animateBalance(from, to) {
+    if (!balanceDisplay) return Promise.resolve();
+
+    const start = Number(from || 0);
+    const target = Number(to || 0);
+    const difference = target - start;
+    balanceTarget = target;
+    if (!Number.isFinite(start) || !Number.isFinite(target) || difference === 0) {
+      displayedBalance = target;
+      balanceDisplay.textContent = fmt(target);
+      setBalanceState();
+      return Promise.resolve();
+    }
+
+    const token = ++balanceAnimationToken;
+    const duration = Math.min(5000, Math.max(120, Math.abs(difference) * 10));
+    balanceAnimating = true;
+    setBalanceState(difference > 0 ? 'increase' : 'decrease');
+
+    return new Promise(resolve => {
+      const startedAt = performance.now();
+      const tick = now => {
+        if (token !== balanceAnimationToken) {
+          resolve();
+          return;
+        }
+        const progress = Math.min(1, (now - startedAt) / duration);
+        balanceDisplay.textContent = fmt(Math.round(start + difference * progress));
+        if (progress < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          displayedBalance = target;
+          balanceDisplay.textContent = fmt(target);
+          balanceAnimating = false;
+          setBalanceState();
+          resolve();
+        }
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
+  function cardCode(card) {
+    if (!card || card.hidden) return 'BACK';
+    return `${card.rank}${card.suit}`;
+  }
+
+  function cardHtml(card) {
+    if (!card || card.hidden) {
+      return '<div class="blackjack-card is-hidden" data-card-code="BACK"><span>WCPL</span></div>';
+    }
+    const red = card.suit === 'H' || card.suit === 'D';
+    return `
+      <div class="blackjack-card ${red ? 'is-red' : ''}" data-card-code="${escapeHtml(cardCode(card))}">
+        <span>${escapeHtml(card.rank)}</span>
+        <b>${escapeHtml(card.suit)}</b>
+      </div>
+    `;
+  }
+
+  function resultRank(seat) {
+    const results = (seat.hands || []).map(hand => hand.result).filter(Boolean);
+    if (!results.length) return '';
+    if (results.includes('blackjack') || results.includes('win')) return 'is-winner';
+    if (results.every(result => result === 'loss')) return 'is-loser';
+    if (results.every(result => result === 'push')) return 'is-push';
+    return 'is-mixed';
+  }
+
+  function handSummary(hand, index, mode = '') {
+    const showResult = tableState.phase !== 'result' || revealComplete();
+    const result = hand.result && showResult ? `<em>${escapeHtml(hand.result)}${hand.payout ? ` +${fmt(hand.payout)}` : ''}</em>` : `<em>${hand.total || ''}</em>`;
+    return `
+      <div class="blackjack-hand ${mode} ${hand.result && showResult ? `result-${escapeHtml(hand.result)}` : ''}">
+        <div class="blackjack-hand-meta">
+          <span>${hand.isSplit ? `Hand ${index + 1}` : 'Hand'} · ${fmt(hand.bet)} MB</span>
+          ${result}
+        </div>
+        <div class="blackjack-cards">${hand.cards.map(cardHtml).join('')}</div>
+      </div>
+    `;
+  }
+
+  function seatControls(seat) {
+    if (!seat.isUser) return '';
+    const needsBet = tableState.phase === 'betting' && !seat.hands.length;
+    const isTurn = seat.isCurrentTurn && tableState.phase === 'player_turn';
+
+    if (needsBet) {
+      const allowed = tableState.config.allowedWagers;
+      const min = allowed[0] || 25;
+      const max = allowed[allowed.length - 1] || 100;
+      selectedWager = Math.min(max, Math.max(min, selectedWager));
+      return `
+        <div class="blackjack-seat-controls ${seat.isSpotlight ? 'is-spotlight' : ''}">
+          <span>Place your bet</span>
+          <div class="blackjack-seat-bet">
+            <button type="button" data-wager-step="-1" ${busy || selectedWager <= min ? 'disabled' : ''}>-</button>
+            <strong>${fmt(selectedWager)} MB</strong>
+            <button type="button" data-wager-step="1" ${busy || selectedWager >= max ? 'disabled' : ''}>+</button>
+          </div>
+          <button type="button" data-place-seat-bet ${busy ? 'disabled' : ''}>Bet ${fmt(selectedWager)}</button>
+        </div>
+      `;
+    }
+
+    if (isTurn) {
+      return `
+        <div class="blackjack-seat-controls ${seat.isSpotlight ? 'is-spotlight' : ''}">
+          <span>Your action</span>
+          <div class="blackjack-seat-actions">
+            ${['hit', 'stand', 'double', 'split'].map(action =>
+              `<button type="button" data-player-action="${action}" ${busy || !tableState.currentActions?.[action] ? 'disabled' : ''}>${action}</button>`
+            ).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (seat.leaveAfterHand) return '<div class="blackjack-seat-controls is-passive"><span>Leaving after hand</span></div>';
+    if (seat.hands.length && tableState.phase === 'betting') return '<div class="blackjack-seat-controls is-passive"><span>Bet locked</span></div>';
+    return '';
+  }
+
+  function dealerCardsForDisplay() {
+    const cards = tableState.dealer.cards || [];
+    if (dealerRevealCount == null || tableState.phase !== 'result') return cards;
+    if (cards.length <= 1) return cards;
+    if (dealerRevealCount <= 0) return [cards[0], { hidden: true }];
+    return cards.slice(0, Math.min(cards.length, dealerRevealCount + 1));
+  }
+
+  function revealComplete() {
+    const dealerCardCount = (tableState.dealer.cards || []).length;
+    return dealerRevealCount == null || dealerCardCount <= 1 || dealerRevealCount >= dealerCardCount - 1;
+  }
+
+  function syncBalanceFromState() {
+    const nextBalance = Number(tableState.balanceSummary?.available_balance ?? balanceTarget);
+    if (!Number.isFinite(nextBalance) || nextBalance === balanceTarget) return;
+    if (tableState.phase === 'result' && nextBalance > balanceTarget && !revealComplete()) return;
+    animateBalance(parseFmt(balanceDisplay?.textContent) || displayedBalance, nextBalance);
+  }
+
+  function focusSeat() {
+    const userSeat = tableState.seats.find(seat => seat.index === tableState.userSeatIndex);
+    if (userSeat) return userSeat;
+    if (tableState.phase === 'player_turn') return tableState.seats.find(seat => seat.isCurrentTurn);
+    return tableState.seats.find(seat => seat.hands?.length) || userSeat || null;
+  }
+
+  function renderSpotlight() {
+    const seat = focusSeat();
+    if (!seat) {
+      spotlightEl.className = 'blackjack-spotlight is-empty';
+      spotlightEl.innerHTML = `
+        <div class="blackjack-spotlight-copy">
+          <span>Open Table</span>
+          <strong>Take any empty seat</strong>
+        </div>
+      `;
+      return;
+    }
+
+    const focusLabel = seat.isUser
+      ? (tableState.phase === 'betting' && !seat.hands.length ? 'Place Your Bet' : (seat.isCurrentTurn ? 'Your Action' : 'Your Seat'))
+      : (seat.isCurrentTurn ? 'Current Action' : 'Table Focus');
+    const focusTitle = seat.userId ? `${seat.displayName} - Seat ${seat.index + 1}` : `Seat ${seat.index + 1}`;
+    const focusSeatData = { ...seat, isSpotlight: true };
+    spotlightEl.className = `blackjack-spotlight is-seat ${seat.isCurrentTurn ? 'is-current' : ''} ${seat.isUser ? 'is-user' : ''} ${revealComplete() ? resultRank(seat) : ''}`;
+    spotlightEl.innerHTML = `
+      <div class="blackjack-spotlight-copy">
+        <span>${escapeHtml(focusLabel)}</span>
+        <strong>${escapeHtml(focusTitle)}</strong>
+      </div>
+      <div class="blackjack-focus-hands">
+        ${seat.hands?.length ? seat.hands.map((hand, index) => handSummary(hand, index, 'is-focus')).join('') : '<div class="blackjack-empty-hand">No hand yet</div>'}
+      </div>
+      ${seatControls(focusSeatData)}
+    `;
+  }
+
+  function renderSeats() {
+    const visibleSeats = tableState.userSeatIndex == null
+      ? tableState.seats
+      : tableState.seats.filter(seat => seat.index !== tableState.userSeatIndex);
+    seatsEl.innerHTML = visibleSeats.map(seat => {
+      const empty = !seat.userId;
+      const canSit = empty && tableState.userSeatIndex == null && tableState.isCasinoOpen && !busy;
+      const resultClass = revealComplete() ? resultRank(seat) : '';
+      return `
+        <article class="blackjack-seat ${empty ? 'is-empty' : ''} ${seat.isCurrentTurn ? 'is-current' : ''} ${seat.isUser ? 'is-user' : ''} ${resultClass}">
+          <div class="blackjack-seat-head">
+            <span>Seat ${seat.index + 1}</span>
+            <strong>${empty ? 'Open' : escapeHtml(seat.displayName)}</strong>
+          </div>
+          <div class="blackjack-seat-hands">
+            ${seat.hands.length ? seat.hands.map(handSummary).join('') : '<div class="blackjack-empty-hand">No hand</div>'}
+          </div>
+          ${empty ? `<button type="button" data-sit-seat="${seat.index}" ${canSit ? '' : 'disabled'}>Sit</button>` : ''}
+        </article>
+      `;
+    }).join('');
+    $$('[data-sit-seat]').forEach(button => button.addEventListener('click', () => postAction('/casino/blackjack/sit', { seat_index: button.dataset.sitSeat })));
+    $$('[data-wager-step]').forEach(button => button.addEventListener('click', () => {
+      const allowed = tableState.config.allowedWagers;
+      const currentIndex = Math.max(0, allowed.indexOf(selectedWager));
+      const nextIndex = Math.min(allowed.length - 1, Math.max(0, currentIndex + Number(button.dataset.wagerStep || 0)));
+      selectedWager = allowed[nextIndex] || selectedWager;
+      renderSpotlight();
+      renderSeats();
+    }));
+    $('[data-place-seat-bet]')?.addEventListener('click', () => postAction('/casino/blackjack/bet', { wager: selectedWager }));
+    $$('[data-player-action]').forEach(button => {
+      button.addEventListener('click', () => postAction('/casino/blackjack/action', { action: button.dataset.playerAction }));
+    });
+  }
+
+  function renderChat() {
+    chatEl.innerHTML = tableState.chat.length
+      ? tableState.chat.map(message => `
+          <article>
+            <div><strong>${escapeHtml(message.username)}</strong><time>${new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>
+            <p>${escapeHtml(message.message)}</p>
+          </article>
+        `).join('')
+      : '<p class="muted">No table talk yet.</p>';
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  function renderLog() {
+    const rows = [...(tableState.handLog || [])].slice(-8).reverse();
+    handCount.textContent = `${tableState.recentHands?.length || 0} hands`;
+    handLog.innerHTML = rows.length
+      ? rows.map(row => `<div><span>${escapeHtml(row.message)}</span><time>${new Date(row.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>`).join('')
+      : '<p class="muted">No hands yet.</p>';
+  }
+
+  function render() {
+    if (!balanceAnimating) balanceDisplay.textContent = fmt(displayedBalance);
+    phaseLabel.textContent = tableState.phase.replaceAll('_', ' ');
+    dealerCards.innerHTML = tableState.dealer.cards.length ? dealerCardsForDisplay().map(cardHtml).join('') : '<div class="blackjack-empty-hand">Dealer waiting</div>';
+    dealerTotal.textContent = tableState.dealer.total && revealComplete() ? `(${tableState.dealer.total})` : '';
+    rulesEl.innerHTML = tableState.config.houseRules.map(rule => `<li>${escapeHtml(rule)}</li>`).join('');
+    renderSpotlight();
+    renderSeats();
+    renderChat();
+    renderLog();
+  }
+
+  function dealerRevealKey(state) {
+    return `${state.recentHands?.at(-1)?.id || 'hand'}:${(state.dealer.cards || []).map(cardCode).join(',')}`;
+  }
+
+  function stopDealerReveal() {
+    if (dealerRevealTimer) clearInterval(dealerRevealTimer);
+    dealerRevealTimer = null;
+  }
+
+  function setTableState(nextState) {
+    const shouldReveal = nextState.phase === 'result' && (nextState.dealer.cards || []).length > 1;
+    const key = dealerRevealKey(nextState);
+    if (shouldReveal && key !== dealerRevealSignature) {
+      dealerRevealSignature = key;
+      dealerRevealCount = 0;
+      stopDealerReveal();
+      dealerRevealTimer = setInterval(() => {
+        dealerRevealCount = Math.min((tableState.dealer.cards || []).length - 1, Number(dealerRevealCount || 0) + 1);
+        render();
+        if (revealComplete()) {
+          stopDealerReveal();
+          syncBalanceFromState();
+        }
+      }, 650);
+    } else if (!shouldReveal) {
+      dealerRevealSignature = '';
+      dealerRevealCount = null;
+      stopDealerReveal();
+    }
+    tableState = nextState;
+    syncBalanceFromState();
+  }
+
+  function setMessage(text, type = '') {
+    messageEl.textContent = text || '';
+    messageEl.className = `blackjack-inline-message ${type ? `is-${type}` : ''}`;
+  }
+
+  async function postAction(url, body = {}) {
+    if (busy) return;
+    busy = true;
+    setMessage('');
+    renderSpotlight();
+    renderSeats();
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: new URLSearchParams(body)
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Action failed.');
+      setTableState(payload.blackjackState);
+      render();
+    } catch (err) {
+      setMessage(err.message || 'Something went wrong.', 'error');
+    } finally {
+      busy = false;
+      renderSpotlight();
+      renderSeats();
+    }
+  }
+
+  async function refreshState() {
+    if (busy) return;
+    try {
+      const response = await fetch('/casino/blackjack/state', { headers: { Accept: 'application/json' } });
+      const payload = await response.json();
+      if (response.ok && payload.ok) {
+        setTableState(payload.blackjackState);
+        render();
+      }
+    } catch {}
+  }
+
+  function updateClock() {
+    if (!tableState.phaseDeadline) {
+      phaseClock.textContent = '--';
+      return;
+    }
+    const remaining = Math.max(0, new Date(tableState.phaseDeadline).getTime() - Date.now());
+    phaseClock.textContent = `${Math.ceil(remaining / 1000)}s`;
+  }
+
+  chatInput?.addEventListener('input', () => { chatCount.textContent = chatInput.value.length; });
+  chatInput?.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      if (chatInput.value.trim()) chatForm.requestSubmit();
+    }
+  });
+  chatForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const message = chatInput.value.trim();
+    if (!message) return;
+    try {
+      const response = await fetch('/casino/blackjack/chat', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: new URLSearchParams({ message })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Message failed.');
+      setTableState(payload.blackjackState);
+      chatInput.value = '';
+      chatCount.textContent = '0';
+      render();
+    } catch (err) {
+      setMessage(err.message || 'Message failed.', 'error');
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    navigator.sendBeacon?.('/casino/blackjack/leave', new URLSearchParams());
+  });
+
+  render();
+  updateClock();
+  setInterval(updateClock, 250);
+  setInterval(refreshState, 1500);
+  setInterval(() => {
+    if (tableState.userSeatIndex != null) postAction('/casino/blackjack/heartbeat');
+  }, 5000);
+})();
+</script>
+</body>
+</html>

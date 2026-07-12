@@ -6,6 +6,14 @@ import {
   pickSlotOutcome,
   resolveSlotSpin
 } from '../services/casinoSlots.js';
+import {
+  actBlackjack,
+  betBlackjack,
+  createBlackjackTable,
+  handValue,
+  publicBlackjackState,
+  sitBlackjackSeat
+} from '../services/casinoBlackjack.js';
 import { buildShotDoctorRunShots, publicShotDoctorRun } from '../services/shotDoctor.js';
 
 test('slot wagers retain the established allowed amounts', () => {
@@ -44,4 +52,49 @@ test('Puck IQ public state exposes its active shot and deadline without leaking 
   assert.equal(run.current_shot.shooter_name, 'Shooter');
   assert.equal(run.current_shot.result, undefined);
   assert.equal(run.deadline_at, '2026-07-06T00:00:15.000Z');
+});
+
+test('blackjack exposes split only for a same-rank first pair', () => {
+  const now = new Date('2026-07-12T00:00:00.000Z');
+  let table = createBlackjackTable();
+  table = sitBlackjackSeat(table, { userId: 1, displayName: 'Tester', seatIndex: 0, now }).table;
+  table.shoe = [
+    { rank: '9', suit: 'C' },
+    { rank: '8', suit: 'S' },
+    { rank: '5', suit: 'D' },
+    { rank: '8', suit: 'H' }
+  ];
+  table = betBlackjack(table, { userId: 1, wager: 25, now }).table;
+  const state = publicBlackjackState(table, { userId: 1, now });
+  assert.equal(state.currentActions.split, true);
+  assert.equal(state.currentActions.double, true);
+});
+
+test('blackjack split aces receive one card each and auto-stand', () => {
+  const now = new Date('2026-07-12T00:00:00.000Z');
+  let table = createBlackjackTable();
+  table = sitBlackjackSeat(table, { userId: 1, displayName: 'Tester', seatIndex: 0, now }).table;
+  table.shoe = [
+    { rank: '7', suit: 'C' },
+    { rank: '9', suit: 'D' },
+    { rank: 'K', suit: 'S' },
+    { rank: '4', suit: 'H' },
+    { rank: '3', suit: 'D' },
+    { rank: 'A', suit: 'S' },
+    { rank: '6', suit: 'C' },
+    { rank: 'A', suit: 'H' }
+  ];
+  table = betBlackjack(table, { userId: 1, wager: 25, now }).table;
+  const result = actBlackjack(table, { userId: 1, action: 'split', now });
+  const hands = result.table.seats[0].hands;
+  assert.equal(hands.length, 2);
+  assert.deepStrictEqual(hands.map(hand => hand.splitAces), [true, true]);
+  assert.deepStrictEqual(hands.map(hand => hand.status), ['settled', 'settled']);
+  assert.equal(result.table.phase, 'result');
+  assert.equal(result.transactions[0].kind, 'casino_blackjack_split');
+});
+
+test('blackjack hand value treats aces as soft until they would bust', () => {
+  assert.deepStrictEqual(handValue([{ rank: 'A' }, { rank: '7' }]), { total: 18, soft: true, bust: false });
+  assert.deepStrictEqual(handValue([{ rank: 'A' }, { rank: '7' }, { rank: '9' }]), { total: 17, soft: false, bust: false });
 });
