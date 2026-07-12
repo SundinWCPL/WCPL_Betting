@@ -75,6 +75,13 @@ export function arenaDraftPlayerSnapshot(player, wutConfig = {}) {
   return {
     cardIdentity: player.cardIdentity,
     catalogKey: player.catalogKey,
+    divisionId: player.divisionId,
+    sourceDivisionId: player.sourceDivisionId || player.divisionId,
+    playerKey: player.playerKey,
+    sourcePlayerKey: player.sourcePlayerKey || player.playerKey,
+    steamId: player.steamId,
+    sourceSteamId: player.sourceSteamId || player.steamId,
+    baseName: player.baseName || player.name || player.displayName || '',
     displayName: player.name || player.displayName || '',
     name: player.name || player.displayName || '',
     tier: player.tier,
@@ -87,6 +94,11 @@ export function arenaDraftPlayerSnapshot(player, wutConfig = {}) {
     edition: player.edition,
     cardType: player.cardType || 'player',
     sourceSeason: player.sourceSeason || '',
+    sourceStage: player.sourceStage || 'reg',
+    sourceType: player.sourceType || '',
+    scoringPool: player.scoringPool || null,
+    manualRates: player.manualRates || null,
+    unavailableStats: player.unavailableStats || [],
     cardArt: player.cardArt || player.edition || 'S3',
     season,
     chemistryKey: `${season || ''}|${player.teamId || ''}`,
@@ -95,7 +107,7 @@ export function arenaDraftPlayerSnapshot(player, wutConfig = {}) {
 }
 
 export function buildArenaDraftPacks({
-  catalog = [], config = {}, wutConfig = {}, trinketFamilies = [], boostTypes = [], trinketEffect = () => null, random = Math.random
+  catalog = [], config = {}, wutConfig = {}, trinketFamilies = [], boostTypes = [], trinketEffect = () => null, boostEffect = () => null, random = Math.random
 } = {}) {
   const draftConfig = normalizeArenaDraftConfig(config);
   const counts = Object.fromEntries(WUT_RARITIES.map(rarity => [rarity, 0]));
@@ -141,7 +153,7 @@ export function buildArenaDraftPacks({
     });
     const packBoosts = Array.from({ length: draftConfig.boostsPerPack }, (_, itemIndex) => {
       const boostType = choice(boosts, random);
-      return { id: baseId + 300 + itemIndex, item_type: 'boost', rarity, boost_type: boostType };
+      return { id: baseId + 300 + itemIndex, item_type: 'boost', rarity, boost_type: boostType, effect: boostEffect(boostType, rarity) };
     });
     packs.push({ index, rarity, players, trinkets, boosts: packBoosts, player: players[0] || null, trinket: trinkets[0] || null, boost: packBoosts[0] || null });
   }

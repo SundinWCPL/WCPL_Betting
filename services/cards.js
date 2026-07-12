@@ -1491,7 +1491,7 @@ async function stageMatchIdsFor(divisionId, seasonId, stage) {
 }
 
 function playerRowsFromBoxscores(boxscores, player, position, stage = '', allowedMatchIds = null) {
-  const steam = norm(player.sourceSteamId || player.steamId);
+  const steam = norm(player.sourceSteamId || player.source_steam_id || player.steamId || player.steam_id);
   const name = norm(player.baseName || player.name);
   const cleanStage = norm(stage);
   return (boxscores || []).filter(row => {
@@ -1645,8 +1645,20 @@ export async function scoreHistoricalCardSample({
   excludeMatchIds = [],
   scoringConfig = {}
 }) {
-  const sourceSeason = normalizeSeason(player.sourceSeason || player.edition || player.season);
+  const sourceSeason = normalizeSeason(player.sourceSeason || player.source_season || player.edition || player.season);
   const sourceType = norm(player.sourceType || player.source_type) === 'manual' ? 'manual' : 'automatic';
+  const emptyScore = warning => ({
+    gamesPlayed: 0,
+    fp: 0,
+    exactFp: 0,
+    stats: {},
+    sampleMatchIds: [],
+    syntheticGames: [],
+    breakdown: [],
+    rolledGames: [],
+    gameFps: [],
+    warning
+  });
   if (sourceType === 'manual' || sourceSeason === 'S1') {
     const permanentRows = sourceSeason === 'S1' ? await permanentS1Games(player, position) : [];
     if (sourceSeason === 'S1' && !permanentRows.length && !(Array.isArray(syntheticGames) && syntheticGames.length)) {
@@ -1678,10 +1690,20 @@ export async function scoreHistoricalCardSample({
     };
   }
 
-  const sourceDivisionId = clean(player.sourceDivisionId || player.divisionId);
-  const sourceStage = clean(player.sourceStage || 'reg') || 'reg';
-  const boxscores = await getBoxscores(sourceDivisionId, sourceSeason);
-  const allowedMatchIds = await stageMatchIdsFor(sourceDivisionId, sourceSeason, sourceStage);
+  const sourceDivisionId = clean(player.sourceDivisionId || player.source_division_id || player.divisionId || player.division_id);
+  const sourceStage = clean(player.sourceStage || player.source_stage || 'reg') || 'reg';
+  if (!sourceDivisionId) return emptyScore('Historical sample could not be resolved because the card snapshot has no source division.');
+  let boxscores = [];
+  let allowedMatchIds = null;
+  try {
+    boxscores = await getBoxscores(sourceDivisionId, sourceSeason);
+    allowedMatchIds = await stageMatchIdsFor(sourceDivisionId, sourceSeason, sourceStage);
+  } catch (err) {
+    if (String(err?.message || '').includes('Division not found')) {
+      return emptyScore(`Historical sample could not be resolved because source division ${sourceDivisionId} was not found.`);
+    }
+    throw err;
+  }
   const rows = playerRowsFromBoxscores(boxscores, player, position, sourceStage, allowedMatchIds);
   const selectedMatchIds = chooseSampleMatchIds(rows, sampleMatchIds, Number(player.scoringPool?.sampleSize || HISTORICAL_SAMPLE_SIZE), excludeMatchIds);
   const selected = rows.filter(row => selectedMatchIds.includes(clean(row.match_id)));

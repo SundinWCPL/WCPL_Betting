@@ -14,6 +14,7 @@ process.env.BACKUP_DIR = backupPath;
 const db = await import('../db.js');
 const cards = await import('../services/cards.js');
 const draftEvents = await import('../services/wutDraftEvents.js');
+const arenaRuntime = await import('../services/arenaRuntime.js');
 
 test.after(() => { try { fs.unlinkSync(dbPath); } catch {} try { fs.rmSync(backupPath, { recursive: true, force: true }); } catch {} });
 
@@ -342,6 +343,30 @@ function saveConstructedTestDeck(userId, prefix, catalogByIdentity = {}) {
     };
   });
   return db.saveWutDeck({ userId, name: `${prefix} Test Deck`, activeCardIds: deckIds, catalogByIdentity });
+}
+
+let arenaQueueFixtureIndex = 0;
+function createWutReadyUser(prefix, catalogByIdentity = {}) {
+  arenaQueueFixtureIndex += 1;
+  const user = db.addUser({
+    username: `${prefix.toLowerCase()}-${arenaQueueFixtureIndex}`,
+    password: 'test-password',
+    displayName: `${prefix} ${arenaQueueFixtureIndex}`
+  });
+  db.joinWut(user.id);
+  const positions = ['F', 'F', 'D', 'D', 'G'];
+  const items = positions.map((position, index) => ({
+    itemType: 'player', rolledTier: 'common', position,
+    cardIdentity: `S3|${prefix}-${arenaQueueFixtureIndex}|starter-${index}`,
+    catalogKey: `S3|${prefix}-${arenaQueueFixtureIndex}|starter-${index}`,
+    edition: 'S3', divisionId: `${prefix}-${arenaQueueFixtureIndex}`, playerKey: `starter-${index}`
+  }));
+  db.openWutStarterPack({ userId: user.id, items });
+  for (const item of items) catalogByIdentity[item.cardIdentity] = {
+    position: item.position, tier: 'common', teamId: `${prefix}-${arenaQueueFixtureIndex}`, edition: 'S3',
+    name: `${prefix} starter ${item.playerKey}`
+  };
+  return user;
 }
 
 function chooseFirstForConstructedMatch(match, choice = 'self') {
@@ -1642,4 +1667,106 @@ test('URL-encoded Admin numeric keys save without array-index shifting', () => {
   assert.equal(saved.deckSlotCosts['4'], 444);
   assert.equal(saved.trinketEffects.team_crest.legendary, .07);
   assert.deepEqual(saved.trinketEffects.generalist.common, { minCategories: 4, maxBonus: .18 });
+});
+
+test('Arena queues are separate by mode for the same user', async () => {
+  const catalog = await cards.buildCardPlayerCatalog();
+  const catalogByIdentity = {};
+  const user = createWutReadyUser('QUEUE-DUAL', catalogByIdentity);
+  const deck = saveConstructedTestDeck(user.id, 'QUEUE-DUAL', catalogByIdentity);
+
+  db.enterArenaQueue(user.id, { mode: 'draft', catalog });
+  db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog });
+
+  const arena = db.getArenaStateForUser(user.id);
+  assert.ok(arena.queuedEntries.draft, 'Draft Arena queue entry should be tracked separately');
+  assert.ok(arena.queuedEntries.constructed, 'Constructed Arena queue entry should be tracked separately');
+  assert.equal(arena.queueCounts.draft >= 1, true);
+  assert.equal(arena.queueCounts.constructed >= 1, true);
+  assert.throws(() => db.enterArenaQueue(user.id, { mode: 'draft', catalog }), /already in the Draft Arena queue/);
+  assert.throws(() => db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog }), /already in the Constructed Arena queue/);
+
+  const draftOpponent = createWutReadyUser('QUEUE-DUAL-DRAFT-OPP', catalogByIdentity);
+  db.enterArenaQueue(draftOpponent.id, { mode: 'draft', catalog });
+  const constructedOpponent = createWutReadyUser('QUEUE-DUAL-CON-OPP', catalogByIdentity);
+  const opponentDeck = saveConstructedTestDeck(constructedOpponent.id, 'QUEUE-DUAL-CON-OPP', catalogByIdentity);
+  db.enterArenaQueue(constructedOpponent.id, { mode: 'constructed', deckId: opponentDeck.id, catalogByIdentity, catalog });
+  db.assignArenaMatchups(new Date(), catalog);
+
+  const after = db.getArenaStateForUser(user.id);
+  assert.equal(after.queuedEntries.draft, null);
+  assert.equal(after.queuedEntries.constructed, null);
+  assert.equal(after.activeCounts.draft, 1);
+  assert.equal(after.activeCounts.constructed, 1);
+});
+
+test('Arena active match cap is enforced per mode', async () => {
+  const catalog = await cards.buildCardPlayerCatalog();
+  const catalogByIdentity = {};
+  const user = createWutReadyUser('QUEUE-CAP', catalogByIdentity);
+  const modeLimit = db.getArenaStateForUser(user.id).config.maxActiveMatches;
+
+  for (let index = 0; index < modeLimit; index += 1) {
+    const opponent = createWutReadyUser(`QUEUE-CAP-DRAFT-${index}`, catalogByIdentity);
+    db.enterArenaQueue(user.id, { mode: 'draft', catalog });
+    db.enterArenaQueue(opponent.id, { mode: 'draft', catalog });
+    db.assignArenaMatchups(new Date(Date.now() + index), catalog);
+  }
+
+  const capped = db.getArenaStateForUser(user.id);
+  assert.equal(capped.activeCounts.draft, modeLimit);
+  assert.equal(capped.activeCounts.constructed, 0);
+  assert.throws(() => db.enterArenaQueue(user.id, { mode: 'draft', catalog }), new RegExp(`${modeLimit} active Draft Arena matches`));
+
+  const deck = saveConstructedTestDeck(user.id, 'QUEUE-CAP-CON', catalogByIdentity);
+  db.enterArenaQueue(user.id, { mode: 'constructed', deckId: deck.id, catalogByIdentity, catalog });
+  const opponent = createWutReadyUser('QUEUE-CAP-CON-OPP', catalogByIdentity);
+  const opponentDeck = saveConstructedTestDeck(opponent.id, 'QUEUE-CAP-CON-OPP', catalogByIdentity);
+  db.enterArenaQueue(opponent.id, { mode: 'constructed', deckId: opponentDeck.id, catalogByIdentity, catalog });
+  db.assignArenaMatchups(new Date(), catalog);
+
+  const after = db.getArenaStateForUser(user.id);
+  assert.equal(after.activeCounts.draft, modeLimit);
+  assert.equal(after.activeCounts.constructed, 1);
+});
+
+test('Draft Arena packs preserve boost effects and scoring source identity', async () => {
+  const catalog = (await cards.buildCardPlayerCatalog()).filter(player => player.edition === 'S3' && player.tier === 'common' && player.position === 'F');
+  assert.ok(catalog.length, 'fixture needs at least one eligible S3 common forward');
+  const packs = arenaRuntime.buildArenaDraftPacks({
+    catalog,
+    config: {
+      draftArena: {
+        packCount: 1,
+        playersPerPack: 1,
+        trinketsPerPack: 0,
+        boostsPerPack: 1,
+        rarityWeights: { common: 1, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+        maxPacks: { common: 1, uncommon: 0, rare: 0, epic: 0, legendary: 0 }
+      }
+    },
+    wutConfig: db.getCardsConfig().wut,
+    boostTypes: ['goal'],
+    boostEffect: (type, rarity) => db.getCardsConfig().boostEffects[type][rarity],
+    random: () => 0
+  });
+  const pack = packs[0];
+  assert.deepEqual(pack.boosts[0].effect, db.getCardsConfig().boostEffects.goal.common);
+  assert.ok(pack.players[0].player_snapshot.divisionId, 'draft player snapshot keeps current division');
+  assert.ok(pack.players[0].player_snapshot.sourceDivisionId, 'draft player snapshot keeps scoring source division');
+});
+
+test('historical scoring does not crash when a legacy snapshot references a missing division', async () => {
+  const result = await cards.scoreHistoricalCardSample({
+    player: {
+      name: 'Legacy Missing Division',
+      baseName: 'Legacy Missing Division',
+      sourceSeason: 'S3',
+      sourceDivisionId: 'NOT-A-DIVISION',
+      sourceSteamId: 'missing-steam'
+    },
+    position: 'F'
+  });
+  assert.equal(result.fp, 0);
+  assert.match(result.warning, /source division NOT-A-DIVISION was not found/);
 });

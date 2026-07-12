@@ -187,7 +187,7 @@ export async function submitArenaDraftPrepWithClient(client, { userId, matchId, 
     submitted_at: now.toISOString(),
     picks: Object.fromEntries([...picked.entries()].map(([index, found]) => [String(index), Number(found.item.id)])),
     counts: { F: active.filter(card => card.position === 'F').length, D: active.filter(card => card.position === 'D').length, G: active.filter(card => card.position === 'G').length },
-    boosts: boosts.map(boost => ({ ...boost, effect: config.wut?.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect || null })),
+    boosts: boosts.map(boost => ({ ...boost, effect: config.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect || null })),
     trinket_attachments: Object.fromEntries([...trinketForPlayer.entries()].map(([playerId, trinket]) => [String(trinket.id), Number(playerId)]))
   };
   const ready = match.player_ids.map(id => String(id)).every(key => match.draft_loadouts?.[key]?.submitted_at);

@@ -15,6 +15,7 @@ import { WUT_LAUNCH_TRINKET_EFFECTS, normalizeWutTrinketEffect } from '../../ser
 const asNumber = value => Number(value || 0);
 const MATCHMAKING_MINUTES = 30;
 const clone = value => JSON.parse(JSON.stringify(value));
+const arenaModeOf = value => String(value || 'constructed') === 'draft' ? 'draft' : 'constructed';
 const trinketEffectFor = (wutConfig, family, rarity) => clone(normalizeWutTrinketEffect(
   family,
   rarity,
@@ -38,7 +39,7 @@ export async function assignArenaMatchupsWithClient(client, { now = new Date(), 
   const queued = (await client.query("SELECT id,user_id,data FROM arena_entries WHERE status='queued' ORDER BY joined_at,id FOR UPDATE")).rows;
   const active = (await client.query("SELECT data,status FROM arena_matches WHERE status IN ('drafting','choosing_first','active','scoring')")).rows.map(row => row.data || {});
   const eligible = queued.filter(row => ((row.data?.mode || 'constructed') === 'draft' || row.data?.deck_snapshot) &&
-    active.filter(match => (match.player_ids || []).map(Number).includes(Number(row.user_id))).length < asNumber(config.maxActiveMatches || 3)
+    active.filter(match => arenaModeOf(match.mode) === arenaModeOf(row.data?.mode) && (match.player_ids || []).map(Number).includes(Number(row.user_id))).length < asNumber(config.maxActiveMatches || 3)
   ).map(row => ({ ...row.data, id: asNumber(row.id), user_id: asNumber(row.user_id) }));
   const ratings = new Map((await client.query('SELECT user_id,rating FROM arena_ratings')).rows.map(row => [asNumber(row.user_id), Number(row.rating)]));
   const history = (await client.query("SELECT data,status FROM arena_matches WHERE match_kind='arena' AND status NOT IN ('cancelled','voided')")).rows;
@@ -90,11 +91,13 @@ export async function assignArenaMatchupsWithClient(client, { now = new Date(), 
     if (mode === 'draft') {
       const cardsMeta = (await client.query("SELECT data FROM app_documents WHERE document_key='cards_meta'")).rows[0]?.data || {};
       const wutConfig = cardsMeta.config?.wut || {};
+      const boostEffects = cardsMeta.config?.boostEffects || {};
       const families = Object.keys(wutConfig.trinketEffects || WUT_LAUNCH_TRINKET_EFFECTS);
       match.mini_draft = { packs: buildArenaDraftPacks({
         catalog: (catalog || []).filter(isPlayerPackEligible), config, wutConfig,
         trinketFamilies: families, boostTypes: ['goal','assist','shot','grit','save','shutout'],
         trinketEffect: (family, rarity) => trinketEffectFor(wutConfig, family, rarity),
+        boostEffect: (type, rarity) => clone(boostEffects?.[type]?.[rarity] || null),
         random
       }), pack_count: normalizeArenaDraftConfig(config).packCount };
       match.draft_loadouts = {};
@@ -138,12 +141,18 @@ export async function enterArenaQueueWithClient(client, {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242060]);
   const meta = await lockArenaMeta(client);
   const config = meta.config || {};
+  const cleanMode = mode === 'constructed' ? 'constructed' : 'draft';
   const activeCount = asNumber((await client.query(`
     SELECT count(*)::integer AS count FROM arena_matches
     WHERE status IN ('drafting','choosing_first','active','scoring') AND data->'player_ids' @> $1::jsonb
-  `, [JSON.stringify([Number(userId)])])).rows[0].count);
-  if (activeCount >= asNumber(config.maxActiveMatches || 3)) throw new Error(`You already have ${config.maxActiveMatches} active WUT matches.`);
-  const cleanMode = mode === 'constructed' ? 'constructed' : 'draft';
+      AND COALESCE(data->>'mode','constructed')=$2
+  `, [JSON.stringify([Number(userId)]), cleanMode])).rows[0].count);
+  if (activeCount >= asNumber(config.maxActiveMatches || 3)) throw new Error(`You already have ${config.maxActiveMatches} active ${cleanMode === 'draft' ? 'Draft Arena' : 'Constructed Arena'} matches.`);
+  const existingEntry = (await client.query(
+    "SELECT 1 FROM arena_entries WHERE user_id=$1 AND status='queued' AND COALESCE(data->>'mode','constructed')=$2 LIMIT 1",
+    [Number(userId), cleanMode]
+  )).rows[0];
+  if (existingEntry) throw new Error(`You are already in the ${cleanMode === 'draft' ? 'Draft Arena' : 'Constructed Arena'} queue.`);
   let deck = { rows: [] };
   if (cleanMode === 'constructed') {
     deck = await client.query('SELECT id,name,data FROM wut_decks WHERE id=$1 AND user_id=$2', [Number(deckId), Number(userId)]);
@@ -174,7 +183,10 @@ export async function enterArenaQueueWithClient(client, {
     INSERT INTO arena_entries(id,user_id,status,joined_at,source_order,data)
     VALUES($1,$2,'queued',$3,$4,$5::jsonb)
   `, [id, Number(userId), entry.created_at, id, JSON.stringify(entry)]);
-  const queuedCount = asNumber((await client.query("SELECT count(*)::integer AS count FROM arena_entries WHERE status='queued'")).rows[0].count);
+  const queuedCount = asNumber((await client.query(
+    "SELECT count(*)::integer AS count FROM arena_entries WHERE status='queued' AND COALESCE(data->>'mode','constructed')=$1",
+    [cleanMode]
+  )).rows[0].count);
   if (queuedCount >= 10) {
     const result = await assignArenaMatchupsWithClient(client, { now, random, catalog });
     return { ...entry, matchmakingTriggered: true, matchmaking: result };

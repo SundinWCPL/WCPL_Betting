@@ -3,6 +3,7 @@ import { trinketFitsWutPosition } from '../../services/wutBalanceRules.js';
 
 const asNumber = value => Number(value || 0);
 const firstPlayerDeciderId = match => Number(match?.first_player_decider_user_id ?? match?.coin_flip_winner_user_id);
+const arenaModeOf = value => String(value || 'constructed') === 'draft' ? 'draft' : 'constructed';
 
 export async function getArenaRatingPostgres(pool, userId) {
   const row = (await pool.query('SELECT rating FROM arena_ratings WHERE user_id=$1', [Number(userId)])).rows[0];
@@ -14,21 +15,28 @@ export async function getArenaAdminSummaryPostgres(pool, now = new Date()) {
     pool.query("SELECT data FROM app_documents WHERE document_key='arena_meta'"),
     pool.query(`SELECT
       (SELECT count(*)::int FROM arena_entries WHERE status='queued') AS queued,
+      (SELECT count(*)::int FROM arena_entries WHERE status='queued' AND COALESCE(data->>'mode','constructed')='draft') AS queued_draft,
+      (SELECT count(*)::int FROM arena_entries WHERE status='queued' AND COALESCE(data->>'mode','constructed')='constructed') AS queued_constructed,
       (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status IN ('drafting','choosing_first','active')) AS active,
       (SELECT count(*)::int FROM arena_matches WHERE match_kind='arena' AND status='ready') AS ready`)
   ]);
   const data = structuredClone(meta.rows[0]?.data || {});
   const config = data.config || {};
   const queued = Number(counts.rows[0]?.queued || 0);
+  const queueCounts = {
+    draft: Number(counts.rows[0]?.queued_draft || 0),
+    constructed: Number(counts.rows[0]?.queued_constructed || 0)
+  };
   const queueTrigger = Number(config.queueTrigger || 10);
   const interval = 30 * 60 * 1000;
   const currentSlot = String(Math.floor(now.getTime() / interval));
   return {
     lastMatchmakingAt: data.lastMatchmakingAt || null,
-    matchmakingDue: String(data.lastMatchmakingSlot || '') !== currentSlot || queued >= queueTrigger,
-    queueTriggerReached: queued >= queueTrigger,
+    matchmakingDue: String(data.lastMatchmakingSlot || '') !== currentSlot || Object.values(queueCounts).some(count => count >= queueTrigger),
+    queueTriggerReached: Object.values(queueCounts).some(count => count >= queueTrigger),
     nextMatchmakingAt: new Date((Math.floor(now.getTime() / interval) + 1) * interval).toISOString(),
     queued,
+    queueCounts,
     active: Number(counts.rows[0]?.active || 0),
     ready: Number(counts.rows[0]?.ready || 0),
     config
@@ -83,10 +91,11 @@ function publicMatch(match, userId, names, config, wutConfig, now) {
 
 export async function getArenaStateForUserPostgres(pool, userId, now = new Date()) {
   const playerId = Number(userId);
-  const [documents, queuedEntry, queueCount, matchRows, ratings, completedRows] = await Promise.all([
+  const [documents, queuedEntries, queueCount, queueCountRows, matchRows, ratings, completedRows] = await Promise.all([
     pool.query("SELECT document_key,data FROM app_documents WHERE document_key IN ('arena_meta','cards_meta')"),
-    pool.query("SELECT data FROM arena_entries WHERE user_id=$1 AND status='queued' ORDER BY joined_at,id LIMIT 1", [playerId]),
+    pool.query("SELECT data FROM arena_entries WHERE user_id=$1 AND status='queued' ORDER BY joined_at,id", [playerId]),
     pool.query("SELECT count(*)::integer AS count FROM arena_entries WHERE status='queued'"),
+    pool.query("SELECT COALESCE(data->>'mode','constructed') AS mode,count(*)::integer AS count FROM arena_entries WHERE status='queued' GROUP BY 1"),
     pool.query(`
       SELECT m.match_key,m.status,m.data,
         COALESCE((SELECT jsonb_agg(p.data ORDER BY p.placement_index) FROM arena_placements p WHERE p.match_key=m.match_key), '[]'::jsonb) AS placements
@@ -110,6 +119,14 @@ export async function getArenaStateForUserPostgres(pool, userId, now = new Date(
   }]));
   const matches = matchRows.rows.map(row => ({ ...(row.data || {}), status: row.status, placements: row.placements || [] }))
     .map(match => publicMatch(match, playerId, names, config, wutConfig, now));
+  const activeMatches = matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status));
+  const queueCounts = { draft: 0, constructed: 0 };
+  for (const row of queueCountRows.rows) queueCounts[arenaModeOf(row.mode)] = Number(row.count || 0);
+  const ownQueuedEntries = queuedEntries.rows.map(row => structuredClone(row.data || {}));
+  const ownQueuedByMode = Object.fromEntries(['draft', 'constructed'].map(mode => [
+    mode,
+    ownQueuedEntries.find(entry => arenaModeOf(entry.mode) === mode) || null
+  ]));
   const resolved = matches.filter(match => match.status === 'completed' ||
     (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(playerId)));
   const interval = 30 * 60 * 1000;
@@ -130,7 +147,13 @@ export async function getArenaStateForUserPostgres(pool, userId, now = new Date(
     config,
     nextMatchmakingAt: new Date((Math.floor(now.getTime() / interval) + 1) * interval).toISOString(),
     queueCount: Number(queueCount.rows[0]?.count || 0),
-    queuedEntry: queuedEntry.rows[0] ? structuredClone(queuedEntry.rows[0].data || {}) : null,
+    queueCounts,
+    queuedEntry: ownQueuedEntries[0] ? structuredClone(ownQueuedEntries[0]) : null,
+    queuedEntries: Object.fromEntries(Object.entries(ownQueuedByMode).map(([mode, entry]) => [mode, entry ? structuredClone(entry) : null])),
+    activeCounts: Object.fromEntries(['draft', 'constructed'].map(mode => [
+      mode,
+      activeMatches.filter(match => arenaModeOf(match.mode) === mode).length
+    ])),
     rating: names.get(playerId)?.rating ?? ARENA_DEFAULT_ELO,
     record: {
       wins: resolved.filter(match => Number(match.winner_user_id) === playerId).length,
@@ -138,7 +161,7 @@ export async function getArenaStateForUserPostgres(pool, userId, now = new Date(
       draws: resolved.filter(match => match.winner_user_id == null).length
     },
     leaderboard,
-    activeMatches: matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status)),
+    activeMatches,
     readyMatches: matches.filter(match => match.status === 'ready' && !(match.revealed_by || []).map(Number).includes(playerId)),
     history: matches.filter(match => match.status === 'completed' ||
       (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(playerId))),

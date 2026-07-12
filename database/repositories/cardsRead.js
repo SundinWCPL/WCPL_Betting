@@ -83,7 +83,7 @@ export async function getCardsAdminStatePostgres(pool) {
           AND NOT (data ? 'elo_updated_at'))::int AS draft_count
   `);
   const arenaMeta = arenaDoc.rows[0]?.data || {};
-  const rulesUpdateAction = cardsMeta.rolloutActions?.voidOngoingMatchesV1 || null;
+  const activeMatchVoidAction = cardsMeta.rolloutActions?.lastActiveMatchVoid || cardsMeta.rolloutActions?.voidOngoingMatchesV1 || null;
   return {
     config: cardsMeta.config || {},
     positionOverrides: { ...(cardsMeta.positionOverrides || {}) },
@@ -110,12 +110,10 @@ export async function getCardsAdminStatePostgres(pool) {
         Number(refundSummary.rows[0]?.attached_card_count || 0) + Number(refundSummary.rows[0]?.attached_trinket_count || 0)
     },
     rulesUpdateVoid: {
-      completedAt: rulesUpdateAction?.completed_at || null,
-      rewardAmount: Number(rulesUpdateAction?.reward_amount || 30),
-      pendingMatchCount: rulesUpdateAction?.completed_at
-        ? 0
-        : Number(rulesVoidCounts.rows[0]?.arena_count || 0) + Number(rulesVoidCounts.rows[0]?.draft_count || 0),
-      result: rulesUpdateAction
+      completedAt: activeMatchVoidAction?.completed_at || null,
+      rewardAmount: 30,
+      pendingMatchCount: Number(rulesVoidCounts.rows[0]?.arena_count || 0) + Number(rulesVoidCounts.rows[0]?.draft_count || 0),
+      result: activeMatchVoidAction
     },
     totals: {
       ownedCards: totals.rows[0].owned_cards, ownedBoosts: totals.rows[0].owned_boosts,

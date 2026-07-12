@@ -163,16 +163,13 @@ export async function patchCardsMetaWithClient(client, mutator) {
 export const saveCardsConfigPostgres = (pool, input) => withTransaction(pool, client => saveCardsConfigWithClient(client, input));
 export const setWutFreeShopPurchasesPostgres = (pool, enabled) => withTransaction(pool, client => patchCardsMetaWithClient(client, meta => { meta.config.wut.freeShopPurchases = Boolean(enabled); }));
 
-export async function voidOngoingWutMatchesForRulesUpdateWithClient(client, { adminUserId = null, rewardAmount = 30, now = new Date() } = {}) {
+export async function voidActiveWutMatchesForAdminWithClient(client, { adminUserId = null, rewardAmount = 30, now = new Date() } = {}) {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242040]);
   const admin = await client.query('SELECT role FROM users WHERE id=$1', [Number(adminUserId)]);
   if (admin.rows[0]?.role !== 'admin') throw new Error('Admin access is required.');
   const docs = await lockDocuments(client);
   const cardsMeta = clone(docs.cards_meta || {});
   cardsMeta.rolloutActions ||= {};
-  if (cardsMeta.rolloutActions.voidOngoingMatchesV1?.completed_at) {
-    throw new Error('The ongoing WUT match void action has already been completed.');
-  }
   const amount = Math.max(0, Math.round(Number(rewardAmount || 30)));
   const voidedAt = now.toISOString();
   let arenaMatchesVoided = 0;
@@ -209,12 +206,12 @@ export async function voidOngoingWutMatchesForRulesUpdateWithClient(client, { ad
     for (const userId of playerIds) {
       if (!amount) continue;
       const membership = await lockWutMembership(client, userId, { requireStarter: false });
-      await changeWutCoins(client, membership, amount, 'wut_rules_update_void_compensation', {
+      await changeWutCoins(client, membership, amount, 'wut_active_match_void_compensation', {
         admin_user_id: Number(adminUserId),
         arena_match_id: Number(match.id),
         draft_event_id: null,
         draft_match_id: null,
-        reason: 'Ongoing WUT match voided for rules update'
+        reason: 'Active WUT match voided by administrator'
       }, now);
       rewardTransactions += 1;
     }
@@ -223,14 +220,14 @@ export async function voidOngoingWutMatchesForRulesUpdateWithClient(client, { ad
       if (!entryRow) continue;
       const entry = clone(entryRow.data || {});
       entry.status = 'cancelled';
-      entry.cancel_reason = 'rules_update_void';
+      entry.cancel_reason = 'admin_active_match_void';
       entry.cancelled_at = voidedAt;
       await client.query("UPDATE arena_entries SET status='cancelled',data=$2::jsonb WHERE id=$1", [Number(entryId), JSON.stringify(entry)]);
     }
     Object.assign(match, {
       status: 'cancelled',
-      cancel_reason: 'rules_update_void',
-      cancel_note: 'Voided before WUT rules update rollout.',
+      cancel_reason: 'admin_active_match_void',
+      cancel_note: 'Voided by an administrator.',
       cancelled_at: voidedAt,
       voided_at: voidedAt,
       voided_by: Number(adminUserId),
@@ -262,12 +259,12 @@ export async function voidOngoingWutMatchesForRulesUpdateWithClient(client, { ad
     for (const userId of playerIds) {
       if (!amount) continue;
       const membership = await lockWutMembership(client, userId, { requireStarter: false });
-      await changeWutCoins(client, membership, amount, 'wut_rules_update_void_compensation', {
+      await changeWutCoins(client, membership, amount, 'wut_active_match_void_compensation', {
         admin_user_id: Number(adminUserId),
         arena_match_id: null,
         draft_event_id: Number(row.event_id),
         draft_match_id: Number(match.id || row.match_key),
-        reason: 'Ongoing WUT match voided for rules update'
+        reason: 'Active WUT match voided by administrator'
       }, now);
       rewardTransactions += 1;
     }
@@ -275,7 +272,7 @@ export async function voidOngoingWutMatchesForRulesUpdateWithClient(client, { ad
       status: 'voided',
       voided_at: voidedAt,
       voided_by: Number(adminUserId),
-      void_reason: 'Voided before WUT rules update rollout.',
+      void_reason: 'Voided by an administrator.',
       turn_deadline: null,
       current_player_id: null,
       scores: null,
@@ -303,13 +300,15 @@ export async function voidOngoingWutMatchesForRulesUpdateWithClient(client, { ad
     released_boosts: releasedBoosts,
     skipped_awarded_matches: skippedAwarded
   };
-  cardsMeta.rolloutActions.voidOngoingMatchesV1 = result;
+  cardsMeta.rolloutActions.lastActiveMatchVoid = result;
   await client.query("UPDATE app_documents SET data=$2::jsonb WHERE document_key=$1", ['cards_meta', JSON.stringify(cardsMeta)]);
   return result;
 }
 
-export const voidOngoingWutMatchesForRulesUpdatePostgres = (pool, input) =>
-  withTransaction(pool, client => voidOngoingWutMatchesForRulesUpdateWithClient(client, input));
+export const voidActiveWutMatchesForAdminPostgres = (pool, input) =>
+  withTransaction(pool, client => voidActiveWutMatchesForAdminWithClient(client, input));
+
+export const voidOngoingWutMatchesForRulesUpdatePostgres = voidActiveWutMatchesForAdminPostgres;
 
 export async function refundWutTrinketRemovalFeesWithClient(client, { adminUserId = null, now = new Date() } = {}) {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242040]);

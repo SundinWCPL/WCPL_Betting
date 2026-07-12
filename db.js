@@ -56,7 +56,7 @@ import {
   wutCaptainPatchCount,
   wutDeckRules
 } from './services/arenaRuntime.js';
-import { DEFAULT_BOOST_PACK_CONFIG, DEFAULT_RARITY_THRESHOLDS, isPlayerPackEligible, normalizeRarityThresholds } from './services/cards.js';
+import { DEFAULT_BOOST_EFFECTS, DEFAULT_BOOST_PACK_CONFIG, DEFAULT_RARITY_THRESHOLDS, isPlayerPackEligible, normalizeRarityThresholds } from './services/cards.js';
 
 const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
@@ -4566,9 +4566,15 @@ const ARENA_ACTIVE_STATUSES = ['drafting', 'choosing_first', 'active', 'scoring'
 const CONSTRUCTED_SERIES_TARGET_WINS = 2;
 const CONSTRUCTED_SERIES_MAX_GAMES = 3;
 
-function activeArenaMatchesForUser(userId) {
+function arenaModeOf(value) {
+  return String(value || 'constructed') === 'draft' ? 'draft' : 'constructed';
+}
+
+function activeArenaMatchesForUser(userId, mode = null) {
   return state.cards.arena.matches.filter(match =>
-    ARENA_ACTIVE_STATUSES.includes(match.status) && match.player_ids.map(Number).includes(Number(userId))
+    ARENA_ACTIVE_STATUSES.includes(match.status) &&
+    match.player_ids.map(Number).includes(Number(userId)) &&
+    (mode == null || arenaModeOf(match.mode) === arenaModeOf(mode))
   );
 }
 
@@ -4583,7 +4589,8 @@ function buildDraftArenaPacksForMatch(catalog = []) {
     wutConfig: state.cards.config.wut,
     trinketFamilies: WUT_TRINKET_FAMILIES,
     boostTypes: ['goal', 'assist', 'shot', 'grit', 'save', 'shutout'],
-    trinketEffect: configuredTrinketEffect
+    trinketEffect: configuredTrinketEffect,
+    boostEffect: (type, rarity) => JSON.parse(JSON.stringify(state.cards.config.boostEffects?.[type]?.[rarity] || DEFAULT_BOOST_EFFECTS[type]?.[rarity] || null))
   });
 }
 
@@ -4940,12 +4947,21 @@ export function chooseArenaFirstPlayer({ userId, matchId, choice = 'self', now =
 
 export function getArenaStateForUser(userId, now = new Date()) {
   ensureArenaState();
-  const queued = state.cards.arena.entries.find(entry =>
+  const queuedEntries = state.cards.arena.entries.filter(entry =>
     Number(entry.user_id) === Number(userId) && entry.status === 'queued'
-  ) || null;
+  );
+  const queuedByMode = Object.fromEntries(['draft', 'constructed'].map(mode => [
+    mode,
+    queuedEntries.find(entry => arenaModeOf(entry.mode) === mode) || null
+  ]));
+  const queueCounts = Object.fromEntries(['draft', 'constructed'].map(mode => [
+    mode,
+    state.cards.arena.entries.filter(entry => entry.status === 'queued' && arenaModeOf(entry.mode) === mode).length
+  ]));
   const matches = state.cards.arena.matches
     .filter(match => match.player_ids.map(Number).includes(Number(userId)))
     .sort((a, b) => Number(b.id) - Number(a.id));
+  const activeMatches = matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status));
   const resolvedMatches = matches.filter(match =>
     match.status === 'completed' ||
     (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(Number(userId)))
@@ -4959,11 +4975,17 @@ export function getArenaStateForUser(userId, now = new Date()) {
     config: JSON.parse(JSON.stringify(state.cards.arena.config)),
     nextMatchmakingAt: nextArenaMatchmakingAt(now).toISOString(),
     queueCount: state.cards.arena.entries.filter(entry => entry.status === 'queued').length,
-    queuedEntry: queued ? { ...queued } : null,
+    queueCounts,
+    queuedEntry: queuedEntries[0] ? { ...queuedEntries[0] } : null,
+    queuedEntries: Object.fromEntries(Object.entries(queuedByMode).map(([mode, entry]) => [mode, entry ? { ...entry } : null])),
+    activeCounts: Object.fromEntries(['draft', 'constructed'].map(mode => [
+      mode,
+      activeArenaMatchesForUser(userId, mode).length
+    ])),
     rating: arenaRating(userId),
     record: { wins, losses, draws },
     leaderboard: arenaEloLeaderboard(),
-    activeMatches: matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status)).map(match => publicArenaMatch(match, userId)),
+    activeMatches: activeMatches.map(match => publicArenaMatch(match, userId)),
     readyMatches: matches.filter(match => match.status === 'ready' && !(match.revealed_by || []).map(Number).includes(Number(userId))).map(match => publicArenaMatch(match, userId)),
     history: matches.filter(match => match.status === 'completed' || (match.status === 'ready' && (match.revealed_by || []).map(Number).includes(Number(userId)))).map(match => publicArenaMatch(match, userId)),
     cancelledMatches: matches.filter(match => match.status === 'cancelled').map(match => publicArenaMatch(match, userId)),
@@ -4979,12 +5001,12 @@ export function enterArenaQueue(userId, deckIdOrOptions = null, catalogByIdentit
   const mode = String(options.mode || 'constructed') === 'draft' ? 'draft' : 'constructed';
   const enteredAt = options.now || now;
   const arena = state.cards.arena;
-  if (activeArenaMatchesForUser(userId).length >= Number(arena.config.maxActiveMatches || 3)) {
-    throw new Error(`You already have ${arena.config.maxActiveMatches} active WUT matches.`);
+  if (activeArenaMatchesForUser(userId, mode).length >= Number(arena.config.maxActiveMatches || 3)) {
+    throw new Error(`You already have ${arena.config.maxActiveMatches} active ${mode === 'draft' ? 'Draft Arena' : 'Constructed Arena'} matches.`);
   }
   if (arena.entries.some(entry =>
-    Number(entry.user_id) === Number(userId) && entry.status === 'queued'
-  )) throw new Error('You are already in the WUT queue.');
+    Number(entry.user_id) === Number(userId) && entry.status === 'queued' && arenaModeOf(entry.mode) === mode
+  )) throw new Error(`You are already in the ${mode === 'draft' ? 'Draft Arena' : 'Constructed Arena'} queue.`);
   const user = state.users.find(item => Number(item.id) === Number(userId));
   if (!user) throw new Error('User not found.');
   let deck = null;
@@ -5010,7 +5032,7 @@ export function enterArenaQueue(userId, deckIdOrOptions = null, catalogByIdentit
     deck_snapshot: deckSnapshot
   };
   arena.entries.push(entry);
-  if (arena.entries.filter(candidate => candidate.status === 'queued').length >= ARENA_QUEUE_TRIGGER) {
+  if (arena.entries.filter(candidate => candidate.status === 'queued' && arenaModeOf(candidate.mode) === mode).length >= ARENA_QUEUE_TRIGGER) {
     assignArenaMatchups(enteredAt, options.catalog || []);
     return { ...entry, matchmakingTriggered: true };
   }
@@ -5090,7 +5112,7 @@ export function assignArenaMatchups(now = new Date(), catalog = []) {
   ensureArenaState();
   const arena = state.cards.arena;
   const eligible = arena.entries.filter(entry => entry.status === 'queued' && ((entry.mode || 'constructed') === 'draft' || entry.deck_snapshot) &&
-    activeArenaMatchesForUser(entry.user_id).length < Number(arena.config.maxActiveMatches || 3));
+    activeArenaMatchesForUser(entry.user_id, arenaModeOf(entry.mode)).length < Number(arena.config.maxActiveMatches || 3));
   const activePairs = new Set(arena.matches
     .filter(match => ['drafting', 'choosing_first', 'active', 'scoring', 'ready'].includes(match.status))
     .map(match => arenaPairKey(match.player_ids?.[0], match.player_ids?.[1])));
@@ -5158,12 +5180,17 @@ export function getArenaAdminState(now = new Date()) {
   ensureArenaState();
   const currentSlot = arenaSlotKey(now);
   const queued = state.cards.arena.entries.filter(entry => entry.status === 'queued').length;
+  const queueCounts = Object.fromEntries(['draft', 'constructed'].map(mode => [
+    mode,
+    state.cards.arena.entries.filter(entry => entry.status === 'queued' && arenaModeOf(entry.mode) === mode).length
+  ]));
   return {
     lastMatchmakingAt: state.cards.arena.lastMatchmakingAt || null,
-    matchmakingDue: state.cards.arena.lastMatchmakingSlot !== currentSlot || queued >= ARENA_QUEUE_TRIGGER,
-    queueTriggerReached: queued >= ARENA_QUEUE_TRIGGER,
+    matchmakingDue: state.cards.arena.lastMatchmakingSlot !== currentSlot || Object.values(queueCounts).some(count => count >= ARENA_QUEUE_TRIGGER),
+    queueTriggerReached: Object.values(queueCounts).some(count => count >= ARENA_QUEUE_TRIGGER),
     nextMatchmakingAt: nextArenaMatchmakingAt(now).toISOString(),
     queued,
+    queueCounts,
     active: state.cards.arena.matches.filter(match => ['drafting', 'choosing_first', 'active'].includes(match.status)).length,
     ready: state.cards.arena.matches.filter(match => match.status === 'ready').length,
     config: JSON.parse(JSON.stringify(state.cards.arena.config))
@@ -5268,22 +5295,22 @@ function releaseBoostsForVoidedMatch(match) {
   return releasedBoostIds;
 }
 
-function grantRulesUpdateVoidCompensation({ userId, amount, adminUserId, matchId = null, draftEventId = null, draftMatchId = null }) {
+function grantActiveMatchVoidCompensation({ userId, amount, adminUserId, matchId = null, draftEventId = null, draftMatchId = null }) {
   const membership = state.cards.wutMemberships.find(item => Number(item.user_id) === Number(userId));
   if (!membership) return false;
-  changeWutCoins(membership, amount, 'wut_rules_update_void_compensation', {
+  changeWutCoins(membership, amount, 'wut_active_match_void_compensation', {
     admin_user_id: adminUserId == null ? null : Number(adminUserId),
     arena_match_id: matchId == null ? null : Number(matchId),
     draft_event_id: draftEventId == null ? null : Number(draftEventId),
     draft_match_id: draftMatchId == null ? null : Number(draftMatchId),
-    reason: 'Ongoing WUT match voided for rules update'
+    reason: 'Active WUT match voided by administrator'
   });
   return true;
 }
 
 export function getWutRulesUpdateVoidSummary() {
   ensureCardsState();
-  const action = state.cards.rolloutActions?.voidOngoingMatchesV1 || null;
+  const action = state.cards.rolloutActions?.lastActiveMatchVoid || state.cards.rolloutActions?.voidOngoingMatchesV1 || null;
   const arenaCount = state.cards.arena.matches.filter(match =>
     ['drafting', 'choosing_first', 'active', 'scoring'].includes(match.status) &&
     !match.wut_rewards_awarded_at &&
@@ -5297,20 +5324,17 @@ export function getWutRulesUpdateVoidSummary() {
     ).length, 0);
   return {
     completedAt: action?.completed_at || null,
-    rewardAmount: Number(action?.reward_amount || WUT_RULES_UPDATE_VOID_REWARD),
-    pendingMatchCount: action?.completed_at ? 0 : arenaCount + draftEventCount,
+    rewardAmount: WUT_RULES_UPDATE_VOID_REWARD,
+    pendingMatchCount: arenaCount + draftEventCount,
     result: action || null
   };
 }
 
-export function voidOngoingWutMatchesForRulesUpdate({ adminUserId = null, rewardAmount = WUT_RULES_UPDATE_VOID_REWARD, now = new Date() } = {}) {
+export function voidActiveWutMatchesForAdmin({ adminUserId = null, rewardAmount = WUT_RULES_UPDATE_VOID_REWARD, now = new Date() } = {}) {
   ensureCardsState();
   const admin = state.users.find(user => Number(user.id) === Number(adminUserId));
   if (!admin || admin.role !== 'admin') throw new Error('Admin access is required.');
   state.cards.rolloutActions ||= {};
-  if (state.cards.rolloutActions.voidOngoingMatchesV1?.completed_at) {
-    throw new Error('The ongoing WUT match void action has already been completed.');
-  }
   const amount = Math.max(0, Math.round(Number(rewardAmount || WUT_RULES_UPDATE_VOID_REWARD)));
   let arenaMatchesVoided = 0;
   let draftEventMatchesVoided = 0;
@@ -5326,18 +5350,18 @@ export function voidOngoingWutMatchesForRulesUpdate({ adminUserId = null, reward
     }
     releasedBoosts += releaseBoostsForVoidedMatch(match).length;
     for (const userId of [...new Set((match.player_ids || []).map(Number).filter(Number.isFinite))]) {
-      if (amount && grantRulesUpdateVoidCompensation({ userId, amount, adminUserId, matchId: match.id })) rewardTransactions += 1;
+      if (amount && grantActiveMatchVoidCompensation({ userId, amount, adminUserId, matchId: match.id })) rewardTransactions += 1;
     }
     for (const entryId of match.entry_ids || []) {
       const entry = state.cards.arena.entries.find(item => Number(item.id) === Number(entryId));
       if (!entry) continue;
       entry.status = 'cancelled';
-      entry.cancel_reason = 'rules_update_void';
+      entry.cancel_reason = 'admin_active_match_void';
       entry.cancelled_at = voidedAt;
     }
     match.status = 'cancelled';
-    match.cancel_reason = 'rules_update_void';
-    match.cancel_note = 'Voided before WUT rules update rollout.';
+    match.cancel_reason = 'admin_active_match_void';
+    match.cancel_note = 'Voided by an administrator.';
     match.cancelled_at = voidedAt;
     match.voided_at = voidedAt;
     match.voided_by = Number(adminUserId);
@@ -5358,12 +5382,12 @@ export function voidOngoingWutMatchesForRulesUpdate({ adminUserId = null, reward
         continue;
       }
       for (const userId of [...new Set((match.player_ids || []).map(Number).filter(Number.isFinite))]) {
-        if (amount && grantRulesUpdateVoidCompensation({ userId, amount, adminUserId, draftEventId: event.id, draftMatchId: match.id })) rewardTransactions += 1;
+        if (amount && grantActiveMatchVoidCompensation({ userId, amount, adminUserId, draftEventId: event.id, draftMatchId: match.id })) rewardTransactions += 1;
       }
       match.status = 'voided';
       match.voided_at = voidedAt;
       match.voided_by = Number(adminUserId);
-      match.void_reason = 'Voided before WUT rules update rollout.';
+      match.void_reason = 'Voided by an administrator.';
       match.turn_deadline = null;
       match.current_player_id = null;
       match.scores = null;
@@ -5373,7 +5397,7 @@ export function voidOngoingWutMatchesForRulesUpdate({ adminUserId = null, reward
     }
     if (eventVoided) {
       event.updated_at = voidedAt;
-      appendWutDraftEventLog(event, 'rules_update_matches_voided', { count: eventVoided, reward_amount: amount }, { actorUserId: adminUserId, now });
+      appendWutDraftEventLog(event, 'admin_active_matches_voided', { count: eventVoided, reward_amount: amount }, { actorUserId: adminUserId, now });
       draftEventMatchesVoided += eventVoided;
     }
   }
@@ -5388,9 +5412,13 @@ export function voidOngoingWutMatchesForRulesUpdate({ adminUserId = null, reward
     released_boosts: releasedBoosts,
     skipped_awarded_matches: skippedAwarded
   };
-  state.cards.rolloutActions.voidOngoingMatchesV1 = result;
+  state.cards.rolloutActions.lastActiveMatchVoid = result;
   saveState();
   return { ...result };
+}
+
+export function voidOngoingWutMatchesForRulesUpdate(input = {}) {
+  return voidActiveWutMatchesForAdmin(input);
 }
 
 export function getArenaAdminMatchState({ userId = null } = {}) {
@@ -6757,6 +6785,7 @@ function wutCardSnapshot(card, catalogByIdentity, trinketOverride = undefined) {
     chemistry_key: `${player.cardType === 'mythic' ? player.sourceSeason : player.edition}|${player.teamId || ''}`,
     display_name: player.name || player.displayName || '',
     base_power: calculateWutPower(player.tier), power: calculateWutPower(player.tier, trinket?.rarity),
+    player: JSON.parse(JSON.stringify(player)),
     trinket: trinket ? { id: trinket.id, family: trinket.family, rarity: trinket.rarity, effect: JSON.parse(JSON.stringify(trinket.effect)) } : null
   };
 }

@@ -98,7 +98,7 @@ import {
   openWutStarterPack,
   adjustWutCoinBalance,
   refundWutTrinketRemovalFees,
-  voidOngoingWutMatchesForRulesUpdate,
+  voidActiveWutMatchesForAdmin,
   sellDuplicatePlayerCard,
   grantCardsTestItem,
   getCardsWeekReviews,
@@ -234,7 +234,7 @@ import {
   grantCardsTestItemPostgres,
   saveCalculatedCardTiersPostgres,
   refundWutTrinketRemovalFeesPostgres,
-  voidOngoingWutMatchesForRulesUpdatePostgres,
+  voidActiveWutMatchesForAdminPostgres,
   setCardsPlayerOverridesPostgres,
   setCardsPositionOverridePostgres,
   setCardsTierOverridePostgres,
@@ -1879,6 +1879,7 @@ function arenaSnapshotForCard(card, wutConfig) {
       display_name: player.name || player.displayName || '',
       base_power: calculateWutPower(player.tier, null, wutConfig),
       power: Number(card.power || calculateWutPower(player.tier, card.trinket?.rarity, wutConfig)),
+      player: JSON.parse(JSON.stringify(player)),
       trinket: card.trinket ? JSON.parse(JSON.stringify(card.trinket)) : null
     };
 }
@@ -1924,16 +1925,30 @@ async function scorePendingArenaMatches(catalog = null) {
         ? await getCardsOwnedStatePostgres(postgresPool(), placement.owner_user_id || placement.user_id)
         : getCardsOwnedState(placement.owner_user_id || placement.user_id));
       const rawCard = (eventInventory?.cards || owned?.cards || []).find(card => Number(card.id) === Number(placement.card_id));
+      const snapshotPlayer = placement.card_snapshot?.player || null;
+      const canonicalSnapshotPlayer = placement.card_snapshot?.card_identity
+        ? catalogByKey[placement.card_snapshot.card_identity] || null
+        : null;
+      const hydratedSnapshotPlayer = snapshotPlayer || canonicalSnapshotPlayer
+        ? {
+            ...(canonicalSnapshotPlayer || {}),
+            ...(snapshotPlayer || {}),
+            sourceDivisionId: snapshotPlayer?.sourceDivisionId || snapshotPlayer?.source_division_id || canonicalSnapshotPlayer?.sourceDivisionId || canonicalSnapshotPlayer?.divisionId || '',
+            divisionId: snapshotPlayer?.divisionId || snapshotPlayer?.division_id || canonicalSnapshotPlayer?.divisionId || '',
+            sourceSteamId: snapshotPlayer?.sourceSteamId || snapshotPlayer?.source_steam_id || canonicalSnapshotPlayer?.sourceSteamId || canonicalSnapshotPlayer?.steamId || '',
+            sourcePlayerKey: snapshotPlayer?.sourcePlayerKey || snapshotPlayer?.source_player_key || canonicalSnapshotPlayer?.sourcePlayerKey || canonicalSnapshotPlayer?.playerKey || ''
+          }
+        : null;
       const card = rawCard ? (eventInventory ? draftEventCardView(rawCard, eventInventory, catalogByKey) : decorateOwnedCard(rawCard, catalogByKey))
-        : placement.card_snapshot?.player ? {
+        : hydratedSnapshotPlayer ? {
             id: Number(placement.card_id),
             card_identity: placement.card_snapshot.card_identity,
             power: Number(placement.power || placement.card_snapshot.power || 1),
             trinket: placement.card_snapshot.trinket || null,
             player: {
-              ...placement.card_snapshot.player,
-              name: placement.card_snapshot.player.name || placement.card_snapshot.display_name,
-              tier: placement.card_snapshot.player.tier || placement.card_snapshot.rarity,
+              ...hydratedSnapshotPlayer,
+              name: hydratedSnapshotPlayer.name || placement.card_snapshot.display_name,
+              tier: hydratedSnapshotPlayer.tier || placement.card_snapshot.rarity,
               position: placement.card_snapshot.position
             }
           } : null;
@@ -2217,7 +2232,11 @@ function decorateArenaMatch(match, allCards, boosts) {
     } : null;
     const card = currentCard ? { ...currentCard, power: Number(row.power || currentCard.power || 1), trinket: row.card_snapshot?.trinket || row.trinket || currentCard.trinket || null } : draftCard;
     const draftBoost = match.draft_loadouts?.[String(row.user_id)]?.boosts?.find(item => Number(item.id) === Number(row.boost_id)) || null;
-    const boost = boosts.find(item => Number(item.id) === Number(row.boost_id)) || draftBoost;
+    const rawBoost = boosts.find(item => Number(item.id) === Number(row.boost_id)) || draftBoost;
+    const boost = rawBoost ? {
+      ...rawBoost,
+      effect: liveCardsConfigCache.boostEffects?.[rawBoost.boost_type]?.[rawBoost.rarity] || rawBoost.effect || DEFAULT_BOOST_EFFECTS[rawBoost.boost_type]?.[rawBoost.rarity]
+    } : null;
     const needsSavePctBreakdown = card?.player?.position === 'G' && row.stats && !(row.score_breakdown || []).some(item => item.type === 'save_pct');
     return {
       ...row,
@@ -2885,10 +2904,15 @@ app.get('/cards/arena/matches/:matchId', requireLogin, requireWutReady, async (r
         }))
         : payload.cards.filter(card => snapshotIds.has(Number(card.id))).map(card => ({ ...card, power: snapshots.get(Number(card.id))?.power, trinket: snapshots.get(Number(card.id))?.trinket || null }));
       if (match.mode === 'draft') {
+        const liveConfig = await getLiveCardsConfig();
         const usedBoostIds = new Set((match.placements || []).filter(row => Number(row.user_id) === Number(req.session.userId)).map(row => Number(row.boost_id)));
         payload.boosts = (match.draft_loadouts?.[String(req.session.userId)]?.boosts || [])
           .filter(boost => !usedBoostIds.has(Number(boost.id)))
-          .map(boost => ({ ...boost, arenaLocked: false }));
+          .map(boost => ({
+            ...boost,
+            effect: liveConfig.boostEffects?.[boost.boost_type]?.[boost.rarity] || boost.effect || DEFAULT_BOOST_EFFECTS[boost.boost_type]?.[boost.rarity],
+            arenaLocked: false
+          }));
       }
     }
     payload.cards = availableWutMatchCards(payload.cards, match.placements, req.session.userId);
@@ -4263,11 +4287,11 @@ app.post('/admin/cards/refund-trinket-removals', requireAdmin, async (req, res) 
   res.redirect('/admin#cards-controls');
 });
 
-app.post('/admin/cards/void-ongoing-rules-update', requireAdmin, async (req, res) => {
+app.post('/admin/cards/void-active-wut-matches', requireAdmin, async (req, res) => {
   try {
     const result = postgresEnabled
-      ? await voidOngoingWutMatchesForRulesUpdatePostgres(postgresPool(), { adminUserId: req.session.userId })
-      : voidOngoingWutMatchesForRulesUpdate({ adminUserId: req.session.userId });
+      ? await voidActiveWutMatchesForAdminPostgres(postgresPool(), { adminUserId: req.session.userId })
+      : voidActiveWutMatchesForAdmin({ adminUserId: req.session.userId });
     const voided = Number(result.arena_matches_voided || 0) + Number(result.draft_event_matches_voided || 0);
     req.session.flash = {
       type: 'success',

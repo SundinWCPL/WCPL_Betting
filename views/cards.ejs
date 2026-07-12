@@ -70,9 +70,72 @@
       </div>
     </section>
 
-    <section class="card arena-queue-card">
-      <div><p class="eyebrow">Always-open Queue · <%= arena.queueCount %> <%= arena.queueCount === 1 ? 'person' : 'people' %> waiting · Next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span></p><h2><%= arena.queuedEntry ? 'You’re In' : 'Arena Queues' %></h2><p class="muted"><%= arena.queuedEntry ? `Queued for ${arena.queuedEntry.mode === 'constructed' ? 'Constructed Arena' : 'Draft Arena'}.` : `Draft winner ${arena.config.draftRewards?.winner || wut.config.rewards.winner} · constructed winner ${arena.config.constructedRewards?.winner || wut.config.rewards.winner} WUT Coins` %></p></div>
-      <% if (!arena.queuedEntry) { %><div class="arena-queue-actions"><form method="post" action="/cards/arena/enter"><input type="hidden" name="mode" value="draft"><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches ? 'disabled' : '' %>>Draft Arena</button></form><form method="post" action="/cards/arena/enter"><input type="hidden" name="mode" value="constructed"><select name="deck_id" required><option value="">Select saved deck</option><% wut.decks.forEach(deck => { %><option value="<%= deck.id %>"><%= deck.name %></option><% }) %></select><button <%= arena.activeMatches.length >= arena.config.maxActiveMatches || !wut.decks.length ? 'disabled' : '' %>>Constructed Arena</button></form></div><% } else { %><span class="pill">Waiting for matchmaking</span><% } %>
+    <%
+      const arenaQueueModes = [
+        {
+          key: 'draft', label: 'Draft Arena', description: 'Mini-draft against your opponent, then play the drafted loadout.',
+          queuedEntry: arena.queuedEntries?.draft || (arena.queuedEntry?.mode === 'draft' ? arena.queuedEntry : null),
+          queueCount: arena.queueCounts?.draft || 0,
+          activeCount: arena.activeCounts?.draft || 0,
+          rewards: arena.config.draftRewards || wut.config.rewards
+        },
+        {
+          key: 'constructed', label: 'Constructed Arena', description: 'Queue with a saved deck for a best-of-three match.',
+          queuedEntry: arena.queuedEntries?.constructed || (arena.queuedEntry?.mode === 'constructed' ? arena.queuedEntry : null),
+          queueCount: arena.queueCounts?.constructed || 0,
+          activeCount: arena.activeCounts?.constructed || 0,
+          rewards: arena.config.constructedRewards || wut.config.rewards
+        }
+      ];
+      const defaultArenaQueueMode = arenaQueueModes.find(mode => mode.queuedEntry)?.key || 'draft';
+    %>
+    <section class="card arena-queue-card arena-mode-queue">
+      <div class="cards-section-head arena-mode-queue-head">
+        <div>
+          <p class="eyebrow">Separate queues · 10 players pops immediately · next run <span data-queue-countdown data-matchmaking-at="<%= arena.nextMatchmakingAt %>">--:--:--</span></p>
+          <h2>Arena Queues</h2>
+          <p class="muted">You can wait in Draft Arena and Constructed Arena at the same time. Each mode allows up to <%= arena.config.maxActiveMatches %> active matches.</p>
+        </div>
+      </div>
+      <div class="arena-mode-tabs" role="tablist" aria-label="Arena queue modes">
+        <% arenaQueueModes.forEach(mode => { %>
+          <button type="button" class="<%= mode.key === defaultArenaQueueMode ? 'is-active' : '' %>" data-arena-mode-tab="<%= mode.key %>" role="tab" aria-selected="<%= mode.key === defaultArenaQueueMode ? 'true' : 'false' %>">
+            <strong><%= mode.label %></strong>
+            <small><%= mode.queueCount %>/10 queued · <%= mode.activeCount %>/<%= arena.config.maxActiveMatches %> active</small>
+          </button>
+        <% }) %>
+      </div>
+      <% arenaQueueModes.forEach(mode => { const atCap = mode.activeCount >= arena.config.maxActiveMatches; %>
+        <div class="arena-mode-panel" data-arena-mode-panel="<%= mode.key %>" <%= mode.key === defaultArenaQueueMode ? '' : 'hidden' %>>
+          <div>
+            <p class="eyebrow"><%= mode.queueCount %> <%= mode.queueCount === 1 ? 'person' : 'people' %> waiting</p>
+            <h3><%= mode.queuedEntry ? `You're in ${mode.label}` : mode.label %></h3>
+            <p class="muted"><%= mode.queuedEntry ? 'Waiting for matchmaking.' : mode.description %></p>
+            <div class="draft-counts">
+              <span class="pill">Winner <%= mode.rewards?.winner ?? wut.config.rewards.winner %> coins</span>
+              <span class="pill">Completion <%= mode.rewards?.loser ?? wut.config.rewards.loser %> coins</span>
+              <% if (atCap) { %><span class="pill negative">Mode cap reached</span><% } %>
+            </div>
+          </div>
+          <% if (mode.queuedEntry) { %>
+            <span class="pill">Waiting for matchmaking</span>
+          <% } else if (mode.key === 'draft') { %>
+            <form method="post" action="/cards/arena/enter">
+              <input type="hidden" name="mode" value="draft">
+              <button <%= atCap ? 'disabled' : '' %>>Enter Draft Arena</button>
+            </form>
+          <% } else { %>
+            <form method="post" action="/cards/arena/enter">
+              <input type="hidden" name="mode" value="constructed">
+              <select name="deck_id" required>
+                <option value="">Select saved deck</option>
+                <% wut.decks.forEach(deck => { %><option value="<%= deck.id %>"><%= deck.name %></option><% }) %>
+              </select>
+              <button <%= atCap || !wut.decks.length ? 'disabled' : '' %>>Enter Constructed Arena</button>
+            </form>
+          <% } %>
+        </div>
+      <% }) %>
     </section>
 
     <% if (false) { %><section class="card arena-queue-card">
@@ -83,7 +146,7 @@
     <section class="card arena-active-section">
       <div class="cards-section-head arena-active-head">
         <div class="arena-active-title"><div><p class="eyebrow">Your match board</p><h2>Active Matches</h2></div></div>
-        <div class="arena-active-actions"><a class="button-link ghost" href="/cards/arena/history">Match History</a><span class="pill"><%= arena.activeMatches.length + arena.readyMatches.length %>/<%= arena.config.maxActiveMatches %> active</span></div>
+        <div class="arena-active-actions"><a class="button-link ghost" href="/cards/arena/history">Match History</a><span class="pill">Draft <%= arena.activeCounts?.draft || 0 %>/<%= arena.config.maxActiveMatches %></span><span class="pill">Constructed <%= arena.activeCounts?.constructed || 0 %>/<%= arena.config.maxActiveMatches %></span></div>
       </div>
       <div class="arena-match-cards">
         <% [...arena.readyMatches, ...arena.activeMatches].forEach(match => { const isReady = match.status === 'ready'; const isDrafting = match.status === 'drafting'; const isChoosingFirst = match.status === 'choosing_first'; const firstDeciderId = Number(match.first_player_decider_user_id ?? match.coin_flip_winner_user_id ?? 0); %>
@@ -135,19 +198,31 @@
     </section>
   </main>
   <script>
-    const queueCountdown = document.querySelector('[data-queue-countdown]');
-    if (queueCountdown) {
+    const queueCountdowns = [...document.querySelectorAll('[data-queue-countdown]')];
+    if (queueCountdowns.length) {
       const serverOffset = new Date('<%= arena?.serverNow || new Date().toISOString() %>').getTime() - Date.now();
       const updateQueueCountdown = () => {
-        const seconds = Math.max(0, Math.floor((new Date(queueCountdown.dataset.matchmakingAt).getTime() - (Date.now() + serverOffset)) / 1000));
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const remainder = seconds % 60;
-        queueCountdown.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+        queueCountdowns.forEach(queueCountdown => {
+          const seconds = Math.max(0, Math.floor((new Date(queueCountdown.dataset.matchmakingAt).getTime() - (Date.now() + serverOffset)) / 1000));
+          const hours = Math.floor(seconds / 3600);
+          const minutes = Math.floor((seconds % 3600) / 60);
+          const remainder = seconds % 60;
+          queueCountdown.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+        });
       };
       updateQueueCountdown();
       setInterval(updateQueueCountdown, 1000);
     }
+    document.querySelectorAll('[data-arena-mode-tab]').forEach(tab => tab.addEventListener('click', () => {
+      document.querySelectorAll('[data-arena-mode-tab]').forEach(item => {
+        const active = item === tab;
+        item.classList.toggle('is-active', active);
+        item.setAttribute('aria-selected', String(active));
+      });
+      document.querySelectorAll('[data-arena-mode-panel]').forEach(panel => {
+        panel.hidden = panel.dataset.arenaModePanel !== tab.dataset.arenaModeTab;
+      });
+    }));
     document.querySelectorAll('[data-deadline]').forEach(el => {
       const update = () => { if (el.dataset.paused === '1') return el.textContent = 'Timer paused overnight · play is still allowed'; const remaining = new Date(el.dataset.deadline).getTime() - Date.now(); if (remaining <= 0) return el.textContent = 'Timeout processing'; const hours = Math.floor(remaining / 3600000); const minutes = Math.floor((remaining % 3600000) / 60000); el.textContent = `${hours}h ${minutes}m remaining`; };
       update(); setInterval(update, 60000);

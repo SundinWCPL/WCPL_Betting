@@ -265,13 +265,12 @@
           </form>
         <% } %>
         <% const rulesVoid = cardsAdmin.rulesUpdateVoid || { completedAt: null, pendingMatchCount: 0, rewardAmount: 30, result: null }; %>
-        <% if (!rulesVoid.completedAt) { %>
-          <form method="post" action="/admin/cards/void-ongoing-rules-update" class="admin-action-row admin-danger-zone" onsubmit="return confirm('Void every ongoing WUT match and grant 30 WUT Coins to each participant per voided match? This can only be run once.');">
-            <p class="muted small-note">Rules update rollout: <strong><%= rulesVoid.pendingMatchCount %></strong> ongoing WUT match(es) eligible to void. Each participant will receive <strong><%= rulesVoid.rewardAmount %></strong> WUT Coins per voided match.</p>
-            <button type="submit">Void Ongoing WUT Matches</button>
-          </form>
-        <% } else { %>
-          <p class="muted small-note">Rules update rollout void completed <%= new Date(rulesVoid.completedAt).toLocaleString() %>: <%= Number(rulesVoid.result?.arena_matches_voided || 0) + Number(rulesVoid.result?.draft_event_matches_voided || 0) %> match(es) voided, <%= rulesVoid.result?.reward_transactions || 0 %> compensation transaction(s).</p>
+        <form method="post" action="/admin/cards/void-active-wut-matches" class="admin-action-row admin-danger-zone" onsubmit="return confirm('Void every active WUT match and grant 30 WUT Coins to each participant per voided match?');">
+          <p class="muted small-note">Testing utility: <strong><%= rulesVoid.pendingMatchCount %></strong> active WUT match(es) eligible to void. Each participant will receive <strong><%= rulesVoid.rewardAmount %></strong> WUT Coins per voided match.</p>
+          <button type="submit">Void Active WUT Matches</button>
+        </form>
+        <% if (rulesVoid.completedAt) { %>
+          <p class="muted small-note">Last active-match void ran <%= new Date(rulesVoid.completedAt).toLocaleString() %>: <%= Number(rulesVoid.result?.arena_matches_voided || 0) + Number(rulesVoid.result?.draft_event_matches_voided || 0) %> match(es) voided, <%= rulesVoid.result?.reward_transactions || 0 %> compensation transaction(s).</p>
         <% } %>
       </section>
 
