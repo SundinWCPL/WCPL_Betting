@@ -110,8 +110,12 @@ ul { color: var(--muted); line-height: 1.7; }
 .blackjack-seat-head strong { overflow: hidden; max-width: 120px; text-overflow: ellipsis; white-space: nowrap; }
 .blackjack-seat-hands { display: grid; align-content: start; gap: 10px; overflow: hidden; }
 .blackjack-hand { display: grid; gap: 6px; min-width: 0; }
+.blackjack-hand.is-active-hand { padding: 8px; border: 1px solid rgba(244,201,107,.72); border-radius: 8px; background: rgba(244,201,107,.08); box-shadow: 0 0 0 2px rgba(244,201,107,.12), 0 0 24px rgba(244,201,107,.14); }
+.blackjack-hand.is-active-hand .blackjack-cards { filter: drop-shadow(0 0 10px rgba(244,201,107,.18)); }
 .blackjack-hand .blackjack-cards { --card-w: 54px; --card-h: 76px; --card-overlap: -28px; justify-content: flex-start; min-height: 78px; padding-left: 8px; }
 .blackjack-hand-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+.blackjack-hand-state { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; text-align: right; }
+.blackjack-hand-state strong { padding: 2px 6px; border-radius: 999px; color: #201808; background: #f4c96b; font-size: 10px; font-weight: 900; text-transform: uppercase; white-space: nowrap; }
 .blackjack-hand-meta em { color: var(--accent); font-style: normal; font-weight: 900; text-transform: uppercase; }
 .blackjack-hand.result-loss .blackjack-hand-meta em { color: var(--danger); }
 .blackjack-hand.result-push .blackjack-hand-meta em { color: #f4c96b; }

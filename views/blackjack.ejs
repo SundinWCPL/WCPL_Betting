@@ -207,14 +207,18 @@
     return 'is-mixed';
   }
 
-  function handSummary(hand, index, mode = '') {
+  function handSummary(hand, index, mode = '', seat = null) {
     const showResult = tableState.phase !== 'result' || revealComplete();
     const result = hand.result && showResult ? `<em>${escapeHtml(hand.result)}${hand.payout ? ` +${fmt(hand.payout)}` : ''}</em>` : `<em>${hand.total || ''}</em>`;
+    const isActiveHand = tableState.phase === 'player_turn'
+      && seat?.isCurrentTurn
+      && Number(tableState.currentHandIndex) === Number(index)
+      && hand.status === 'active';
     return `
-      <div class="blackjack-hand ${mode} ${hand.result && showResult ? `result-${escapeHtml(hand.result)}` : ''}">
+      <div class="blackjack-hand ${mode} ${isActiveHand ? 'is-active-hand' : ''} ${hand.result && showResult ? `result-${escapeHtml(hand.result)}` : ''}">
         <div class="blackjack-hand-meta">
           <span>${hand.isSplit ? `Hand ${index + 1}` : 'Hand'} · ${fmt(hand.bet)} MB</span>
-          ${result}
+          <span class="blackjack-hand-state">${isActiveHand ? '<strong>Playing now</strong>' : ''}${result}</span>
         </div>
         <div class="blackjack-cards">${hand.cards.map(cardHtml).join('')}</div>
       </div>
@@ -314,7 +318,7 @@
         <strong>${escapeHtml(focusTitle)}</strong>
       </div>
       <div class="blackjack-focus-hands">
-        ${seat.hands?.length ? seat.hands.map((hand, index) => handSummary(hand, index, 'is-focus')).join('') : '<div class="blackjack-empty-hand">No hand yet</div>'}
+        ${seat.hands?.length ? seat.hands.map((hand, index) => handSummary(hand, index, 'is-focus', seat)).join('') : '<div class="blackjack-empty-hand">No hand yet</div>'}
       </div>
       ${seatControls(focusSeatData)}
     `;
@@ -335,7 +339,7 @@
             <strong>${empty ? 'Open' : escapeHtml(seat.displayName)}</strong>
           </div>
           <div class="blackjack-seat-hands">
-            ${seat.hands.length ? seat.hands.map(handSummary).join('') : '<div class="blackjack-empty-hand">No hand</div>'}
+            ${seat.hands.length ? seat.hands.map((hand, index) => handSummary(hand, index, '', seat)).join('') : '<div class="blackjack-empty-hand">No hand</div>'}
           </div>
           ${empty ? `<button type="button" data-sit-seat="${seat.index}" ${canSit ? '' : 'disabled'}>Sit</button>` : ''}
         </article>
