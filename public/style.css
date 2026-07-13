@@ -174,6 +174,102 @@ ul { color: var(--muted); line-height: 1.7; }
   .blackjack-rules-strip ul { columns: 1; }
 }
 
+/* Texas Hold'em */
+.casino-container.holdem-page { max-width: 1640px; }
+.holdem-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: stretch; }
+.holdem-table-card { overflow: hidden; display: grid; grid-template-rows: auto minmax(620px, 1fr) auto auto; min-width: 0; padding: 0; background: #111820; }
+.holdem-table-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 22px; border-bottom: 1px solid rgba(255,255,255,.08); background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0)); }
+.holdem-table-head h1 { margin: 0; font-size: 34px; }
+.holdem-phase { display: grid; justify-items: end; gap: 4px; }
+.holdem-phase span { color: var(--accent); font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.holdem-phase strong { color: #f4c96b; font-size: 30px; font-variant-numeric: tabular-nums; }
+.holdem-felt { position: relative; min-height: 620px; padding: 28px; background: radial-gradient(ellipse at center, rgba(38,122,88,.72), rgba(13,42,34,.94) 56%, #0b1717 100%); }
+.holdem-felt::before { position: absolute; inset: 46px 80px 98px; content: ""; border: 18px solid rgba(83,48,25,.88); border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,.08), inset 0 0 70px rgba(0,0,0,.32), 0 24px 50px rgba(0,0,0,.38); pointer-events: none; }
+.holdem-board-zone { position: absolute; z-index: 2; inset: 34% 21% auto; display: grid; justify-items: center; gap: 14px; min-width: 0; }
+.holdem-pot-stack { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; min-height: 36px; }
+.holdem-pot { display: grid; justify-items: center; min-width: 82px; padding: 6px 10px; border: 1px solid rgba(244,201,107,.38); border-radius: 8px; background: rgba(11,16,19,.72); box-shadow: 0 8px 18px rgba(0,0,0,.24); }
+.holdem-pot span { color: var(--muted); font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: .07em; }
+.holdem-pot strong { color: #f4c96b; font-size: 18px; }
+.holdem-pot.is-awarded { border-color: rgba(102,217,163,.58); box-shadow: 0 0 22px rgba(102,217,163,.16); }
+.holdem-board { display: flex; justify-content: center; gap: 10px; min-height: 122px; }
+.poker-card { --card-w: 70px; --card-h: 98px; position: relative; display: grid; place-items: center; flex: 0 0 var(--card-w); width: var(--card-w); height: var(--card-h); border: 1px solid #dbe3ee; border-radius: 9px; color: #111722; background: #f8f9fc; box-shadow: 0 9px 20px rgba(0,0,0,.34); font-weight: 900; overflow: hidden; }
+.poker-card::after { position: absolute; inset: 5px; content: ""; border: 1px solid rgba(17,23,34,.08); border-radius: 6px; pointer-events: none; }
+.poker-card span { position: absolute; top: 7px; left: 8px; font-size: 16px; }
+.poker-card b { font-size: 30px; }
+.poker-card.is-red { color: #be2332; }
+.poker-card.is-hidden { color: #f7f8fb; border-color: #3c5879; background: repeating-linear-gradient(45deg, #17315a, #17315a 6px, #25476e 6px, #25476e 12px); }
+.poker-card.is-hidden span { position: static; font-size: 12px; letter-spacing: .08em; }
+.poker-card.is-personal { --card-w: 78px; --card-h: 110px; }
+.holdem-showdown { display: grid; justify-items: center; gap: 5px; min-height: 58px; max-width: min(620px, 100%); text-align: center; }
+.holdem-showdown span { color: #f4c96b; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .1em; }
+.holdem-showdown strong { color: #fff; font-size: clamp(15px, 1.6vw, 23px); line-height: 1.15; }
+.holdem-showdown p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.holdem-seats { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.holdem-seat { position: absolute; display: grid; gap: 7px; width: 190px; min-height: 164px; padding: 10px; border: 1px solid rgba(255,255,255,.13); border-radius: 8px; background: linear-gradient(180deg, rgba(18,25,34,.94), rgba(8,12,18,.9)); box-shadow: 0 16px 30px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.05); pointer-events: auto; }
+.holdem-seat.seat-0 { left: 50%; bottom: 18px; transform: translateX(-50%); width: 240px; }
+.holdem-seat.seat-1 { left: 8%; bottom: 112px; }
+.holdem-seat.seat-2 { left: 9%; top: 78px; }
+.holdem-seat.seat-3 { left: 50%; top: 30px; transform: translateX(-50%); }
+.holdem-seat.seat-4 { right: 9%; top: 78px; }
+.holdem-seat.seat-5 { right: 8%; bottom: 112px; }
+.holdem-seat.is-empty { align-content: center; text-align: center; }
+.holdem-seat.is-current { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(102,217,163,.16), 0 0 30px rgba(102,217,163,.2), 0 16px 30px rgba(0,0,0,.32); }
+.holdem-seat.is-user { border-color: rgba(244,201,107,.42); background: linear-gradient(180deg, rgba(35,38,35,.96), rgba(11,17,19,.93)); }
+.holdem-seat.is-folded { opacity: .58; }
+.holdem-seat.is-winner { border-color: rgba(102,217,163,.68); box-shadow: 0 0 0 2px rgba(102,217,163,.15), 0 0 34px rgba(102,217,163,.24); }
+.holdem-seat-top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.holdem-seat-top span { color: var(--muted); font-size: 11px; }
+.holdem-seat-top strong { overflow: hidden; max-width: 120px; color: #fff; text-overflow: ellipsis; white-space: nowrap; }
+.holdem-seat-cards { display: flex; justify-content: center; min-height: 62px; }
+.holdem-seat-cards .poker-card { --card-w: 44px; --card-h: 62px; margin-left: -10px; }
+.holdem-seat-cards .poker-card:first-child { margin-left: 0; }
+.holdem-seat.is-user .holdem-seat-cards .poker-card { --card-w: 62px; --card-h: 88px; margin-left: 6px; }
+.holdem-seat.is-user .holdem-seat-cards .poker-card:first-child { margin-left: 0; }
+.holdem-seat-cards .poker-card span { top: 4px; left: 5px; font-size: 11px; }
+.holdem-seat-cards .poker-card b { font-size: 20px; }
+.holdem-empty-cards { display: grid; place-items: center; min-height: 50px; width: 100%; border: 1px dashed rgba(255,255,255,.12); border-radius: 8px; color: var(--muted); font-size: 12px; }
+.holdem-seat-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+.holdem-seat-meta b { color: var(--text); }
+.holdem-seat-badges { display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px; }
+.holdem-seat-badges span { padding: 3px 6px; border-radius: 999px; color: #201808; background: #f4c96b; font-size: 10px; font-weight: 900; }
+.holdem-hand-label { margin: 0; color: var(--accent); font-size: 12px; font-weight: 900; text-align: center; }
+.holdem-seat > button { width: 100%; color: #201808; background: #f4c96b; }
+.holdem-action-dock { display: grid; grid-template-columns: minmax(190px, .34fr) minmax(0, 1fr) minmax(260px, .36fr); gap: 14px; align-items: center; min-height: 124px; padding: 16px 18px; border-top: 1px solid rgba(255,255,255,.08); background: linear-gradient(180deg, rgba(7,12,18,.92), rgba(15,23,31,.96)); }
+.holdem-action-copy { display: grid; gap: 4px; min-width: 0; }
+.holdem-action-copy span { color: #f4c96b; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.holdem-action-copy strong { color: #fff; font-size: clamp(18px, 2vw, 27px); overflow-wrap: anywhere; }
+.holdem-action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.holdem-action-grid button { min-height: 44px; min-width: 0; color: var(--text); border: 1px solid rgba(102,217,163,.38); background: #1a5a42; }
+.holdem-action-grid button:first-child { border-color: rgba(255,107,107,.42); background: #5b2430; }
+.holdem-raise-box { display: grid; gap: 7px; min-width: 0; }
+.holdem-raise-box label { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
+.holdem-raise-box strong { color: #f4c96b; }
+.holdem-raise-box input { width: 100%; accent-color: var(--accent); }
+.holdem-raise-box button { color: #201808; background: #f4c96b; }
+.holdem-action-dock > button { min-height: 44px; color: #201808; background: #f4c96b; }
+.holdem-action-dock button:disabled, .holdem-raise-box input:disabled { opacity: .42; cursor: not-allowed; }
+.holdem-rail { grid-template-rows: auto minmax(320px, 52vh) auto 118px; }
+@media (max-width: 1200px) {
+  .holdem-layout { grid-template-columns: 1fr; }
+  .holdem-rail { position: static; grid-template-rows: auto 340px auto 118px; }
+}
+@media (max-width: 900px) {
+  .holdem-table-card { grid-template-rows: auto auto auto auto; }
+  .holdem-felt { display: grid; gap: 14px; min-height: 0; padding: 16px; }
+  .holdem-felt::before { display: none; }
+  .holdem-board-zone { position: static; inset: auto; padding: 16px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(10,28,23,.88); }
+  .holdem-board { overflow-x: auto; justify-content: flex-start; width: 100%; padding-bottom: 4px; }
+  .holdem-seats { position: static; display: grid; grid-template-columns: repeat(6, minmax(172px, 1fr)); gap: 10px; overflow-x: auto; pointer-events: auto; }
+  .holdem-seat, .holdem-seat.seat-0, .holdem-seat.seat-1, .holdem-seat.seat-2, .holdem-seat.seat-3, .holdem-seat.seat-4, .holdem-seat.seat-5 { position: static; transform: none; width: 100%; }
+  .holdem-action-dock { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .holdem-table-head { align-items: flex-start; flex-direction: column; }
+  .holdem-phase { justify-items: start; }
+  .poker-card { --card-w: 58px; --card-h: 82px; }
+  .holdem-action-grid { grid-template-columns: 1fr; }
+}
+
 .positive { color: var(--accent); font-weight: 800; }
 .negative { color: var(--danger); font-weight: 800; }
 .toggle-row { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -1837,6 +1933,9 @@ a.matchup-result-badge:hover {
   text-shadow: 0 0 16px rgba(255,107,107,.24);
 }
 .casino-tabs { margin: 0; }
+.casino-tabs .button-link { display: inline-flex; align-items: center; gap: 7px; }
+.casino-presence-badge { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border: 1px solid rgba(102,217,163,.45); border-radius: 999px; color: var(--accent); background: rgba(102,217,163,.12); font-size: 12px; font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; }
+.casino-presence-badge[hidden] { display: none; }
 .casino-tab-disabled { cursor: default; opacity: .65; }
 .jackpot-card {
   text-align: center;

@@ -1,0 +1,50 @@
+<%
+  const activeGame = typeof activeCasinoGame === 'undefined' ? 'slots' : activeCasinoGame;
+  const counts = typeof casinoPresenceCounts === 'undefined' ? {} : casinoPresenceCounts;
+  const casinoTabs = [
+    { key: 'slots', label: 'Slots', href: '/casino' },
+    { key: 'puckiq', label: 'Puck IQ', href: '/casino/puckIQ' },
+    { key: 'horse-racing', label: 'Horse Racing', href: '/casino/horse-racing' },
+    { key: 'blackjack', label: 'Blackjack', href: '/casino/blackjack' },
+    { key: 'holdem', label: "Hold'em", href: '/casino/holdem' }
+  ];
+%>
+<div class="toggle-row casino-tabs" data-casino-tabs data-casino-game="<%= activeGame %>">
+  <% casinoTabs.forEach(tab => { const count = Number(counts[tab.key] || 0); %>
+    <a class="button-link ghost<%= tab.key === activeGame ? '-active' : '' %>" href="<%= tab.href %>">
+      <span><%= tab.label %></span>
+      <span class="casino-presence-badge" data-casino-count="<%= tab.key %>" <%= count > 0 ? '' : 'hidden' %>><%= count %></span>
+    </a>
+  <% }) %>
+</div>
+<script>
+(() => {
+  const tabs = document.querySelector('[data-casino-tabs]');
+  if (!tabs || tabs.dataset.presenceBound) return;
+  tabs.dataset.presenceBound = 'true';
+  const game = tabs.dataset.casinoGame;
+  const updateCounts = counts => {
+    document.querySelectorAll('[data-casino-count]').forEach(badge => {
+      const count = Number(counts?.[badge.dataset.casinoCount] || 0);
+      badge.textContent = count;
+      badge.hidden = count <= 0;
+    });
+  };
+  const ping = async () => {
+    try {
+      const response = await fetch('/casino/presence', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: new URLSearchParams({ game })
+      });
+      const payload = await response.json();
+      if (payload.ok) updateCounts(payload.counts);
+    } catch {}
+  };
+  ping();
+  setInterval(ping, 15000);
+  window.addEventListener('beforeunload', () => {
+    navigator.sendBeacon?.('/casino/presence/leave', new URLSearchParams({ game }));
+  });
+})();
+</script>

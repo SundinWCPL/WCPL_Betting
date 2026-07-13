@@ -1571,6 +1571,50 @@ test('sportsbook coverage counts betting options rather than their outcomes and 
   db.setWeekLocked(week, false);
 });
 
+test('advancing the week auto-claims completed weekly WUT missions', () => {
+  const catalogByIdentity = {};
+  const user = createWutReadyUser('MISSION-AUTO-CLAIM', catalogByIdentity);
+  const week = db.getAdminSettings().currentWeek;
+  const seriesKey = `AUTO-MISSION-${user.id}`;
+  const marketKey = `${seriesKey}|series_win|A`;
+  db.saveSeriesOddsForWeek({
+    week,
+    seriesKey,
+    marketKeys: [marketKey],
+    multipliers: [2],
+    goalTotalLine: 10.5,
+    goalTotalBoost: 1.5
+  });
+  db.setWutMissionBetOpportunities({ week, opportunities: [{
+    key: `series:${seriesKey}`,
+    kind: 'series',
+    divisionId: 'D1',
+    label: 'A at B'
+  }] });
+  db.placeOrUpdateBet({
+    userId: user.id,
+    week,
+    divisionId: 'D1',
+    seriesKey,
+    marketKey,
+    marketType: 'series_win',
+    teamId: 'A',
+    label: 'A wins series',
+    stake: 50,
+    multiplier: 2
+  });
+  db.setWeekLocked(week, true);
+  const mission = db.getWutMissionsForUser(user.id).weekly.find(item => item.id === 'category_coverage');
+  assert.equal(mission.complete, true);
+  assert.equal(mission.claimed, false);
+  const beforeCoins = db.getWutMembershipState(user.id).wutCoins;
+  const after = db.advanceWeek();
+  const claim = after.missionAutoClaims.claimsByUser[String(user.id)].find(item => item.missionId === 'category_coverage');
+  assert.equal(claim.reward, mission.reward);
+  assert.equal(db.getWutMembershipState(user.id).wutCoins, beforeCoins + mission.reward);
+  assert.equal(db.getWutMissionsForUser(user.id).weekly.some(item => item.id === 'category_coverage' && item.claimed), false);
+});
+
 test('admin WUT configuration persists trinket economy, odds, rewards, and numeric effects', () => {
   const current = db.getCardsConfig();
   const existingTrinket = db.grantCardsTestItem({ userId: 1, item: { itemType: 'trinket', family: 'safety_net', rarity: 'rare' } });

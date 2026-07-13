@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WCPL Texas Hold'em</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<%- include('partials_header') %>
+
+<main class="container casino-container holdem-page">
+  <section class="casino-topbar">
+    <%- include('partials_casino_tabs', { activeCasinoGame: 'holdem' }) %>
+    <div class="casino-balance card">
+      <span class="muted">Available Balance</span>
+      <strong data-holdem-balance><%= holdemState.balanceSummary.available_balance.toLocaleString() %></strong>
+    </div>
+  </section>
+
+  <% if (!holdemState.isCasinoOpen) { %>
+    <section class="casino-closed-notice card">
+      <strong>Texas Hold-Em Table is currently closed.</strong>
+    </section>
+  <% } else { %>
+
+  <section class="holdem-layout">
+    <section class="card holdem-table-card">
+      <div class="holdem-table-head">
+        <div>
+          <p class="eyebrow">No-limit Texas Hold'em</p>
+          <h1>Hold'em Table</h1>
+        </div>
+        <div class="holdem-phase">
+          <span data-holdem-phase>Waiting</span>
+          <strong data-holdem-clock>--</strong>
+        </div>
+      </div>
+
+      <div class="holdem-felt">
+        <div class="holdem-board-zone">
+          <div class="holdem-pot-stack" data-holdem-pots></div>
+          <div class="holdem-board" data-holdem-board></div>
+          <div class="holdem-showdown" data-holdem-showdown></div>
+        </div>
+        <div class="holdem-seats" data-holdem-seats></div>
+      </div>
+
+      <div class="holdem-action-dock" data-holdem-actions></div>
+
+      <div class="blackjack-rules-strip">
+        <strong>Table Rules</strong>
+        <ul data-holdem-rules></ul>
+      </div>
+    </section>
+
+    <aside class="card blackjack-rail holdem-rail">
+      <div class="blackjack-chat-head">
+        <div>
+          <p class="eyebrow">Table Chat</p>
+          <h2>Rail</h2>
+        </div>
+        <span class="blackjack-live">Live</span>
+      </div>
+      <div class="blackjack-chat-messages" data-holdem-chat></div>
+      <form class="blackjack-chat-form" data-holdem-chat-form>
+        <textarea name="message" rows="2" maxlength="<%= holdemState.config.chatMaxLength %>" placeholder="Say it at the table"></textarea>
+        <div>
+          <small><span data-holdem-chat-count>0</span>/<%= holdemState.config.chatMaxLength %></small>
+          <button type="submit">Send</button>
+        </div>
+      </form>
+      <div class="blackjack-log-panel">
+        <div class="blackjack-log-head">
+          <strong>Recent Hands</strong>
+          <small data-holdem-hand-count>0</small>
+        </div>
+        <div class="blackjack-hand-log" data-holdem-log></div>
+      </div>
+    </aside>
+  </section>
+  <div class="blackjack-inline-message" data-holdem-message></div>
+
+<script>
+(() => {
+  let tableState = <%- JSON.stringify(holdemState) %>;
+  let busy = false;
+  let selectedRaise = 0;
+  let revealKey = '';
+  let revealStep = 999;
+  let revealTimer = null;
+  let awardKey = '';
+  let awardProgress = 1;
+  let awardTimer = null;
+  let displayedBalance = Number(tableState.balanceSummary?.available_balance || 0);
+  let balanceAnimating = false;
+
+  const $ = selector => document.querySelector(selector);
+  const $$ = selector => [...document.querySelectorAll(selector)];
+  const fmt = value => Number(value || 0).toLocaleString();
+  const parseFmt = value => Number(String(value || '').replace(/,/g, ''));
+  const balanceEl = $('[data-holdem-balance]');
+  const phaseEl = $('[data-holdem-phase]');
+  const clockEl = $('[data-holdem-clock]');
+  const potsEl = $('[data-holdem-pots]');
+  const boardEl = $('[data-holdem-board]');
+  const seatsEl = $('[data-holdem-seats]');
+  const actionsEl = $('[data-holdem-actions]');
+  const showdownEl = $('[data-holdem-showdown]');
+  const rulesEl = $('[data-holdem-rules]');
+  const messageEl = $('[data-holdem-message]');
+  const chatEl = $('[data-holdem-chat]');
+  const chatForm = $('[data-holdem-chat-form]');
+  const chatInput = chatForm?.querySelector('textarea');
+  const chatCount = $('[data-holdem-chat-count]');
+  const logEl = $('[data-holdem-log]');
+  const handCount = $('[data-holdem-hand-count]');
+
+  const escapeHtml = value => String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+  function setBalanceState(direction = '') {
+    balanceEl?.classList.toggle('balance-increasing', direction === 'increase');
+    balanceEl?.classList.toggle('balance-decreasing', direction === 'decrease');
+  }
+
+  function animateBalance(from, to) {
+    if (!balanceEl) return;
+    const start = Number(from || 0);
+    const target = Number(to || 0);
+    const difference = target - start;
+    if (!Number.isFinite(start) || !Number.isFinite(target) || difference === 0) {
+      displayedBalance = target;
+      balanceEl.textContent = fmt(target);
+      setBalanceState();
+      return;
+    }
+    balanceAnimating = true;
+    setBalanceState(difference > 0 ? 'increase' : 'decrease');
+    const duration = Math.min(5000, Math.max(160, Math.abs(difference) * 10));
+    const startedAt = performance.now();
+    const tick = now => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      balanceEl.textContent = fmt(Math.round(start + difference * progress));
+      if (progress < 1) requestAnimationFrame(tick);
+      else {
+        displayedBalance = target;
+        balanceAnimating = false;
+        balanceEl.textContent = fmt(target);
+        setBalanceState();
+      }
+    };
+    requestAnimationFrame(tick);
+  }
+
+  function cardCode(card) {
+    if (!card || card.hidden) return 'BACK';
+    return `${card.rank}${card.suit}`;
+  }
+
+  function cardHtml(card, mode = '') {
+    if (!card || card.hidden) return `<div class="poker-card is-hidden ${mode}" data-card-code="BACK"><span>WCPL</span></div>`;
+    const red = card.suit === 'H' || card.suit === 'D';
+    const suit = { S: '♠', H: '♥', D: '♦', C: '♣' }[card.suit] || card.suit;
+    return `
+      <div class="poker-card ${red ? 'is-red' : ''} ${mode}" data-card-code="${escapeHtml(cardCode(card))}">
+        <span>${escapeHtml(card.rank)}</span>
+        <b>${suit}</b>
+      </div>
+    `;
+  }
+
+  function currentRevealEntry(seat) {
+    return tableState.showdown?.revealQueue?.findIndex(row => Number(row.seatIndex) === Number(seat.index)) ?? -1;
+  }
+
+  function revealedCardsForSeat(seat) {
+    if (tableState.phase !== 'showdown' || !tableState.showdown?.revealQueue?.length) return seat.holeCards || [];
+    if (seat.isUser) return seat.holeCards || [];
+    const index = currentRevealEntry(seat);
+    if (index < 0) return seat.holeCards || [];
+    const cardsVisible = Math.max(0, Math.min(2, revealStep - index * 3));
+    return (seat.holeCards || []).map((card, cardIndex) => cardIndex < cardsVisible ? card : { hidden: true });
+  }
+
+  function labelForSeat(seat) {
+    const row = tableState.showdown?.revealQueue?.find(item => Number(item.seatIndex) === Number(seat.index));
+    if (!row) return '';
+    const index = currentRevealEntry(seat);
+    if (seat.isUser || revealStep >= index * 3 + 3) return row.label;
+    return '';
+  }
+
+  function winnersRevealed() {
+    const revealCount = tableState.showdown?.revealQueue?.length || 0;
+    return tableState.phase !== 'showdown' || revealStep >= revealCount * 3 + 1;
+  }
+
+  function winnerIndexes() {
+    if (!winnersRevealed()) return [];
+    return [...new Set((tableState.showdown?.potAwards || []).flatMap(award => award.winners || []))].map(Number);
+  }
+
+  function awardAnimationKey(state = tableState) {
+    return `${state.currentHandId || 'hand'}:${state.phase}:${(state.pots || []).map(pot => `${pot.id}:${pot.amount}:${(pot.winnerSeatIndexes || []).join(',')}`).join('|')}`;
+  }
+
+  function awardSharesBySeat() {
+    const shares = new Map();
+    for (const pot of tableState.pots || []) {
+      const winners = (pot.winnerSeatIndexes || pot.winners || []).map(Number);
+      if (!winners.length) continue;
+      const baseShare = Math.floor(Number(pot.amount || 0) / winners.length);
+      let remainder = Number(pot.amount || 0) - baseShare * winners.length;
+      winners.forEach(seatIndex => {
+        const extra = remainder > 0 ? 1 : 0;
+        remainder -= extra;
+        shares.set(seatIndex, Number(shares.get(seatIndex) || 0) + baseShare + extra);
+      });
+    }
+    return shares;
+  }
+
+  function awardAnimationActive() {
+    return Boolean(tableState.showdown?.potAwards?.length && winnersRevealed());
+  }
+
+  function displayedStack(seat, shares = awardSharesBySeat()) {
+    if (!awardAnimationActive()) return Number(seat.stack || 0);
+    const award = Number(shares.get(Number(seat.index)) || 0);
+    return Math.round(Number(seat.stack || 0) - award * (1 - awardProgress));
+  }
+
+  function renderPots() {
+    const potProgress = awardAnimationActive() ? awardProgress : 0;
+    const pots = tableState.pots?.length
+      ? tableState.pots
+      : [{ id: 1, amount: tableState.seats.reduce((sum, seat) => sum + Number(seat.committed || 0), 0) }];
+    potsEl.innerHTML = pots.filter(pot => Number(pot.amount || 0) > 0).map((pot, index) => `
+      <div class="holdem-pot ${winnersRevealed() && pot.winnerSeatIndexes?.length ? 'is-awarded' : ''}">
+        <span>${index === 0 ? 'Main Pot' : `Side Pot ${index}`}</span>
+        <strong>${fmt(Math.round(Number(pot.amount || 0) * (1 - potProgress)))}</strong>
+      </div>
+    `).join('') || '<div class="holdem-pot is-empty"><span>Pot</span><strong>0</strong></div>';
+  }
+
+  function renderBoard() {
+    const cards = [...(tableState.board || [])];
+    while (cards.length < 5) cards.push({ hidden: true });
+    boardEl.innerHTML = cards.map((card, index) => cardHtml(card, `board-card board-${index}`)).join('');
+  }
+
+  function seatBadges(seat) {
+    const badges = [];
+    if (Number(tableState.buttonIndex) === Number(seat.index)) badges.push('D');
+    if (Number(tableState.smallBlindIndex) === Number(seat.index)) badges.push('SB');
+    if (Number(tableState.bigBlindIndex) === Number(seat.index)) badges.push('BB');
+    if (seat.status === 'all_in') badges.push('All In');
+    if (seat.leaveAfterHand) badges.push('Leaving');
+    return badges.map(label => `<span>${escapeHtml(label)}</span>`).join('');
+  }
+
+  function renderSeats() {
+    const winners = winnerIndexes();
+    const awardShares = awardSharesBySeat();
+    seatsEl.innerHTML = tableState.seats.map(seat => {
+      const empty = !seat.userId;
+      const cards = revealedCardsForSeat(seat);
+      const handLabel = labelForSeat(seat);
+      const canSit = empty && tableState.userSeatIndex == null && tableState.isCasinoOpen && !busy;
+      return `
+        <article class="holdem-seat seat-${seat.index} ${empty ? 'is-empty' : ''} ${seat.isCurrentTurn ? 'is-current' : ''} ${seat.isUser ? 'is-user' : ''} ${seat.status === 'folded' ? 'is-folded' : ''} ${winners.includes(Number(seat.index)) ? 'is-winner' : ''}">
+          <div class="holdem-seat-top">
+            <span>Seat ${seat.index + 1}</span>
+            <strong>${empty ? 'Open' : escapeHtml(seat.displayName)}</strong>
+          </div>
+          <div class="holdem-seat-cards">${cards.length ? cards.map(card => cardHtml(card, seat.isUser ? 'is-personal' : '')).join('') : '<div class="holdem-empty-cards">No cards</div>'}</div>
+          <div class="holdem-seat-meta">
+            <span>Stack <b>${fmt(displayedStack(seat, awardShares))}</b></span>
+            <span>Bet <b>${fmt(seat.currentBet)}</b></span>
+          </div>
+          <div class="holdem-seat-badges">${seatBadges(seat)}</div>
+          ${handLabel ? `<p class="holdem-hand-label">${escapeHtml(handLabel)}</p>` : ''}
+          ${empty ? `<button type="button" data-holdem-sit="${seat.index}" ${canSit ? '' : 'disabled'}>Buy In ${fmt(tableState.config.buyIn)}</button>` : ''}
+        </article>
+      `;
+    }).join('');
+    $$('[data-holdem-sit]').forEach(button => button.addEventListener('click', () => postAction('/casino/holdem/sit', { seat_index: button.dataset.holdemSit })));
+  }
+
+  function renderShowdown() {
+    if (!tableState.showdown) {
+      showdownEl.innerHTML = '<span>Waiting for the next hand</span>';
+      return;
+    }
+    const revealCount = tableState.showdown.revealQueue?.length || 0;
+    const activeReveal = tableState.showdown.revealQueue?.[Math.min(revealCount - 1, Math.floor(Math.max(0, revealStep - 1) / 3))];
+    const awards = winnersRevealed() ? (tableState.showdown.potAwards || []) : [];
+    showdownEl.innerHTML = `
+      <span>${tableState.phase === 'showdown' ? 'Showdown' : 'Result'}</span>
+      <strong>${awards[0]?.label || activeReveal?.label || tableState.showdown.potAwards?.[0]?.label || 'Hand in progress'}</strong>
+      ${awards.length > 1 ? `<div>${awards.slice(1).map(award => `<p>${escapeHtml(award.label)}</p>`).join('')}</div>` : ''}
+    `;
+  }
+
+  function renderActions() {
+    const userSeat = tableState.seats.find(seat => seat.isUser);
+    if (!userSeat) {
+      actionsEl.innerHTML = `
+        <div class="holdem-action-copy">
+          <span>Buy-in ${fmt(tableState.config.buyIn)}</span>
+          <strong>Choose an empty seat</strong>
+        </div>
+      `;
+      return;
+    }
+    const actions = tableState.currentActions || {};
+    if (!userSeat.isCurrentTurn) {
+      actionsEl.innerHTML = `
+        <div class="holdem-action-copy">
+          <span>${userSeat.status === 'waiting' ? 'Waiting' : 'Your Seat'}</span>
+          <strong>${escapeHtml(userSeat.displayName)} - ${fmt(userSeat.stack)} stack</strong>
+        </div>
+        <button type="button" data-holdem-leave>${userSeat.leaveAfterHand ? 'Cancel Leave' : (userSeat.holeCards.length ? 'Leave After Hand' : 'Cash Out')}</button>
+      `;
+      $('[data-holdem-leave]')?.addEventListener('click', () => postAction('/casino/holdem/leave'));
+      return;
+    }
+    if (!selectedRaise || selectedRaise < actions.minRaiseTo || selectedRaise > actions.maxRaiseTo) selectedRaise = actions.minRaiseTo || actions.maxRaiseTo || 0;
+    actionsEl.innerHTML = `
+      <div class="holdem-action-copy">
+        <span>Your Action</span>
+        <strong>${actions.callAmount ? `Call ${fmt(actions.callAmount)}` : 'Check available'}</strong>
+      </div>
+      <div class="holdem-action-grid">
+        <button type="button" data-holdem-action="fold" ${actions.fold ? '' : 'disabled'}>Fold</button>
+        <button type="button" data-holdem-action="${actions.check ? 'check' : 'call'}" ${actions.check || actions.call ? '' : 'disabled'}>${actions.check ? 'Check' : `Call ${fmt(actions.callAmount)}`}</button>
+        <button type="button" data-holdem-action="all_in" ${actions.allIn ? '' : 'disabled'}>All In</button>
+      </div>
+      <div class="holdem-raise-box">
+        <label>Raise to <strong data-raise-value>${fmt(selectedRaise)}</strong></label>
+        <input type="range" min="${actions.minRaiseTo || 0}" max="${actions.maxRaiseTo || 0}" step="5" value="${selectedRaise}" data-raise-slider ${actions.raise ? '' : 'disabled'}>
+        <button type="button" data-holdem-raise ${actions.raise ? '' : 'disabled'}>Raise</button>
+      </div>
+    `;
+    $$('[data-holdem-action]').forEach(button => button.addEventListener('click', () => postAction('/casino/holdem/action', { action: button.dataset.holdemAction })));
+    $('[data-raise-slider]')?.addEventListener('input', event => {
+      selectedRaise = Number(event.target.value || 0);
+      $('[data-raise-value]').textContent = fmt(selectedRaise);
+    });
+    $('[data-holdem-raise]')?.addEventListener('click', () => postAction('/casino/holdem/action', { action: 'raise', amount: selectedRaise }));
+  }
+
+  function renderChat() {
+    chatEl.innerHTML = tableState.chat.length
+      ? tableState.chat.map(message => `
+          <article>
+            <div><strong>${escapeHtml(message.username)}</strong><time>${new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>
+            <p>${escapeHtml(message.message)}</p>
+          </article>
+        `).join('')
+      : '<p class="muted">No table talk yet.</p>';
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  function renderLog() {
+    const rows = [...(tableState.handLog || [])].slice(-8).reverse();
+    handCount.textContent = `${tableState.recentHands?.length || 0} hands`;
+    logEl.innerHTML = rows.length
+      ? rows.map(row => `<div><span>${escapeHtml(row.message)}</span><time>${new Date(row.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>`).join('')
+      : '<p class="muted">No hands yet.</p>';
+  }
+
+  function render() {
+    if (!balanceAnimating) balanceEl.textContent = fmt(displayedBalance);
+    phaseEl.textContent = tableState.street.replaceAll('_', ' ');
+    renderPots();
+    renderBoard();
+    renderSeats();
+    renderShowdown();
+    renderActions();
+    renderChat();
+    renderLog();
+    rulesEl.innerHTML = tableState.config.houseRules.map(rule => `<li>${escapeHtml(rule)}</li>`).join('');
+  }
+
+  function showdownKey(state) {
+    return `${state.currentHandId || 'hand'}:${state.phase}:${(state.showdown?.revealQueue || []).map(row => `${row.seatIndex}:${row.label}`).join('|')}`;
+  }
+
+  function syncRevealState() {
+    const key = showdownKey(tableState);
+    const maxStep = (tableState.showdown?.revealQueue?.length || 0) * 3 + 1;
+    if (tableState.phase === 'showdown' && tableState.showdown?.revealQueue?.length && key === revealKey) {
+      if (!revealTimer && revealStep < maxStep) startRevealTimer();
+      if (revealStep >= maxStep) syncAwardState();
+      return;
+    }
+    if (revealTimer) clearInterval(revealTimer);
+    revealTimer = null;
+    if (tableState.phase === 'showdown' && tableState.showdown?.revealQueue?.length) {
+      revealKey = key;
+      revealStep = 0;
+      startRevealTimer();
+    } else if (tableState.phase !== 'showdown') {
+      revealKey = '';
+      revealStep = 999;
+    }
+  }
+
+  function startRevealTimer() {
+    if (revealTimer) return;
+    revealTimer = setInterval(() => {
+      revealStep += 1;
+      render();
+      const maxStep = (tableState.showdown?.revealQueue?.length || 0) * 3 + 1;
+      if (revealStep >= maxStep) {
+        clearInterval(revealTimer);
+        revealTimer = null;
+        syncAwardState();
+      }
+    }, 900);
+  }
+
+  function syncAwardState() {
+    if (!tableState.showdown?.potAwards?.length) {
+      if (awardTimer) clearInterval(awardTimer);
+      awardTimer = null;
+      awardKey = '';
+      awardProgress = 1;
+      return;
+    }
+    if (!winnersRevealed()) {
+      if (awardTimer) clearInterval(awardTimer);
+      awardTimer = null;
+      awardProgress = 0;
+      return;
+    }
+
+    const key = awardAnimationKey();
+    if (key === awardKey) {
+      if (!awardTimer && awardProgress < 1) startAwardTimer();
+      return;
+    }
+
+    if (awardTimer) clearInterval(awardTimer);
+    awardTimer = null;
+    awardKey = key;
+    awardProgress = 0;
+    startAwardTimer();
+  }
+
+  function startAwardTimer() {
+    if (awardTimer) return;
+    const startedAt = performance.now();
+    const duration = 1500;
+    awardTimer = setInterval(() => {
+      const raw = Math.min(1, (performance.now() - startedAt) / duration);
+      awardProgress = 1 - Math.pow(1 - raw, 3);
+      render();
+      if (raw >= 1) {
+        awardProgress = 1;
+        clearInterval(awardTimer);
+        awardTimer = null;
+        render();
+      }
+    }, 40);
+  }
+
+  function setTableState(nextState) {
+    const nextBalance = Number(nextState.balanceSummary?.available_balance ?? displayedBalance);
+    if (Number.isFinite(nextBalance) && nextBalance !== displayedBalance) animateBalance(parseFmt(balanceEl.textContent) || displayedBalance, nextBalance);
+    tableState = nextState;
+    syncRevealState();
+    syncAwardState();
+  }
+
+  function setMessage(text, type = '') {
+    messageEl.textContent = text || '';
+    messageEl.className = `blackjack-inline-message ${type ? `is-${type}` : ''}`;
+  }
+
+  async function postAction(url, body = {}) {
+    if (busy) return;
+    busy = true;
+    setMessage('');
+    render();
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: new URLSearchParams(body)
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Action failed.');
+      setTableState(payload.holdemState);
+      render();
+    } catch (err) {
+      setMessage(err.message || 'Something went wrong.', 'error');
+    } finally {
+      busy = false;
+      render();
+    }
+  }
+
+  async function refreshState() {
+    if (busy) return;
+    try {
+      const response = await fetch('/casino/holdem/state', { headers: { Accept: 'application/json' } });
+      const payload = await response.json();
+      if (response.ok && payload.ok) {
+        setTableState(payload.holdemState);
+        render();
+      }
+    } catch {}
+  }
+
+  function updateClock() {
+    if (!tableState.phaseDeadline) {
+      clockEl.textContent = '--';
+      return;
+    }
+    const remaining = Math.max(0, new Date(tableState.phaseDeadline).getTime() - Date.now());
+    clockEl.textContent = `${Math.ceil(remaining / 1000)}s`;
+  }
+
+  chatInput?.addEventListener('input', () => { chatCount.textContent = chatInput.value.length; });
+  chatInput?.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      if (chatInput.value.trim()) chatForm.requestSubmit();
+    }
+  });
+  chatForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const message = chatInput.value.trim();
+    if (!message) return;
+    try {
+      const response = await fetch('/casino/holdem/chat', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: new URLSearchParams({ message })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Message failed.');
+      setTableState(payload.holdemState);
+      chatInput.value = '';
+      chatCount.textContent = '0';
+      render();
+    } catch (err) {
+      setMessage(err.message || 'Message failed.', 'error');
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    navigator.sendBeacon?.('/casino/holdem/leave', new URLSearchParams());
+  });
+
+  render();
+  updateClock();
+  syncRevealState();
+  setInterval(updateClock, 250);
+  setInterval(refreshState, 1500);
+  setInterval(() => {
+    if (tableState.userSeatIndex != null) postAction('/casino/holdem/heartbeat');
+  }, 5000);
+})();
+</script>
+  <% } %>
+</main>
+</body>
+</html>

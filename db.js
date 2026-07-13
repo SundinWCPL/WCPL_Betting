@@ -50,6 +50,16 @@ import {
   publicBlackjackState,
   sitBlackjackSeat
 } from './services/casinoBlackjack.js';
+import {
+  actHoldem,
+  addHoldemChat,
+  ensureHoldemTable,
+  heartbeatHoldemSeat,
+  leaveHoldemSeat,
+  processHoldemTable,
+  publicHoldemState,
+  sitHoldemSeat
+} from './services/casinoHoldem.js';
 import { countDistinctBackedTeams, holdMissionUntilLock } from './services/wutMissionRules.js';
 import {
   arenaTurnCap,
@@ -109,6 +119,7 @@ function defaultState() {
       seasonId: process.env.SEASON_ID || 'S3',
       casinoOpen: true,
       casinoLinkVisible: false,
+      holdemOpen: false,
       cardsOpen: true,
       cardsLinkVisible: false,
       cardsAllowRetroactiveAssignment: false,
@@ -134,6 +145,7 @@ function defaultState() {
       spins: [],
       shotDoctorRuns: [],
       blackjack: ensureBlackjackTable(),
+      holdem: ensureHoldemTable(),
       horseRacing: {
         config: {
           maxBet: HORSE_RACING_CONFIG.maxBet,
@@ -405,6 +417,7 @@ function ensureSettings() {
     seasonId: process.env.SEASON_ID || 'S3',
     casinoOpen: true,
     casinoLinkVisible: false,
+    holdemOpen: false,
     cardsOpen: true,
     cardsLinkVisible: false,
     cardsAllowRetroactiveAssignment: false,
@@ -418,6 +431,7 @@ function ensureSettings() {
   state.settings.seasonId = String(state.settings.seasonId || process.env.SEASON_ID || 'S3');
   state.settings.casinoOpen = state.settings.casinoOpen !== false;
   state.settings.casinoLinkVisible = state.settings.casinoLinkVisible === true;
+  state.settings.holdemOpen = state.settings.holdemOpen === true;
   state.settings.cardsOpen = state.settings.cardsOpen !== false;
   state.settings.cardsLinkVisible = state.settings.cardsLinkVisible === true;
   state.settings.cardsAllowRetroactiveAssignment = state.settings.cardsAllowRetroactiveAssignment === true;
@@ -459,6 +473,7 @@ function ensureCasinoState() {
   state.casino.spins = Array.isArray(state.casino.spins) ? state.casino.spins : [];
   state.casino.shotDoctorRuns = Array.isArray(state.casino.shotDoctorRuns) ? state.casino.shotDoctorRuns : [];
   state.casino.blackjack = ensureBlackjackTable(state.casino.blackjack);
+  state.casino.holdem = ensureHoldemTable(state.casino.holdem);
   const storedHorseRacing = state.casino.horseRacing || {};
   const hadHorseRegistry = Array.isArray(storedHorseRacing.horses) && storedHorseRacing.horses.length > 0;
   state.casino.horseRacing = {
@@ -2148,6 +2163,13 @@ export function setCasinoLinkVisible(visible) {
   return getAdminSettings();
 }
 
+export function setHoldemOpen(open) {
+  ensureSettings();
+  state.settings.holdemOpen = Boolean(open);
+  saveState();
+  return getAdminSettings();
+}
+
 export function setCardsOpen(open) {
   ensureSettings();
   state.settings.cardsOpen = Boolean(open);
@@ -2193,6 +2215,7 @@ export function applyWeeklyAllowance(week = null) {
 
 export function advanceWeek() {
   ensureSettings();
+  const missionAutoClaims = autoClaimCompletedWeeklyMissions();
   state.settings.currentWeek = Number(state.settings.currentWeek || 1) + 1;
 
   // Reviewed odds become the new current week and betting opens.
@@ -2200,7 +2223,7 @@ export function advanceWeek() {
   setWeekLockedInternal(Number(state.settings.currentWeek) + 1, false);
 
   saveState();
-  return getAdminSettings();
+  return { ...getAdminSettings(), missionAutoClaims };
 }
 
 export function getAdminBetsForWeek(week, statuses = ['open']) {
@@ -7169,6 +7192,47 @@ export function claimWutMission({ userId, period, missionId, now = new Date() })
   return { mission, wutCoins: Number(membership.wut_coins || 0) };
 }
 
+export function autoClaimCompletedWeeklyMissions({ now = new Date() } = {}) {
+  ensureCardsState();
+  const weekKey = missionWeekKey();
+  const userIds = [...new Set(state.cards.wutMemberships
+    .filter(membership => membership.starter_opened_at)
+    .map(membership => Number(membership.user_id))
+    .filter(Number.isFinite))];
+  let claimedCount = 0;
+  let totalCoins = 0;
+  const claimsByUser = {};
+  for (const userId of userIds) {
+    const missions = getWutMissionsForUser(userId, now);
+    if (missions.weekKey !== weekKey) continue;
+    const record = state.cards.missionPeriods.find(item =>
+      Number(item.user_id) === Number(userId) && item.period === 'weekly' && item.key === weekKey
+    );
+    if (!record) continue;
+    record.claimed_ids = Array.isArray(record.claimed_ids) ? record.claimed_ids : [];
+    for (const mission of missions.weekly || []) {
+      if (!mission.complete || mission.claimed || record.claimed_ids.includes(String(mission.id))) continue;
+      const reward = Number(mission.reward || 0);
+      if (!Number.isInteger(reward) || reward < 0) continue;
+      record.claimed_ids.push(String(mission.id));
+      record.updated_at = now.toISOString();
+      const membership = wutMembership(userId);
+      changeWutCoins(membership, reward, 'mission_reward', {
+        mission_period: 'weekly',
+        mission_key: weekKey,
+        mission_id: String(mission.id),
+        auto_claimed: true
+      });
+      claimedCount += 1;
+      totalCoins += reward;
+      claimsByUser[String(userId)] ||= [];
+      claimsByUser[String(userId)].push({ missionId: String(mission.id), reward });
+    }
+  }
+  if (claimedCount) saveState();
+  return { weekKey, claimedCount, totalCoins, claimsByUser };
+}
+
 export function getWutSystemsState(userId, now = new Date()) {
   ensureCardsState();
   const membership = wutMembership(userId);
@@ -8421,8 +8485,10 @@ export function getCasinoSummary() {
     .reduce((sum, reward) => sum + Number(reward.amount || 0), 0);
   const blackjackWagered = Number(state.casino.blackjack?.totals?.wagered || 0);
   const blackjackPaid = Number(state.casino.blackjack?.totals?.paid || 0);
-  const totalWagered = slotWagered + puckIqWagered + horseRacingWagered + blackjackWagered;
-  const totalPaid = slotPaid + puckIqPaid + horseRacingPaid + horseOwnerPaid + blackjackPaid;
+  const holdemBuyIns = Number(state.casino.holdem?.totals?.buyIns || 0);
+  const holdemCashOuts = Number(state.casino.holdem?.totals?.cashOuts || 0);
+  const totalWagered = slotWagered + puckIqWagered + horseRacingWagered + blackjackWagered + holdemBuyIns;
+  const totalPaid = slotPaid + puckIqPaid + horseRacingPaid + horseOwnerPaid + blackjackPaid + holdemCashOuts;
 
   return {
     totalWagered,
@@ -8431,6 +8497,7 @@ export function getCasinoSummary() {
     slotSpins: state.casino.spins.length,
     puckIqRuns: state.casino.shotDoctorRuns.length,
     blackjackHands: Number(state.casino.blackjack?.totals?.hands || 0),
+    holdemHands: Number(state.casino.holdem?.totals?.hands || 0),
     horseRacingBets: state.casino.horseRacing.bets.length,
     horseRacingConfig: getHorseRacingConfig()
   };
@@ -8698,6 +8765,98 @@ export const heartbeatBlackjackSeatJson = input => mutateStoredBlackjack({ ...in
 export const betBlackjackJson = input => mutateStoredBlackjack({ ...input, action: 'bet' });
 export const actBlackjackJson = input => mutateStoredBlackjack({ ...input, action: 'act' });
 export const addBlackjackChatJson = input => mutateStoredBlackjack({ ...input, action: 'chat' });
+
+function applyHoldemTransactions(transactions = []) {
+  for (const tx of transactions) {
+    const user = state.users.find(candidate => Number(candidate.id) === Number(tx.userId));
+    if (!user) throw new Error('User not found.');
+    const nextBalance = Number(user.balance || 0) + Number(tx.amount || 0);
+    if (nextBalance < 0) throw new Error('Insufficient balance.');
+    user.balance = nextBalance;
+    state.transactions.push({
+      id: state.nextTransactionId++,
+      user_id: Number(tx.userId),
+      amount: Number(tx.amount || 0),
+      kind: tx.kind,
+      category: 'casino',
+      game: 'holdem',
+      week: Number(state.settings?.currentWeek || 1),
+      note: tx.note,
+      holdem_hand_id: tx.holdemHandId,
+      created_at: nowIso()
+    });
+  }
+}
+
+function processStoredHoldem(now = new Date()) {
+  ensureCasinoState();
+  const before = JSON.stringify(state.casino.holdem);
+  const result = processHoldemTable(state.casino.holdem, { now });
+  state.casino.holdem = result.table;
+  applyHoldemTransactions(result.transactions);
+  return {
+    table: result.table,
+    changed: result.transactions.length > 0 || JSON.stringify(result.table) !== before
+  };
+}
+
+function publicStoredHoldem(userId, now = new Date()) {
+  const { table, changed } = processStoredHoldem(now);
+  if (changed) saveState();
+  const settings = getAdminSettings();
+  return publicHoldemState(table, {
+    userId,
+    now,
+    isCasinoOpen: settings.casinoOpen && settings.holdemOpen,
+    balanceSummary: getBalanceSummaryForUser(userId)
+  });
+}
+
+export function getHoldemStateForUser(userId) {
+  return publicStoredHoldem(userId);
+}
+
+function mutateStoredHoldem({ userId, action, input = {}, now = new Date() }) {
+  ensureCasinoState();
+  const { table } = processStoredHoldem(now);
+  const settings = getAdminSettings();
+  if (!['leave', 'heartbeat', 'chat'].includes(action)) {
+    if (!settings.casinoOpen) throw new Error('The casino is currently closed.');
+    if (!settings.holdemOpen) throw new Error('Texas Hold-Em Table is currently closed.');
+  }
+  let result;
+  if (action === 'sit') {
+    result = sitHoldemSeat(table, { userId, displayName: input.displayName, seatIndex: input.seatIndex, now });
+  } else if (action === 'leave') {
+    result = leaveHoldemSeat(table, { userId, now });
+  } else if (action === 'heartbeat') {
+    result = heartbeatHoldemSeat(table, { userId, now });
+  } else if (action === 'act') {
+    result = actHoldem(table, { userId, action: input.playerAction, amount: input.amount, now });
+  } else if (action === 'chat') {
+    result = addHoldemChat(table, { userId, username: input.username, message: input.message, now });
+  } else {
+    throw new Error('Unknown hold’em action.');
+  }
+  state.casino.holdem = result.table;
+  applyHoldemTransactions(result.transactions);
+  saveState();
+  return {
+    message: result.message || null,
+    holdemState: publicHoldemState(result.table, {
+      userId,
+      now,
+      isCasinoOpen: settings.casinoOpen && settings.holdemOpen,
+      balanceSummary: getBalanceSummaryForUser(userId)
+    })
+  };
+}
+
+export const sitHoldemSeatJson = input => mutateStoredHoldem({ ...input, action: 'sit' });
+export const leaveHoldemSeatJson = input => mutateStoredHoldem({ ...input, action: 'leave' });
+export const heartbeatHoldemSeatJson = input => mutateStoredHoldem({ ...input, action: 'heartbeat' });
+export const actHoldemJson = input => mutateStoredHoldem({ ...input, action: 'act' });
+export const addHoldemChatJson = input => mutateStoredHoldem({ ...input, action: 'chat' });
 
 
 const SHOT_DOCTOR_SECONDS_PER_SHOT = Number(process.env.SHOT_DOCTOR_SECONDS_PER_SHOT || 15);

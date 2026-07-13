@@ -126,9 +126,14 @@
           <p class="eyebrow">Casino Operations</p>
           <h2>Casino Controls</h2>
         </div>
-        <span class="pill <%= settings.casinoOpen ? 'positive' : 'negative' %>">
-          <%= settings.casinoOpen ? 'Open' : 'Closed' %>
-        </span>
+        <div class="admin-action-row">
+          <span class="pill <%= settings.casinoOpen ? 'positive' : 'negative' %>">
+            Casino <%= settings.casinoOpen ? 'Open' : 'Closed' %>
+          </span>
+          <span class="pill <%= settings.holdemOpen ? 'positive' : 'negative' %>">
+            Hold'em <%= settings.holdemOpen ? 'Open' : 'Closed' %>
+          </span>
+        </div>
       </div>
 
       <div class="casino-admin-metrics">
@@ -168,6 +173,16 @@
             <button type="submit">Show Casino Link</button>
           </form>
         <% } %>
+
+        <% if (settings.holdemOpen) { %>
+          <form method="post" action="/admin/casino/holdem/close">
+            <button type="submit">Close Hold'em</button>
+          </form>
+        <% } else { %>
+          <form method="post" action="/admin/casino/holdem/open">
+            <button type="submit">Open Hold'em</button>
+          </form>
+        <% } %>
       </div>
 
       <form method="post" action="/admin/casino/horse-racing-config" class="horse-admin-config-form">
@@ -188,7 +203,7 @@
 
       <p class="muted small-note">
         Navigation link: <strong><%= settings.casinoLinkVisible ? 'Visible' : 'Hidden' %></strong>.
-        Closing the casino disables slots and Puck IQ even when someone enters the URL manually.
+        Closing the casino disables every casino game. Hold'em also has a separate table open/closed switch.
       </p>
 
       <form method="post" action="/admin/casino/reset" class="admin-danger-zone hard-reset" onsubmit="return confirm('Reset ALL casino data? This removes every slot spin and Puck IQ run, deletes casino ledger entries, and restores user balances as though the casino activity never happened.');">

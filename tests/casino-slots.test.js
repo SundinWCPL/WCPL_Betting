@@ -14,6 +14,13 @@ import {
   publicBlackjackState,
   sitBlackjackSeat
 } from '../services/casinoBlackjack.js';
+import {
+  actHoldem,
+  createHoldemTable,
+  evaluateHoldemHand,
+  leaveHoldemSeat,
+  publicHoldemState
+} from '../services/casinoHoldem.js';
 import { buildShotDoctorRunShots, publicShotDoctorRun } from '../services/shotDoctor.js';
 
 test('slot wagers retain the established allowed amounts', () => {
@@ -97,4 +104,124 @@ test('blackjack split aces receive one card each and auto-stand', () => {
 test('blackjack hand value treats aces as soft until they would bust', () => {
   assert.deepStrictEqual(handValue([{ rank: 'A' }, { rank: '7' }]), { total: 18, soft: true, bust: false });
   assert.deepStrictEqual(handValue([{ rank: 'A' }, { rank: '7' }, { rank: '9' }]), { total: 17, soft: false, bust: false });
+});
+
+test('holdem evaluator labels the best five-card hand', () => {
+  const result = evaluateHoldemHand([
+    { rank: 'A', suit: 'S' },
+    { rank: 'K', suit: 'S' },
+    { rank: 'Q', suit: 'S' },
+    { rank: 'J', suit: 'S' },
+    { rank: '10', suit: 'S' },
+    { rank: '2', suit: 'D' },
+    { rank: '3', suit: 'C' }
+  ]);
+  assert.equal(result.categoryLabel, 'Straight Flush');
+  assert.equal(result.label, 'Straight Flush, Ace high');
+  assert.deepStrictEqual(result.cards.map(card => `${card.rank}${card.suit}`), ['AS', 'KS', 'QS', 'JS', '10S']);
+});
+
+test('holdem side pots award only eligible players', () => {
+  const now = new Date('2026-07-12T00:00:00.000Z');
+  let table = createHoldemTable();
+  table.phase = 'river';
+  table.street = 'river';
+  table.currentSeatIndex = 0;
+  table.buttonIndex = 2;
+  table.currentHandId = 1;
+  table.board = [
+    { rank: '2', suit: 'C' },
+    { rank: '3', suit: 'D' },
+    { rank: '4', suit: 'H' },
+    { rank: '9', suit: 'S' },
+    { rank: 'K', suit: 'D' }
+  ];
+  table.seats[0] = {
+    ...table.seats[0],
+    userId: 1, displayName: 'Aces', status: 'playing', stack: 1,
+    holeCards: [{ rank: 'A', suit: 'S' }, { rank: 'A', suit: 'H' }],
+    currentBet: 0, committed: 100, acted: false
+  };
+  table.seats[1] = {
+    ...table.seats[1],
+    userId: 2, displayName: 'Straight', status: 'all_in', stack: 0,
+    holeCards: [{ rank: '5', suit: 'S' }, { rank: '6', suit: 'S' }],
+    currentBet: 0, committed: 50, acted: true
+  };
+  table.seats[2] = {
+    ...table.seats[2],
+    userId: 3, displayName: 'Kings', status: 'all_in', stack: 0,
+    holeCards: [{ rank: 'K', suit: 'C' }, { rank: 'Q', suit: 'D' }],
+    currentBet: 0, committed: 100, acted: true
+  };
+
+  table = actHoldem(table, { userId: 1, action: 'check', now }).table;
+
+  assert.equal(table.phase, 'showdown');
+  assert.deepStrictEqual(table.pots.map(pot => pot.amount), [150, 100]);
+  assert.deepStrictEqual(table.pots.map(pot => pot.winnerSeatIndexes), [[1], [0]]);
+  assert.equal(table.seats[1].stack, 150);
+  assert.equal(table.seats[0].stack, 101);
+  assert.match(table.showdown.potAwards[0].label, /Straight wins with Straight, Six high/);
+  assert.match(table.showdown.potAwards[1].label, /Aces wins with Pair of Aces/);
+});
+
+test('holdem public state hides opponent hole cards before showdown', () => {
+  const now = new Date('2026-07-12T00:00:00.000Z');
+  const table = createHoldemTable();
+  table.phase = 'preflop';
+  table.street = 'preflop';
+  table.currentSeatIndex = 0;
+  table.seats[0] = {
+    ...table.seats[0],
+    userId: 1, displayName: 'Hero', status: 'playing', stack: 240,
+    holeCards: [{ rank: 'A', suit: 'S' }, { rank: 'A', suit: 'H' }]
+  };
+  table.seats[1] = {
+    ...table.seats[1],
+    userId: 2, displayName: 'Villain', status: 'playing', stack: 240,
+    holeCards: [{ rank: 'K', suit: 'S' }, { rank: 'K', suit: 'H' }]
+  };
+
+  const state = publicHoldemState(table, { userId: 1, now });
+  assert.equal(state.seats[0].holeCards[0].rank, 'A');
+  assert.equal(state.seats[1].holeCards[0].hidden, true);
+  assert.equal(state.currentActions.check, true);
+});
+
+test('holdem public state can be closed independently', () => {
+  const state = publicHoldemState(createHoldemTable(), {
+    userId: 1,
+    now: new Date('2026-07-12T00:00:00.000Z'),
+    isCasinoOpen: false
+  });
+  assert.equal(state.isCasinoOpen, false);
+});
+
+test('holdem leave after hand can be cancelled without folding current turn', () => {
+  const now = new Date('2026-07-12T00:00:00.000Z');
+  let table = createHoldemTable();
+  table.phase = 'preflop';
+  table.street = 'preflop';
+  table.currentSeatIndex = 0;
+  table.seats[0] = {
+    ...table.seats[0],
+    userId: 1, displayName: 'Hero', status: 'playing', stack: 240,
+    holeCards: [{ rank: 'A', suit: 'S' }, { rank: 'K', suit: 'H' }]
+  };
+  table.seats[1] = {
+    ...table.seats[1],
+    userId: 2, displayName: 'Villain', status: 'playing', stack: 240,
+    holeCards: [{ rank: 'Q', suit: 'S' }, { rank: 'Q', suit: 'H' }]
+  };
+
+  table = leaveHoldemSeat(table, { userId: 1, now }).table;
+  assert.equal(table.seats[0].leaveAfterHand, true);
+  assert.equal(table.seats[0].status, 'playing');
+  assert.equal(table.currentSeatIndex, 0);
+
+  table = leaveHoldemSeat(table, { userId: 1, now }).table;
+  assert.equal(table.seats[0].leaveAfterHand, false);
+  assert.equal(table.seats[0].status, 'playing');
+  assert.equal(table.currentSeatIndex, 0);
 });

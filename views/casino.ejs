@@ -10,11 +10,7 @@
 <%- include('partials_header') %>
 <main class="container casino-container">
   <section class="casino-topbar">
-    <div class="toggle-row casino-tabs">
-      <a class="button-link ghost-active" href="/casino">Slots</a>
-      <a class="button-link ghost" href="/casino/puckIQ">Puck IQ</a>
-      <a class="button-link ghost" href="/casino/horse-racing">Horse Racing</a>
-    </div>
+    <%- include('partials_casino_tabs', { activeCasinoGame: 'slots' }) %>
     <div class="casino-balance card">
       <span class="muted">Available Balance</span>
       <strong data-balance-display><%= casinoState.balanceSummary.available_balance.toLocaleString() %></strong>

@@ -238,11 +238,68 @@ export async function claimWutMissionWithClient(client, {
   return { mission, wutCoins: balance };
 }
 
+export async function autoClaimCompletedWeeklyMissionsWithClient(client, { now = new Date() } = {}) {
+  await client.query('SELECT pg_advisory_xact_lock($1)', [8242040]);
+  const settings = (await client.query("SELECT data FROM app_documents WHERE document_key='settings'")).rows[0]?.data || {};
+  const weekKey = `${String(settings.seasonId || 'S3')}|${Number(settings.currentWeek || 1)}`;
+  const members = await client.query(`
+    SELECT user_id FROM wut_memberships
+    WHERE data->>'starter_opened_at' IS NOT NULL
+    ORDER BY user_id
+  `);
+  let claimedCount = 0;
+  let totalCoins = 0;
+  const claimsByUser = {};
+  for (const row of members.rows) {
+    const userId = Number(row.user_id);
+    const missions = await getWutMissionsForUserWithClient(client, { userId, now });
+    if (missions.weekKey !== weekKey) continue;
+    const recordRow = (await client.query(`
+      SELECT record_key,data FROM card_records
+      WHERE collection='mission_periods' AND user_id=$1
+        AND data->>'period'='weekly' AND data->>'key'=$2
+      ORDER BY source_order LIMIT 1 FOR UPDATE
+    `, [userId, weekKey])).rows[0];
+    if (!recordRow) continue;
+    const record = recordRow.data || {};
+    record.claimed_ids = Array.isArray(record.claimed_ids) ? record.claimed_ids : [];
+    const membership = await lockWutMembership(client, userId);
+    let changed = false;
+    for (const mission of missions.weekly || []) {
+      if (!mission.complete || mission.claimed || record.claimed_ids.includes(String(mission.id))) continue;
+      const reward = Number(mission.reward || 0);
+      if (!Number.isInteger(reward) || reward < 0) continue;
+      record.claimed_ids.push(String(mission.id));
+      record.updated_at = now.toISOString();
+      await changeWutCoins(client, membership, reward, 'mission_reward', {
+        mission_period: 'weekly',
+        mission_key: weekKey,
+        mission_id: String(mission.id),
+        auto_claimed: true
+      }, now);
+      claimedCount += 1;
+      totalCoins += reward;
+      changed = true;
+      claimsByUser[String(userId)] ||= [];
+      claimsByUser[String(userId)].push({ missionId: String(mission.id), reward });
+    }
+    if (changed) {
+      await client.query(`
+        UPDATE card_records SET data=$3::jsonb
+        WHERE collection='mission_periods' AND record_key=$1 AND user_id=$2
+      `, [recordRow.record_key, userId, JSON.stringify(record)]);
+    }
+  }
+  return { weekKey, claimedCount, totalCoins, claimsByUser };
+}
+
 export const claimWutMissionPostgres = (pool, input) =>
   withTransaction(pool, client => claimWutMissionWithClient(client, input));
 export const getWutMissionsForUserPostgres = (pool, input) =>
   withTransaction(pool, client => getWutMissionsForUserWithClient(client, input));
 export const claimWutMissionByIdPostgres = (pool, input) =>
   withTransaction(pool, client => claimWutMissionByIdWithClient(client, input));
+export const autoClaimCompletedWeeklyMissionsPostgres = (pool, input) =>
+  withTransaction(pool, client => autoClaimCompletedWeeklyMissionsWithClient(client, input));
 export const setWutMissionBetOpportunitiesPostgres = (pool, input) =>
   withTransaction(pool, client => setWutMissionBetOpportunitiesWithClient(client, input));

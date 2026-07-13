@@ -60,6 +60,7 @@ import {
   setCasinoOpen,
   setMaintenanceMode,
   setCasinoLinkVisible,
+  setHoldemOpen,
   resetCasinoData,
   spinCasinoSlots,
   getBlackjackStateForUser,
@@ -69,6 +70,12 @@ import {
   betBlackjackJson,
   actBlackjackJson,
   addBlackjackChatJson,
+  getHoldemStateForUser,
+  sitHoldemSeatJson,
+  leaveHoldemSeatJson,
+  heartbeatHoldemSeatJson,
+  actHoldemJson,
+  addHoldemChatJson,
   getHorseRaceStateForUser,
   placeOrUpdateHorseRaceBet,
   buyHorse,
@@ -212,6 +219,19 @@ import {
   leaveBlackjackSeatPostgres,
   sitBlackjackSeatPostgres
 } from './database/repositories/casinoBlackjack.js';
+import {
+  actHoldemPostgres,
+  addHoldemChatPostgres,
+  getHoldemStateForUserPostgres,
+  heartbeatHoldemSeatPostgres,
+  leaveHoldemSeatPostgres,
+  sitHoldemSeatPostgres
+} from './database/repositories/casinoHoldem.js';
+import {
+  casinoPresenceCounts,
+  clearCasinoPresence,
+  recordCasinoPresence
+} from './services/casinoPresence.js';
 import {
   getShotDoctorStateForUserPostgres,
   startShotDoctorRunPostgres,
@@ -471,6 +491,7 @@ let arenaClockBusy = false;
 let horseChatCooldownCardDate = null;
 const horseChatCooldowns = new Map();
 const blackjackChatCooldowns = new Map();
+const holdemChatCooldowns = new Map();
 
 function syncHorseChatCooldowns(cardDate) {
   if (horseChatCooldownCardDate !== cardDate) {
@@ -505,6 +526,7 @@ app.use(async (req, res, next) => {
     res.locals.seasonId = adminSettings.seasonId;
     res.locals.casinoOpen = adminSettings.casinoOpen;
     res.locals.casinoLinkVisible = adminSettings.casinoLinkVisible;
+    res.locals.casinoPresenceCounts = casinoPresenceCounts();
     res.locals.cardsOpen = adminSettings.cardsOpen;
     res.locals.cardsLinkVisible = adminSettings.cardsLinkVisible;
     if (res.locals.currentUser && postgresEnabled) {
@@ -1149,6 +1171,28 @@ app.post('/casino/slots/spin', requireLogin, async (req, res) => {
   }
 });
 
+app.get('/casino/presence', requireLogin, (req, res) => {
+  res.json({ ok: true, counts: casinoPresenceCounts() });
+});
+
+app.post('/casino/presence', requireLogin, (req, res) => {
+  const counts = recordCasinoPresence({
+    userId: req.session.userId,
+    game: req.body.game,
+    now: new Date()
+  });
+  res.json({ ok: true, counts });
+});
+
+app.post('/casino/presence/leave', requireLogin, (req, res) => {
+  const counts = clearCasinoPresence({
+    userId: req.session.userId,
+    game: req.body.game,
+    now: new Date()
+  });
+  res.json({ ok: true, counts });
+});
+
 app.get('/casino/blackjack', requireLogin, async (req, res) => {
   const blackjackState = postgresEnabled
     ? await getBlackjackStateForUserPostgres(postgresPool(), { userId: req.session.userId })
@@ -1244,6 +1288,94 @@ app.post('/casino/blackjack/chat', requireLogin, async (req, res) => {
       : addBlackjackChatJson({ userId, input, now });
     blackjackChatCooldowns.set(userId, now.getTime());
     res.json({ ok: true, message: result.message, blackjackState: result.blackjackState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/casino/holdem', requireLogin, async (req, res) => {
+  const holdemState = postgresEnabled
+    ? await getHoldemStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+    : getHoldemStateForUser(req.session.userId);
+  res.render('holdem', { holdemState });
+});
+
+app.get('/casino/holdem/state', requireLogin, async (req, res) => {
+  const holdemState = postgresEnabled
+    ? await getHoldemStateForUserPostgres(postgresPool(), { userId: req.session.userId })
+    : getHoldemStateForUser(req.session.userId);
+  res.json({ ok: true, holdemState });
+});
+
+app.post('/casino/holdem/sit', requireLogin, async (req, res) => {
+  try {
+    const user = res.locals.currentUser;
+    const input = {
+      userId: req.session.userId,
+      displayName: user?.display_name || user?.username || `User ${req.session.userId}`,
+      seatIndex: req.body.seat_index
+    };
+    const result = postgresEnabled
+      ? await sitHoldemSeatPostgres(postgresPool(), { userId: input.userId, input })
+      : sitHoldemSeatJson({ userId: input.userId, input });
+    res.json({ ok: true, holdemState: result.holdemState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/holdem/leave', requireLogin, async (req, res) => {
+  try {
+    const result = postgresEnabled
+      ? await leaveHoldemSeatPostgres(postgresPool(), { userId: req.session.userId })
+      : leaveHoldemSeatJson({ userId: req.session.userId });
+    res.json({ ok: true, holdemState: result.holdemState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/holdem/heartbeat', requireLogin, async (req, res) => {
+  try {
+    const result = postgresEnabled
+      ? await heartbeatHoldemSeatPostgres(postgresPool(), { userId: req.session.userId })
+      : heartbeatHoldemSeatJson({ userId: req.session.userId });
+    res.json({ ok: true, holdemState: result.holdemState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/holdem/action', requireLogin, async (req, res) => {
+  try {
+    const input = { playerAction: req.body.action, amount: req.body.amount };
+    const result = postgresEnabled
+      ? await actHoldemPostgres(postgresPool(), { userId: req.session.userId, input })
+      : actHoldemJson({ userId: req.session.userId, input });
+    res.json({ ok: true, holdemState: result.holdemState });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/casino/holdem/chat', requireLogin, async (req, res) => {
+  try {
+    const now = new Date();
+    const userId = Number(req.session.userId);
+    const lastSentAt = Number(holdemChatCooldowns.get(userId) || 0);
+    if (now.getTime() - lastSentAt < 2000) {
+      return res.status(429).json({ ok: false, error: 'Give the table two seconds between messages.' });
+    }
+    const user = res.locals.currentUser;
+    const input = {
+      username: user?.display_name || user?.username || `User ${userId}`,
+      message: req.body.message
+    };
+    const result = postgresEnabled
+      ? await addHoldemChatPostgres(postgresPool(), { userId, input, now })
+      : addHoldemChatJson({ userId, input, now });
+    holdemChatCooldowns.set(userId, now.getTime());
+    res.json({ ok: true, message: result.message, holdemState: result.holdemState });
   } catch (err) {
     res.status(400).json({ ok: false, error: err.message });
   }
@@ -4355,6 +4487,18 @@ app.post('/admin/casino/close', requireAdmin, async (req, res) => {
   res.redirect('/admin#casino-controls');
 });
 
+app.post('/admin/casino/holdem/open', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { holdemOpen: true }); else setHoldemOpen(true);
+  req.session.flash = { type: 'success', message: 'Texas Hold-Em table opened.' };
+  res.redirect('/admin#casino-controls');
+});
+
+app.post('/admin/casino/holdem/close', requireAdmin, async (req, res) => {
+  if (postgresEnabled) await patchSettingsPostgres(postgresPool(), { holdemOpen: false }); else setHoldemOpen(false);
+  req.session.flash = { type: 'success', message: 'Texas Hold-Em table closed.' };
+  res.redirect('/admin#casino-controls');
+});
+
 app.post('/admin/casino/horse-racing-config', requireAdmin, async (req, res) => {
   try {
     const input = {
@@ -4826,9 +4970,10 @@ app.post('/admin/advance-week', requireAdmin, async (req, res) => {
     const retiredProps = postgresEnabled ? await voidDeprecatedHatTrickBetsForWeekPostgres(postgresPool(), targetWeek) : voidDeprecatedHatTrickBetsForWeek(targetWeek);
     const after = postgresEnabled ? await advanceWeekPostgres(postgresPool()) : advanceWeek();
     const allowance = postgresEnabled ? await applyWeeklyAllowancePostgres(postgresPool(), after.currentWeek) : applyWeeklyAllowance(after.currentWeek);
+    const missionClaims = after.missionAutoClaims || { claimedCount: 0, totalCoins: 0 };
     req.session.flash = {
       type: 'success',
-      message: `Advanced to Week ${after.currentWeek}. Betting is open, and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.${retiredProps.count ? ` Voided ${retiredProps.count} retired hat-trick bet(s) and refunded ${retiredProps.refunded} Mushybux.` : ''}`
+      message: `Advanced to Week ${after.currentWeek}. Betting is open, and ${allowance.amount} Mushybux allowance was applied to ${allowance.count} users.${missionClaims.claimedCount ? ` Auto-claimed ${missionClaims.claimedCount} completed weekly WUT mission reward(s) for ${missionClaims.totalCoins} WUT Coins.` : ''}${retiredProps.count ? ` Voided ${retiredProps.count} retired hat-trick bet(s) and refunded ${retiredProps.refunded} Mushybux.` : ''}`
     };
   } catch (err) {
     req.session.flash = { type: 'error', message: err.message };

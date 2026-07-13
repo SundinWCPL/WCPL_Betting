@@ -35,6 +35,11 @@ export async function getAdminSettingsPostgres(pool) {
   return {
     ...settings,
     currentWeek,
+    casinoOpen: settings.casinoOpen !== false,
+    casinoLinkVisible: settings.casinoLinkVisible === true,
+    holdemOpen: settings.holdemOpen === true,
+    cardsOpen: settings.cardsOpen !== false,
+    cardsLinkVisible: settings.cardsLinkVisible === true,
     currentWeekLocked: lockedWeeks.has(currentWeek),
     nextWeekLocked: lockedWeeks.has(currentWeek + 1)
   };

@@ -1,4 +1,5 @@
 import { withTransaction } from '../postgres.js';
+import { autoClaimCompletedWeeklyMissionsWithClient } from './wutMissions.js';
 
 async function lockSettings(client) {
   await client.query('SELECT pg_advisory_xact_lock($1)', [8242029]);
@@ -39,13 +40,15 @@ export async function setMaintenanceModeWithClient(client, enabled, message = ''
 }
 
 export async function advanceWeekWithClient(client) {
+  const missionAutoClaims = await autoClaimCompletedWeeklyMissionsWithClient(client);
   const settings = await lockSettings(client);
   settings.currentWeek = Number(settings.currentWeek || 1) + 1;
   const locked = new Set((settings.lockedWeeks || []).map(Number));
   locked.delete(settings.currentWeek); locked.delete(settings.currentWeek + 1);
   settings.lockedWeeks = [...locked].sort((a, b) => a - b);
   settings.bettingLocked = false;
-  return saveSettings(client, settings);
+  const saved = await saveSettings(client, settings);
+  return { ...saved, missionAutoClaims };
 }
 
 export const setMaintenanceModePostgres = (pool, enabled, message = '', now = new Date()) =>
