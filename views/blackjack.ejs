@@ -181,6 +181,10 @@
     return `${card.rank}${card.suit}`;
   }
 
+  function suitSymbol(suit) {
+    return ({ H: '♥', S: '♠', C: '♣', D: '♦' })[suit] || suit;
+  }
+
   function cardHtml(card) {
     if (!card || card.hidden) {
       return '<div class="blackjack-card is-hidden" data-card-code="BACK"><span>WCPL</span></div>';
@@ -189,7 +193,7 @@
     return `
       <div class="blackjack-card ${red ? 'is-red' : ''}" data-card-code="${escapeHtml(cardCode(card))}">
         <span>${escapeHtml(card.rank)}</span>
-        <b>${escapeHtml(card.suit)}</b>
+        <b>${escapeHtml(suitSymbol(card.suit))}</b>
       </div>
     `;
   }
