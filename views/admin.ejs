@@ -1513,26 +1513,19 @@
 
       const bulkPlayerPropsForm = document.querySelector('[data-bulk-player-props-form]');
       bulkPlayerPropsForm?.addEventListener('submit', event => {
-        const rows = [...document.querySelectorAll('[data-player-prop-form]')].map(form => {
-          const values = formValues(form);
-          return {
-            market_key: values.market_key,
-            series_key: values.series_key,
-            division_id: values.division_id,
-            category: values.category,
-            player_key: values.player_key,
-            player_name: values.player_name,
-            player_team_id: values.player_team_id,
-            opponent_team_id: values.opponent_team_id,
-            eligibility: values.eligibility,
-            enabled: new FormData(form).has('enabled'),
-            tiers: [1, 2, 3].map(quantity => ({
-              label: values[`label_${quantity}`],
-              line: values[`line_${quantity}`],
-              multiplier: values[`multiplier_${quantity}`]
-            }))
-          };
-        });
+        const rows = [...document.querySelectorAll('[data-player-prop-form]')]
+          .filter(form => !form.hidden)
+          .map(form => {
+            const values = formValues(form);
+            return {
+              market_key: values.market_key,
+              enabled: new FormData(form).has('enabled'),
+              tiers: [1, 2, 3].map(quantity => ({
+                line: values[`line_${quantity}`],
+                multiplier: values[`multiplier_${quantity}`]
+              }))
+            };
+          });
         if (!rows.length || !confirm(`Apply all displayed Week ${bulkPlayerPropsForm.elements.week.value} player props?`)) {
           event.preventDefault();
           return;

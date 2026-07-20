@@ -502,7 +502,7 @@ function syncHorseChatCooldowns(cardDate) {
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: process.env.FORM_BODY_LIMIT || '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
   secret: process.env.SESSION_SECRET || 'dev-secret',
@@ -5253,21 +5253,29 @@ app.post('/admin/odds/bulk-player-props', requireAdmin, async (req, res) => {
     const targetWeek = Number(req.body.week);
     const rows = JSON.parse(String(req.body.payload || '[]'));
     if (!Array.isArray(rows) || !rows.length) throw new Error('No player props were submitted.');
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    const recommendations = await buildWeeklyPropMarkets({
+      seasonId: settings.seasonId,
+      week: targetWeek,
+      odds: { seriesProps: {} }
+    });
+    const recommendationsByKey = new Map(recommendations.map(market => [market.marketKey, market]));
     const input = {
       week: targetWeek,
-      markets: rows.map(row => ({
-        marketKey: row.market_key,
-        seriesKey: row.series_key,
-        divisionId: row.division_id,
-        category: row.category,
-        playerKey: row.player_key,
-        playerName: row.player_name,
-        playerTeamId: row.player_team_id,
-        opponentTeamId: row.opponent_team_id,
-        eligibility: row.eligibility,
-        enabled: Boolean(row.enabled),
-        tiers: row.tiers
-      }))
+      markets: rows.map(row => {
+        const marketKey = row.market_key || row.marketKey;
+        const recommendation = recommendationsByKey.get(marketKey);
+        if (!recommendation) throw new Error(`Unknown player prop market: ${marketKey}`);
+        return {
+          ...recommendation,
+          enabled: Boolean(row.enabled),
+          tiers: recommendation.tiers.map((tier, index) => ({
+            ...tier,
+            line: row.tiers?.[index]?.line ?? tier.line,
+            multiplier: row.tiers?.[index]?.multiplier ?? tier.multiplier
+          }))
+        };
+      })
     };
     if (postgresEnabled) await saveSeriesPropsForWeekPostgres(postgresPool(), input); else saveSeriesPropsForWeek(input);
     req.session.flash = { type: 'success', message: `Applied all displayed Week ${targetWeek} player props.` };
@@ -5353,6 +5361,9 @@ app.post('/admin/odds/player-override', requireAdmin, async (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error(err);
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).send('<h1>Request too large</h1><p>The submitted form was larger than the server allows. Try applying a smaller filtered set, or increase FORM_BODY_LIMIT.</p>');
+  }
   res.status(500).send(`<h1>Something broke</h1><pre>${err.message}</pre>`);
 });
 
