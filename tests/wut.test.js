@@ -539,7 +539,7 @@ test('new WUT users receive the complete starter bundle', () => {
   assert.equal(db.getWutMembershipState(1).wutCoins, 1000, 'debug games never award currency');
 });
 
-test('betting leaderboard is sportsbook net only and may be negative', () => {
+test('betting leaderboard is settled sportsbook net only and may be negative', () => {
   const user = db.addUser({ username: 'sportsbook-net-user', password: 'test-password', displayName: 'Sportsbook Net User' });
   db.adjustUserBalance(user.id, 5000, 'must not affect betting performance');
   let row = db.getLeaderboard(77, false).find(entry => entry.id === user.id);
@@ -551,9 +551,9 @@ test('betting leaderboard is sportsbook net only and may be negative', () => {
     marketType: 'series_win', teamId: 'A', label: 'Net test winner', stake: 100, multiplier: 2
   });
   row = db.getLeaderboard(77, false).find(entry => entry.id === user.id);
-  assert.equal(row.total_balance, -100, 'an open wager counts as paid stake');
-  assert.equal(row.current_week_change, -100);
-  assert.equal(row.balance_display, '-100');
+  assert.equal(row.total_balance, 0, 'an open wager does not affect betting performance');
+  assert.equal(row.current_week_change, 0);
+  assert.equal(row.balance_display, '0');
 
   const winningBet = db.getUserBets(user.id, 1)[0];
   db.settleWeek({ week: 77, results: { evaluations: { [winningBet.id]: { ready: true, won: true } } } });

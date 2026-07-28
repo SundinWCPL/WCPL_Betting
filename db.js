@@ -1263,7 +1263,7 @@ function getSportsbookBetNetForUser(userId, week = null) {
     .filter(bet =>
       Number(bet.user_id) === Number(userId) &&
       (targetWeek == null || Number(bet.week) === targetWeek) &&
-      ['open', 'settled'].includes(String(bet.status || 'open'))
+      String(bet.status || 'open') === 'settled'
     )
     .reduce((sum, bet) => sum + Number(bet.payout || 0) - Number(bet.stake || 0), 0);
 }

@@ -6,9 +6,9 @@ export async function getLeaderboardsPostgres(pool, currentWeek) {
     WITH bet_totals AS (
       SELECT user_id,
         COALESCE(sum(stake) FILTER (WHERE status='open'),0) AS open_wagered,
-        COALESCE(sum(COALESCE(payout,0)-stake) FILTER (WHERE status IN ('open','settled')),0) AS sportsbook_net,
-        COALESCE(sum(COALESCE(payout,0)-stake) FILTER (WHERE status IN ('open','settled') AND week=$1),0) AS sportsbook_current,
-        COALESCE(sum(COALESCE(payout,0)-stake) FILTER (WHERE status IN ('open','settled') AND week=$2),0) AS sportsbook_last
+        COALESCE(sum(COALESCE(payout,0)-stake) FILTER (WHERE status='settled'),0) AS sportsbook_net,
+        COALESCE(sum(COALESCE(payout,0)-stake) FILTER (WHERE status='settled' AND week=$1),0) AS sportsbook_current,
+        COALESCE(sum(COALESCE(payout,0)-stake) FILTER (WHERE status='settled' AND week=$2),0) AS sportsbook_last
       FROM bets GROUP BY user_id
     ), transaction_totals AS (
       SELECT user_id,

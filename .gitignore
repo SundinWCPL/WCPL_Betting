@@ -3,6 +3,7 @@ node_modules/
 
 # local runtime data / secrets
 .env
+.env.example
 betting.json
 .codex-wut-ui-test.json
 artifacts/
