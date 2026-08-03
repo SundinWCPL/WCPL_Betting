@@ -993,12 +993,9 @@ async function buildEligibleUnvoidPropBets({ seasonId, week, voidedBets }) {
   );
   if (!candidateBets.length) return [];
 
-  const [series, weekResults] = await Promise.all([
-    getUpcomingSeries(week, seasonId),
-    buildWeekSettlementResults({ seasonId, week })
-  ]);
+  const series = await getUpcomingSeries(week, seasonId);
   const validTeamKeys = new Set();
-  for (const s of series.filter(s => seriesHasValidStatus(s) && weekResults.seriesResults?.[s.series_key]?.complete)) {
+  for (const s of series.filter(seriesHasValidStatus)) {
     validTeamKeys.add(`${s.division_id}|${String(s.home_team_id || '').trim()}`);
     validTeamKeys.add(`${s.division_id}|${String(s.away_team_id || '').trim()}`);
   }
@@ -4899,7 +4896,7 @@ app.post('/admin/unvoid-bet', requireAdmin, async (req, res) => {
     const voidedBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), week, ['void']) : getAdminBetsForWeek(week, ['void']);
     const eligibleBets = await buildEligibleUnvoidPropBets({ seasonId: settings.seasonId, week, voidedBets });
     if (!eligibleBets.some(bet => Number(bet.id) === Number(req.body.bet_id))) {
-      throw new Error('Only voided weekly top scorer/goalie props whose player has a completed valid series this week can be un-voided here.');
+      throw new Error('Only voided weekly top scorer/goalie props whose player has another valid series this week can be un-voided here.');
     }
     const result = postgresEnabled
       ? await unvoidBetByIdPostgres(postgresPool(), req.body.bet_id, { adminUserId: req.session.userId })
