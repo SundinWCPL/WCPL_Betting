@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSettlementPreview } from '../db.js';
 import { evaluateBetAgainstResults } from '../services/settlement.js';
+import { shouldVoidBetForSeries } from '../services/seriesVoidRules.js';
 
 test('settlement preview can evaluate PostgreSQL-loaded bets instead of JSON state', () => {
   const bets = [{
@@ -58,4 +59,46 @@ test('series shutout props never borrow shutouts from another series', () => {
   assert.equal(evaluation.ready, true);
   assert.equal(evaluation.won, false);
   assert.match(evaluation.result_summary, /0 shutout\(s\) in series M2/);
+});
+
+test('series void keeps weekly leader props eligible when player has other series', () => {
+  const voidedSeries = {
+    seriesKey: 'D2-M1',
+    teamIds: ['TTE'],
+    playerKeys: ['name:ttearr'],
+    weeklyLeaderPlayerKeysWithOtherSeries: ['name:ttearr']
+  };
+
+  assert.equal(shouldVoidBetForSeries({
+    bet_kind: 'prop',
+    division_id: 'D2',
+    series_key: '',
+    prop_key: 'D2|top_goalie',
+    prop_category: 'top_goalie',
+    player_key: 'name:ttearr',
+    player_team_id: 'TTE'
+  }, voidedSeries), false);
+
+  assert.equal(shouldVoidBetForSeries({
+    bet_kind: 'prop',
+    division_id: 'D2',
+    series_key: '',
+    prop_key: 'D2|top_goalie',
+    prop_category: 'top_goalie',
+    player_key: 'name:only-series-goalie',
+    player_team_id: 'TTE'
+  }, {
+    ...voidedSeries,
+    weeklyLeaderPlayerKeysWithOtherSeries: []
+  }), true);
+
+  assert.equal(shouldVoidBetForSeries({
+    bet_kind: 'prop',
+    division_id: 'D2',
+    series_key: 'D2-M1',
+    prop_key: 'D2-M1|shutout|name:ttearr',
+    prop_category: 'shutout',
+    player_key: 'name:ttearr',
+    player_team_id: 'TTE'
+  }, voidedSeries), true);
 });

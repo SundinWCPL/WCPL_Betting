@@ -40,6 +40,7 @@ import {
   settleCompletedBets,
   correctSettledBet,
   voidBetById,
+  unvoidBetById,
   voidBetsForSeries,
   voidDeprecatedHatTrickBetsForWeek,
   getVoidRefundsForWeek,
@@ -256,6 +257,7 @@ import {
   settleBetsPostgres,
   correctSettledBetPostgres,
   voidBetByIdPostgres,
+  unvoidBetByIdPostgres,
   voidBetsForSeriesPostgres,
   voidDeprecatedHatTrickBetsForWeekPostgres
 } from './database/repositories/sportsbook.js';
@@ -954,14 +956,67 @@ async function settleCompletedBetsOrThrow({ week, seasonId }) {
 }
 
 async function buildSeriesVoidPayload({ seasonId, week, seriesKey }) {
-  const series = (await getUpcomingSeries(week, seasonId)).find(s => s.series_key === seriesKey);
+  const weekSeries = await getUpcomingSeries(week, seasonId);
+  const series = weekSeries.find(s => s.series_key === seriesKey);
   if (!series) throw new Error('Series not found for this week.');
   const teamIds = [series.home_team_id, series.away_team_id].map(v => String(v || '').trim());
   const players = await getPlayers(series.division_id, seasonId);
+  const validOtherTeamIds = new Set(
+    weekSeries
+      .filter(s =>
+        s.division_id === series.division_id &&
+        s.series_key !== series.series_key &&
+        seriesHasValidStatus(s) &&
+        [s.home_team_id, s.away_team_id].some(teamId => teamIds.includes(String(teamId || '').trim()))
+      )
+      .flatMap(s => [s.home_team_id, s.away_team_id].map(v => String(v || '').trim()).filter(teamId => teamIds.includes(teamId)))
+  );
   const playerKeys = players
     .filter(p => teamIds.includes(String(p.team_id || '').trim()))
     .map(p => p.player_key);
-  return { series, teamIds, playerKeys };
+  const weeklyLeaderPlayerKeysWithOtherSeries = players
+    .filter(p => validOtherTeamIds.has(String(p.team_id || '').trim()))
+    .map(p => p.player_key);
+  return { series, teamIds, playerKeys, weeklyLeaderPlayerKeysWithOtherSeries };
+}
+
+function seriesHasValidStatus(series) {
+  const invalidStatuses = new Set(['postponed', 'void', 'voided', 'cancelled', 'canceled']);
+  return !(series.games || []).some(game => invalidStatuses.has(String(game.status || '').trim().toLowerCase()));
+}
+
+async function buildEligibleUnvoidPropBets({ seasonId, week, voidedBets }) {
+  const leaderCategories = new Set(['top_scorer', 'top_goalie']);
+  const candidateBets = (voidedBets || []).filter(bet =>
+    bet.bet_kind === 'prop' &&
+    leaderCategories.has(String(bet.prop_category || ''))
+  );
+  if (!candidateBets.length) return [];
+
+  const [series, weekResults] = await Promise.all([
+    getUpcomingSeries(week, seasonId),
+    buildWeekSettlementResults({ seasonId, week })
+  ]);
+  const validTeamKeys = new Set();
+  for (const s of series.filter(s => seriesHasValidStatus(s) && weekResults.seriesResults?.[s.series_key]?.complete)) {
+    validTeamKeys.add(`${s.division_id}|${String(s.home_team_id || '').trim()}`);
+    validTeamKeys.add(`${s.division_id}|${String(s.away_team_id || '').trim()}`);
+  }
+
+  const divisions = [...new Set(candidateBets.map(bet => String(bet.division_id || '').trim()).filter(Boolean))];
+  const playerTeamByDivisionAndKey = new Map();
+  for (const divisionId of divisions) {
+    const players = await getPlayers(divisionId, seasonId);
+    for (const player of players) {
+      playerTeamByDivisionAndKey.set(`${divisionId}|${player.player_key}`, String(player.team_id || '').trim());
+    }
+  }
+
+  return candidateBets.filter(bet => {
+    const divisionId = String(bet.division_id || '').trim();
+    const teamId = String(bet.player_team_id || playerTeamByDivisionAndKey.get(`${divisionId}|${bet.player_key}`) || '').trim();
+    return teamId && validTeamKeys.has(`${divisionId}|${teamId}`);
+  });
 }
 
 async function settleWeekOrThrow({ week, seasonId }) {
@@ -3958,6 +4013,7 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
     const oddsWeek = oddsWeekMode === 'current' ? currentWeek : nextWeek;
     const currentWeekBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), currentWeek) : getAdminBetsForWeek(currentWeek);
     const reviewableWeekBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), currentWeek, ['open', 'settled']) : getAdminBetsForWeek(currentWeek, ['open', 'settled']);
+    const voidedWeekBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), currentWeek, ['void']) : getAdminBetsForWeek(currentWeek, ['void']);
     const nextWeekBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), nextWeek) : getAdminBetsForWeek(nextWeek);
     const users = postgresEnabled ? await getUserSummariesPostgres(postgresPool()) : getUserSummaries();
     const seasons = await getAvailableSeasons();
@@ -3970,6 +4026,11 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       bets: reviewableWeekBets
     });
     const voidRefunds = postgresEnabled ? await getVoidRefundsForWeekPostgres(postgresPool(), currentWeek) : getVoidRefundsForWeek(currentWeek);
+    const eligibleUnvoidPropBets = await buildEligibleUnvoidPropBets({
+      seasonId: settings.seasonId,
+      week: currentWeek,
+      voidedBets: voidedWeekBets
+    });
     const backupInfo = getBackupInfo();
     const casinoSummary = postgresEnabled ? await getCasinoSummaryPostgres(postgresPool()) : getCasinoSummary();
     const cardsAdmin = postgresEnabled ? await getCardsAdminStatePostgres(postgresPool()) : getCardsAdminState();
@@ -4099,6 +4160,8 @@ app.get('/admin', requireAdmin, async (req, res, next) => {
       currentWeekSeries,
       seriesBetReview,
       voidRefunds,
+      voidedWeekBets,
+      eligibleUnvoidPropBets,
       nextWeekBets,
       openWeekBets: nextWeekBets,
       users,
@@ -4829,6 +4892,25 @@ app.post('/admin/refund-bet', requireAdmin, async (req, res) => {
   res.redirect('/admin');
 });
 
+app.post('/admin/unvoid-bet', requireAdmin, async (req, res) => {
+  try {
+    const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
+    const week = Number(settings.currentWeek || 1);
+    const voidedBets = postgresEnabled ? await getAdminBetsForWeekPostgres(postgresPool(), week, ['void']) : getAdminBetsForWeek(week, ['void']);
+    const eligibleBets = await buildEligibleUnvoidPropBets({ seasonId: settings.seasonId, week, voidedBets });
+    if (!eligibleBets.some(bet => Number(bet.id) === Number(req.body.bet_id))) {
+      throw new Error('Only voided weekly top scorer/goalie props whose player has a completed valid series this week can be un-voided here.');
+    }
+    const result = postgresEnabled
+      ? await unvoidBetByIdPostgres(postgresPool(), req.body.bet_id, { adminUserId: req.session.userId })
+      : unvoidBetById(req.body.bet_id, { adminUserId: req.session.userId });
+    req.session.flash = { type: 'success', message: `Reopened bet #${result.betId} and re-staked ${result.stake} Mushybux.` };
+  } catch (err) {
+    req.session.flash = { type: 'error', message: err.message };
+  }
+  res.redirect('/admin');
+});
+
 app.post('/admin/void-series', requireAdmin, async (req, res) => {
   try {
     const settings = postgresEnabled ? await getAdminSettingsPostgres(postgresPool()) : getAdminSettings();
@@ -4840,6 +4922,7 @@ app.post('/admin/void-series', requireAdmin, async (req, res) => {
       seriesKey,
       teamIds: payload.teamIds,
       playerKeys: payload.playerKeys,
+      weeklyLeaderPlayerKeysWithOtherSeries: payload.weeklyLeaderPlayerKeysWithOtherSeries,
       reason: `Postponed series refund (${payload.series.away_team_name} at ${payload.series.home_team_name})`
     };
     const result = postgresEnabled ? await voidBetsForSeriesPostgres(postgresPool(), input) : voidBetsForSeries(input);

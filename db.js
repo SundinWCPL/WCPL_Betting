@@ -78,6 +78,7 @@ import {
   wutDeckRules
 } from './services/arenaRuntime.js';
 import { DEFAULT_BOOST_EFFECTS, DEFAULT_BOOST_PACK_CONFIG, DEFAULT_RARITY_THRESHOLDS, isPlayerPackEligible, normalizeRarityThresholds } from './services/cards.js';
+import { shouldVoidBetForSeries } from './services/seriesVoidRules.js';
 
 const dbPath = path.resolve(process.env.JSON_DB_PATH || './betting.json');
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(path.dirname(dbPath), 'backups'));
@@ -2483,6 +2484,41 @@ export function voidBetById(betId, reason = 'Manual refund') {
   return result;
 }
 
+export function unvoidBetById(betId, { adminUserId = null, reason = 'Manual admin un-void' } = {}) {
+  const bet = state.bets.find(b => b.id === Number(betId));
+  if (!bet) throw new Error('Bet not found.');
+  if (bet.status !== 'void') throw new Error('Only voided bets can be un-voided.');
+  const user = state.users.find(u => u.id === Number(bet.user_id));
+  if (!user) throw new Error('User not found.');
+  const stake = Number(bet.stake || 0);
+  if (Number(user.balance || 0) < stake) throw new Error('User does not have enough available balance to re-stake this bet.');
+
+  user.balance = Number(user.balance || 0) - stake;
+  const restoredAt = nowIso();
+  bet.status = 'open';
+  bet.payout = null;
+  bet.restored_at = restoredAt;
+  bet.restored_by = adminUserId == null ? null : Number(adminUserId);
+  bet.restore_reason = reason;
+  delete bet.voided_at;
+  delete bet.void_reason;
+
+  state.transactions.push({
+    id: state.nextTransactionId++,
+    user_id: Number(bet.user_id),
+    week: Number(bet.week || 0),
+    amount: -stake,
+    kind: 'bet_unvoid_restake',
+    note: `${reason}: ${bet.label}`,
+    bet_id: Number(bet.id),
+    admin_user_id: adminUserId == null ? null : Number(adminUserId),
+    created_at: restoredAt
+  });
+
+  saveState();
+  return { betId: Number(bet.id), userId: Number(bet.user_id), stake };
+}
+
 export function voidDeprecatedHatTrickBetsForWeek(week) {
   const targetWeek = Number(week);
   let count = 0;
@@ -2502,7 +2538,7 @@ export function voidDeprecatedHatTrickBetsForWeek(week) {
   return { count, refunded };
 }
 
-export function voidBetsForSeries({ week, seriesKey, teamIds = [], playerKeys = [], reason = 'Postponed series refund' }) {
+export function voidBetsForSeries({ week, seriesKey, teamIds = [], playerKeys = [], weeklyLeaderPlayerKeysWithOtherSeries = [], reason = 'Postponed series refund' }) {
   const targetWeek = Number(week);
   const cleanSeriesKey = String(seriesKey || '').trim();
   const teamSet = new Set((Array.isArray(teamIds) ? teamIds : [teamIds]).map(v => String(v || '').trim()).filter(Boolean));
@@ -2519,11 +2555,12 @@ export function voidBetsForSeries({ week, seriesKey, teamIds = [], playerKeys = 
     if (Number(bet.week) !== targetWeek || bet.status !== 'open') continue;
 
     const isSeriesBet = (bet.bet_kind || 'series') === 'series' && bet.series_key === cleanSeriesKey;
-    const isTeamProp = bet.bet_kind === 'prop' && (
-      String(bet.series_key || '').trim()
-        ? String(bet.series_key || '').trim() === cleanSeriesKey
-        : teamSet.has(String(bet.player_team_id || '').trim()) || playerSet.has(String(bet.player_key || '').trim())
-    );
+    const isTeamProp = bet.bet_kind === 'prop' && shouldVoidBetForSeries(bet, {
+      seriesKey: cleanSeriesKey,
+      teamIds: [...teamSet],
+      playerKeys: [...playerSet],
+      weeklyLeaderPlayerKeysWithOtherSeries
+    });
     if (!isSeriesBet && !isTeamProp) continue;
 
     const result = voidOpenBet(bet, reason);

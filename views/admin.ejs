@@ -850,7 +850,7 @@
         <button type="button" class="button-link ghost admin-collapse-toggle" data-target="adminVoidRefundBody">Show</button>
       </div>
       <div id="adminVoidRefundBody" class="admin-collapsible-body" hidden>
-      <p class="muted">Use this before moving a postponed series out of the week in the main WCPL schedule. It refunds matching open series bets plus prop bets on players from either team.</p>
+      <p class="muted">Use this before moving a postponed series out of the week in the main WCPL schedule. Weekly top scorer/goalie props stay open when that player still has another valid series in the week.</p>
 
       <form method="post" action="/admin/void-series" class="admin-inline-form" onsubmit="return confirm('Void/refund all open bets tied to this series, including props for players on both teams?');">
         <input type="hidden" name="week" value="<%= currentWeek %>">
@@ -865,6 +865,43 @@
         </label>
         <button type="submit">Void Series + Team Props</button>
       </form>
+
+      <% if (eligibleUnvoidPropBets && eligibleUnvoidPropBets.length) { %>
+        <h3>Un-Void Eligible Prop Bet</h3>
+        <p class="muted">Only voided weekly top scorer/goalie props appear here, and only when the player's team has a completed valid series in the week. Reopening a bet removes the original stake from the user's available balance again.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Bet</th>
+                <th>Stake</th>
+                <th>Voided</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% eligibleUnvoidPropBets.forEach(bet => { %>
+                <tr>
+                  <td><%= bet.user_display_name %></td>
+                  <td>
+                    <strong><%= bet.label %></strong><br>
+                    <small class="muted"><%= bet.bet_kind === 'prop' ? 'Prop' : 'Series' %> Â· <%= Number(bet.multiplier || 0) %>x<%= bet.void_reason ? ` Â· ${bet.void_reason}` : '' %></small>
+                  </td>
+                  <td><%= Number(bet.stake || 0).toLocaleString() %></td>
+                  <td><%= bet.voided_at ? new Date(bet.voided_at).toLocaleString() : 'â€”' %></td>
+                  <td>
+                    <form method="post" action="/admin/unvoid-bet" onsubmit="return confirm('Reopen this bet and re-stake <%= Number(bet.stake || 0) %> Mushybux from <%= bet.user_display_name.replace(/'/g, "\\'") %>?');">
+                      <input type="hidden" name="bet_id" value="<%= bet.id %>">
+                      <button type="submit" class="small-button">Un-Void</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
 
       <% if (voidRefunds && voidRefunds.length) { %>
         <h3>Current Week Void/Refund Recap</h3>

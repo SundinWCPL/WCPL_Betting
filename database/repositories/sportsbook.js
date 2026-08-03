@@ -4,6 +4,7 @@ import {
   changeLockedUserBalance,
   lockUser
 } from './wallet.js';
+import { shouldVoidBetForSeries } from '../../services/seriesVoidRules.js';
 
 const asNumber = value => Number(value || 0);
 const lockSportsbook = client => client.query('SELECT pg_advisory_xact_lock($1)', [8242030]);
@@ -306,6 +307,39 @@ export async function voidBetByIdWithClient(client, betId, reason = 'Manual refu
   return voidLockedBet(client, bet, user, reason, new Date().toISOString());
 }
 
+export async function unvoidBetByIdWithClient(client, betId, { adminUserId = null, reason = 'Manual admin un-void' } = {}) {
+  await lockSportsbook(client);
+  const lookup = await client.query('SELECT user_id FROM bets WHERE id=$1', [Number(betId)]);
+  if (!lookup.rows[0]) throw new Error('Bet not found.');
+  const user = await lockUser(client, lookup.rows[0].user_id);
+  const result = await client.query('SELECT data FROM bets WHERE id=$1 FOR UPDATE', [Number(betId)]);
+  const bet = result.rows[0]?.data;
+  if (!bet) throw new Error('Bet not found.');
+  if (bet.status !== 'void') throw new Error('Only voided bets can be un-voided.');
+  const stake = asNumber(bet.stake);
+  await changeLockedUserBalance(client, user, -stake);
+  const restoredAt = new Date().toISOString();
+  bet.status = 'open';
+  bet.payout = null;
+  bet.restored_at = restoredAt;
+  bet.restored_by = adminUserId == null ? null : Number(adminUserId);
+  bet.restore_reason = reason;
+  delete bet.voided_at;
+  delete bet.void_reason;
+  await saveBet(client, bet, { insert: false });
+  await addBalanceTransaction(client, {
+    userId: user.id,
+    week: bet.week,
+    amount: -stake,
+    kind: 'bet_unvoid_restake',
+    bet_id: Number(bet.id),
+    admin_user_id: adminUserId == null ? null : Number(adminUserId),
+    note: `${reason}: ${bet.label}`,
+    createdAt: restoredAt
+  });
+  return { betId: Number(bet.id), userId: Number(bet.user_id), stake };
+}
+
 async function voidSelectedRows(client, rows, reason) {
   const users = new Map();
   for (const userId of [...new Set(rows.map(row => Number(row.user_id)))].sort((a, b) => a - b)) users.set(userId, await lockUser(client, userId));
@@ -318,14 +352,12 @@ async function voidSelectedRows(client, rows, reason) {
   return { count: rows.length, seriesCount, propCount, refunded };
 }
 
-export async function voidBetsForSeriesWithClient(client, { week, seriesKey, teamIds = [], playerKeys = [], reason = 'Series void' }) {
+export async function voidBetsForSeriesWithClient(client, { week, seriesKey, teamIds = [], playerKeys = [], weeklyLeaderPlayerKeysWithOtherSeries = [], reason = 'Series void' }) {
   await lockSportsbook(client);
   const result = await client.query("SELECT user_id,data FROM bets WHERE week=$1 AND status='open' ORDER BY user_id,id FOR UPDATE", [Number(week)]);
-  const teams = new Set(teamIds.map(String)); const players = new Set(playerKeys.map(String));
   const rows = result.rows.filter(row => {
     const bet = row.data || {};
-    if ((bet.bet_kind || 'series') === 'series') return String(bet.series_key || '') === String(seriesKey);
-    return String(bet.series_key || '') === String(seriesKey) || teams.has(String(bet.player_team_id || bet.team_id || '')) || players.has(String(bet.player_key || ''));
+    return shouldVoidBetForSeries(bet, { seriesKey, teamIds, playerKeys, weeklyLeaderPlayerKeysWithOtherSeries });
   });
   return voidSelectedRows(client, rows, reason);
 }
@@ -354,6 +386,8 @@ export const correctSettledBetPostgres = (pool, input) =>
   withTransaction(pool, client => correctSettledBetWithClient(client, input));
 export const voidBetByIdPostgres = (pool, betId, reason) =>
   withTransaction(pool, client => voidBetByIdWithClient(client, betId, reason));
+export const unvoidBetByIdPostgres = (pool, betId, input) =>
+  withTransaction(pool, client => unvoidBetByIdWithClient(client, betId, input));
 export const voidBetsForSeriesPostgres = (pool, input) =>
   withTransaction(pool, client => voidBetsForSeriesWithClient(client, input));
 export const resetBetsForWeekPostgres = (pool, week, reason) =>
