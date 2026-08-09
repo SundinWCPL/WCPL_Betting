@@ -55,5 +55,35 @@
     "manual_logo": "pride",
     "card_art": "S1",
     "flavor_text": "So much for the intolerant right."
+  },
+  {
+    "id": "mythic-Every-D3-Player",
+    "display_name": "Every D3 Player Combined",
+    "position": "F",
+    "source_type": "manual",
+    "team_id": "lol",
+    "manual_goalrate": 0,
+    "manual_assistrate": 0,
+    "manual_shotrate": 0.5,
+    "manual_hitrate": 0,
+    "manual_blockrate": 0,
+    "manual_logo": "wcpl",
+    "card_art": "S1",
+    "flavor_text": "They finally made it onto the gambling site."
+  },
+  {
+    "id": "mythic-Bart-Ozempic",
+    "display_name": "Bart on Ozempic",
+    "position": "F",
+    "source_type": "manual",
+    "team_id": "lol",
+    "manual_goalrate": 1.5,
+    "manual_assistrate": 1.5,
+    "manual_shotrate": 4.0,
+    "manual_hitrate": 1.0,
+    "manual_blockrate": 3.0,
+    "manual_logo": "wcpl",
+    "card_art": "S1",
+    "flavor_text": "Still pretty fat tbh."
   }
 ]
