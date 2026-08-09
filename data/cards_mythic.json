@@ -25,5 +25,35 @@
     "manual_logo": "wcpl",
     "card_art": "S1",
     "flavor_text": "At the tail end of 2025, Mushy implemented a WCPL Ruleset queue. While widely regarded as a bad move, one man quickly emerged as a legend.\n''*Dad, how good was ruleset Sundin?*'' -CB"
+  },
+  {
+    "id": "mythic-Enlightened-Scoosh",
+    "display_name": "Enlightened Scoosh",
+    "position": "F",
+    "source_type": "manual",
+    "team_id": "GAY",
+    "manual_goalrate": 2.0,
+    "manual_assistrate": 3.0,
+    "manual_shotrate": 7.0,
+    "manual_hitrate": 1.0,
+    "manual_blockrate": 1.0,
+    "manual_logo": "pride",
+    "card_art": "S1",
+    "flavor_text": "So much for the intolerant right."
+  },
+  {
+    "id": "mythic-Enlightened-Scoosh",
+    "display_name": "Enlightened Scoosh",
+    "position": "F",
+    "source_type": "manual",
+    "team_id": "GAY",
+    "manual_goalrate": 2.0,
+    "manual_assistrate": 3.0,
+    "manual_shotrate": 7.0,
+    "manual_hitrate": 1.0,
+    "manual_blockrate": 1.0,
+    "manual_logo": "pride",
+    "card_art": "S1",
+    "flavor_text": "So much for the intolerant right."
   }
 ]
