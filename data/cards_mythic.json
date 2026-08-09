@@ -85,5 +85,20 @@
     "manual_logo": "wcpl",
     "card_art": "S1",
     "flavor_text": "Still pretty fat tbh."
+  },
+  {
+    "id": "mythic-Aleksander",
+    "display_name": "Aleksander",
+    "position": "F",
+    "source_type": "manual",
+    "team_id": "lol",
+    "manual_goalrate": 3.0,
+    "manual_assistrate": 0.5,
+    "manual_shotrate": 10.0,
+    "manual_hitrate": 0,
+    "manual_blockrate": 0,
+    "manual_logo": "wcpl",
+    "card_art": "S1",
+    "flavor_text": "Even Miku Exodia is no match for this man's shot technique."
   }
 ]
